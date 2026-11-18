@@ -1,0 +1,16 @@
+{
+  "name": "SchoolCare — Smart School & Parent Portal",
+  "short_name": "SchoolCare",
+  "description": "Smart School. Connected Parents. Better Education. Secondary school management for Rwanda.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#102B50",
+  "theme_color": "#102B50",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
