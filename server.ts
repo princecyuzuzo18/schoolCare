@@ -2,14 +2,66 @@ import express, { NextFunction, Request, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import net from 'net';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import multer from 'multer';
 import { db } from './server/database';
 import { authenticateUser, requirePermission, requireRole } from './server/rbac';
 import { checkMysqlHealth, getExportSqlPath, getMysqlPool } from './server/mysqlConnector';
 import { getPasswordHash, verifyPassword } from './server/authCredentials';
 import { createSession, destroySession } from './server/sessions';
-import { HealthIncident, NotificationChannel, NotificationMessage, Payment, UserProfile, UserRole } from './src/types';
+import {
+  APPLICATION_STATUSES,
+  APPLICATION_TYPES,
+  RESULT_SLIP_VERIFICATION_STATUSES,
+  UPLOAD_LIMITS,
+  assertSameOrigin,
+  buildApplication,
+  buildSenior3ResultsRecord,
+  contactMatches,
+  createRateLimiter,
+  generateVerificationCode,
+  getAllowedDocumentTypes,
+  hasActualAcademicData,
+  hashValue,
+  isValidUpload,
+  nextReferenceNumber,
+  normalizeAcademicPerformance,
+  normalizeContact,
+  validateSubmission
+} from './server/admissions';
+import {
+  mirrorAdmissionSettings,
+  mirrorAdmissionSlipUpload,
+  mirrorApplicationCreate,
+  mirrorApplicationUpdate,
+  mirrorResultVerificationEvent,
+  mirrorReviewNote,
+  mirrorSenior3Results,
+  mirrorStatusHistory
+} from './server/admissionsMysql';
+import { extractAcademicPerformance } from './server/resultSlipOcr';
+import {
+  emailConfigured,
+  notifyStatusChange,
+  notifySubmission,
+  sendVerificationCode,
+  smsConfigured
+} from './server/notifications';
+import {
+  AdmissionApplication,
+  AdmissionTrackingSummary,
+  ApplicationStatus,
+  ApplicationType,
+  HealthIncident,
+  NotificationChannel,
+  NotificationMessage,
+  Payment,
+  ResultSlipVerificationStatus,
+  UserProfile,
+  UserRole
+} from './src/types';
 
 dotenv.config();
 
@@ -54,6 +106,152 @@ app.use(express.urlencoded({ extended: true }));
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const LOGIN_ATTEMPT_LIMIT = 5;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+// ==========================================
+// PUBLIC ADMISSIONS — SECURITY & UPLOAD SETUP
+// ==========================================
+
+const UPLOAD_ROOT = path.resolve(
+  process.env.ADMISSION_UPLOAD_DIR || path.resolve(process.cwd(), 'data', 'admission-documents')
+);
+
+const ALLOWED_UPLOAD_MIMES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+
+const admissionUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: UPLOAD_LIMITS.maxFileBytes,
+    files: UPLOAD_LIMITS.maxFiles,
+    fields: 80,
+    parts: 90
+  },
+  fileFilter: (_req, file, callback) => {
+    if (ALLOWED_UPLOAD_MIMES.has(file.mimetype.toLowerCase())) {
+      callback(null, true);
+    } else {
+      callback(new Error('Unsupported file type.'));
+    }
+  }
+}).any();
+
+function runAdmissionUpload(req: Request, res: Response, next: NextFunction): void {
+  admissionUpload(req, res, error => {
+    if (error) {
+      res.status(400).json({ error: 'One or more documents could not be uploaded. Check the file type and size.' });
+      return;
+    }
+    next();
+  });
+}
+
+const SLIP_UPLOAD_DIR = path.join(UPLOAD_ROOT, '.slips');
+const SLIP_TTL_MS = 30 * 60 * 1000;
+
+const slipUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: UPLOAD_LIMITS.maxFileBytes,
+    files: 1,
+    fields: 10,
+    parts: 12
+  },
+  fileFilter: (_req, file, callback) => {
+    if (ALLOWED_UPLOAD_MIMES.has(file.mimetype.toLowerCase())) callback(null, true);
+    else callback(new Error('Unsupported file type.'));
+  }
+}).single('resultSlip');
+
+function runSlipUpload(req: Request, res: Response, next: NextFunction): void {
+  slipUpload(req, res, error => {
+    if (error) {
+      res.status(400).json({ error: 'The result slip could not be uploaded. Use a PDF, JPG or PNG up to 5 MB.' });
+      return;
+    }
+    next();
+  });
+}
+
+function resultSlipExtension(mime: string): string {
+  if (mime === 'application/pdf') return '.pdf';
+  if (mime === 'image/png') return '.png';
+  return '.jpg';
+}
+
+function activeSlipUpload(token: string) {
+  if (!/^[a-f0-9]{64}$/i.test(token)) return null;
+  const record = db.getAdmissionSlipUploadByTokenHash(hashValue(token));
+  if (!record || record.consumedAt || record.replacedAt) return null;
+  if (new Date(record.expiresAt).getTime() <= Date.now()) return null;
+  const filePath = path.resolve(UPLOAD_ROOT, record.storagePath);
+  if (!filePath.startsWith(`${UPLOAD_ROOT}${path.sep}`) || !fs.existsSync(filePath)) return null;
+  return { record, filePath };
+}
+
+function safeFileName(original: string): string {
+  return path
+    .basename(original)
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/^\.+/, '')
+    .slice(0, 120) || 'document';
+}
+
+function sanitizeInput(value: unknown, max = 2000): string {
+  if (typeof value !== 'string') return '';
+  return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, max);
+}
+
+function sanitizeReference(value: unknown): string {
+  return sanitizeInput(value, 40).toUpperCase();
+}
+
+const submissionRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 8, prefix: 'admission-submit' });
+const slipUploadRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 15, prefix: 'admission-slip-upload' });
+const slipPreviewRateLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 30, prefix: 'admission-slip-preview' });
+const trackingRequestLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 6, prefix: 'admission-track-request' });
+const trackingVerifyLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 12, prefix: 'admission-track-verify' });
+
+function requireAdmissionsRole(mode: 'read' | 'write') {
+  return requireRole(...MODULE_ACCESS.admissions[mode]);
+}
+
+function limitedTrackingSummary(application: AdmissionApplication): AdmissionTrackingSummary {
+  const response =
+    application.status === 'REJECTED' || application.status === 'ADDITIONAL_INFO_REQUIRED'
+      ? application.rejectionReason
+      : undefined;
+  return {
+    referenceNumber: application.referenceNumber,
+    applicationType: application.applicationType,
+    submittedAt: application.submittedAt,
+    status: application.status,
+    schoolResponse: response ? sanitizeInput(response, 1000) : undefined
+  };
+}
+
+function csvCell(value: unknown): string {
+  let text = value === undefined || value === null ? '' : String(value);
+  text = text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ');
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function findAdminApplication(req: Request, res: Response): AdmissionApplication | null {
+  const actor = getActor(req);
+  const application = db.getAdmissionById(req.params.id);
+  if (!application || (actor.role !== 'SUPER_ADMIN' && application.schoolId !== actor.schoolId)) {
+    res.status(404).json({ error: 'Application not found.' });
+    return null;
+  }
+  return application;
+}
+
+async function persistMirror(task: () => Promise<void>, label: string): Promise<void> {
+  try {
+    await task();
+  } catch (error) {
+    console.warn(`[Admissions] MySQL mirror skipped (${label}):`, error instanceof Error ? error.message : error);
+  }
+}
 
 const MODULE_ACCESS: Record<string, { read: UserRole[]; write: UserRole[] }> = {
   admissions: {
@@ -198,7 +396,8 @@ app.use('/api', (req, res, next) => {
   const isLogin = req.method === 'POST' && req.path === '/auth/login';
   const isSessionCheck = req.method === 'GET' && req.path === '/auth/me';
   const isPasswordResetRequest = req.method === 'POST' && req.path === '/auth/password-reset/request';
-  if (isPublicSchoolRead || isLogin || isSessionCheck || isPasswordResetRequest) {
+  const isPublicAdmissions = req.path.startsWith('/public/admissions/');
+  if (isPublicSchoolRead || isLogin || isSessionCheck || isPasswordResetRequest || isPublicAdmissions) {
     next();
     return;
   }
@@ -1502,6 +1701,641 @@ app.post('/api/demo/reset', requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req: Re
   );
   return res.json({ success: true, message: 'Database reset to initial ES RUBENGERA RTB seed.' });
 });
+
+// ==========================================
+// PUBLIC ADMISSIONS API (NO ACCOUNT REQUIRED)
+// ==========================================
+
+app.get('/api/public/admissions/settings', (_req: Request, res: Response) => {
+  const settings = db.getAdmissionSettings();
+  res.json({
+    resultSlipRequired: settings.resultSlipRequired,
+    resultSlipExceptionNote: settings.resultSlipRequired ? undefined : settings.resultSlipExceptionNote
+  });
+});
+
+app.post(
+  '/api/public/admissions/result-slips',
+  assertSameOrigin,
+  slipUploadRateLimiter,
+  runSlipUpload,
+  async (req: Request, res: Response) => {
+    const file = req.file;
+    if (!file || !isValidUpload(file, ['resultSlip'])) {
+      res.status(400).json({ error: 'Use a clear PDF, JPG or PNG result slip up to 5 MB.' });
+      return;
+    }
+
+    try {
+      fs.mkdirSync(SLIP_UPLOAD_DIR, { recursive: true, mode: 0o700 });
+      const token = crypto.randomBytes(32).toString('hex');
+      const mime = file.mimetype.toLowerCase();
+      const storagePath = path.join('.slips', `${crypto.randomUUID()}${resultSlipExtension(mime)}`);
+      fs.writeFileSync(path.resolve(UPLOAD_ROOT, storagePath), file.buffer, { mode: 0o600 });
+
+      const replaceToken = sanitizeInput(req.body?.replaceToken, 100);
+      if (replaceToken) {
+        const previous = activeSlipUpload(replaceToken);
+        if (previous) {
+          db.updateAdmissionSlipUpload(previous.record.id, { replacedAt: new Date().toISOString() });
+        }
+      }
+
+      const extraction = await extractAcademicPerformance(file);
+      const now = new Date().toISOString();
+      const record = {
+        id: `slip-${crypto.randomUUID()}`,
+        tokenHash: hashValue(token),
+        storagePath,
+        originalFileName: safeFileName(file.originalname),
+        fileMime: mime,
+        fileSize: file.size,
+        createdAt: now,
+        expiresAt: new Date(Date.now() + SLIP_TTL_MS).toISOString(),
+        ocrStatus: extraction.status,
+        ocrData: extraction.data,
+        ocrMessage: extraction.message
+      };
+      db.addAdmissionSlipUpload(record);
+      await persistMirror(() => mirrorAdmissionSlipUpload(record), 'slip upload');
+
+      res.status(201).json({
+        uploadToken: token,
+        fileName: record.originalFileName,
+        fileSize: record.fileSize,
+        fileMime: record.fileMime,
+        expiresAt: record.expiresAt,
+        extracted: {
+          status: extraction.status,
+          data: extraction.data ?? null,
+          message: extraction.message ?? null
+        }
+      });
+    } catch (error) {
+      console.error('[Admissions] Result slip upload failed:', error);
+      res.status(500).json({ error: 'The result slip could not be saved. Please try again.' });
+    }
+  }
+);
+
+app.post(
+  '/api/public/admissions/result-slips/preview',
+  assertSameOrigin,
+  slipPreviewRateLimiter,
+  (req: Request, res: Response) => {
+    const active = activeSlipUpload(sanitizeInput(req.body?.uploadToken, 100));
+    if (!active) {
+      res.status(404).json({ error: 'This result slip is no longer available. Please upload it again.' });
+      return;
+    }
+    res.setHeader('Content-Type', active.record.fileMime);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'");
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${safeFileName(active.record.originalFileName)}"`
+    );
+    fs.createReadStream(active.filePath).pipe(res);
+  }
+);
+
+app.post(
+  '/api/public/admissions/applications',
+  assertSameOrigin,
+  submissionRateLimiter,
+  runAdmissionUpload,
+  async (req: Request, res: Response) => {
+    const validation = validateSubmission(req.body);
+    if (!validation.ok) {
+      res.status(400).json({ error: 'Please correct the highlighted fields.', errors: validation.errors });
+      return;
+    }
+
+    const applicationType = validation.value.applicationType;
+    const allowedDocuments = getAllowedDocumentTypes(applicationType);
+    const files = ((req.files as Express.Multer.File[] | undefined) ?? []).slice(0, UPLOAD_LIMITS.maxFiles);
+    if (files.some(file => !isValidUpload(file, allowedDocuments))) {
+      res.status(400).json({
+        error: 'One or more documents are invalid. Use PDF, JPG or PNG files up to 5 MB each.'
+      });
+      return;
+    }
+
+    const resultSlipToken = sanitizeInput(req.body?.resultSlipToken, 100);
+    const slipSettings = db.getAdmissionSettings();
+    const slipContext = resultSlipToken ? activeSlipUpload(resultSlipToken) : null;
+    if (resultSlipToken && !slipContext) {
+      res.status(400).json({ error: 'The result slip upload expired. Please upload the slip again.' });
+      return;
+    }
+    if (applicationType === 'NEW_STUDENT_SENIOR4' && slipSettings.resultSlipRequired && !slipContext) {
+      res.status(400).json({ error: 'Upload your Senior 3 result slip before submitting.' });
+      return;
+    }
+    const applicantAcademicData = normalizeAcademicPerformance(req.body?.academicPerformance);
+
+    const school = db.getSchools()[0];
+    if (!school) {
+      res.status(503).json({ error: 'School information is not available yet. Please try again later.' });
+      return;
+    }
+
+    try {
+      const referenceNumber = await nextReferenceNumber();
+      const application = buildApplication(validation.value, school.id, referenceNumber);
+      const applicationDir = path.join(UPLOAD_ROOT, application.id);
+      fs.mkdirSync(applicationDir, { recursive: true, mode: 0o700 });
+
+      const genericFiles = slipContext ? files.filter(file => file.fieldname !== 'SENIOR3_RESULTS') : files;
+      for (const file of genericFiles) {
+        const extension =
+          file.mimetype.toLowerCase() === 'application/pdf'
+            ? '.pdf'
+            : file.mimetype.toLowerCase() === 'image/png'
+              ? '.png'
+              : '.jpg';
+        const storedName = `${crypto.randomUUID()}${extension}`;
+        const storagePath = path.join(application.id, storedName);
+        fs.writeFileSync(path.join(UPLOAD_ROOT, storagePath), file.buffer, { mode: 0o600 });
+        application.documents.push({
+          id: `doc-${crypto.randomUUID()}`,
+          applicationId: application.id,
+          documentType: file.fieldname,
+          fileName: safeFileName(file.originalname),
+          fileMime: file.mimetype.toLowerCase(),
+          fileSize: file.size,
+          storagePath,
+          uploadedAt: new Date().toISOString()
+        });
+      }
+
+      let slipDocumentId: string | undefined;
+      if (slipContext) {
+        const slipDocument = {
+          id: `doc-${crypto.randomUUID()}`,
+          applicationId: application.id,
+          documentType: 'SENIOR3_RESULTS',
+          fileName: slipContext.record.originalFileName,
+          fileMime: slipContext.record.fileMime,
+          fileSize: slipContext.record.fileSize,
+          storagePath: path.join(application.id, `${crypto.randomUUID()}${resultSlipExtension(slipContext.record.fileMime)}`),
+          uploadedAt: new Date().toISOString()
+        };
+        // Copy the original bytes unchanged into the application's private folder.
+        fs.copyFileSync(slipContext.filePath, path.join(UPLOAD_ROOT, slipDocument.storagePath), fs.constants.COPYFILE_EXCL);
+        application.documents.push(slipDocument);
+        slipDocumentId = slipDocument.id;
+      }
+
+      if (applicationType === 'NEW_STUDENT_SENIOR4') {
+        application.senior3Results = buildSenior3ResultsRecord(validation.value, application.id, {
+          documentId: slipDocumentId,
+          resultSlipUploaded: Boolean(slipContext),
+          slipWaived: !slipContext && !slipSettings.resultSlipRequired,
+          slipExceptionNote: !slipContext && !slipSettings.resultSlipRequired ? slipSettings.resultSlipExceptionNote : undefined,
+          ocrStatus: slipContext?.record.ocrStatus ?? 'NOT_ATTEMPTED',
+          ocrMessage: slipContext?.record.ocrMessage,
+          ocrAt: slipContext?.record.createdAt,
+          extracted: slipContext?.record.ocrData,
+          applicantReviewed: hasActualAcademicData(applicantAcademicData) ? applicantAcademicData : undefined
+        });
+      }
+
+      db.createAdmission(application);
+      await persistMirror(() => mirrorApplicationCreate(application), 'create');
+      if (application.senior3Results) {
+        await persistMirror(() => mirrorSenior3Results(application.senior3Results!), 'senior 3 results');
+      }
+      if (slipContext) {
+        const consumedAt = new Date().toISOString();
+        const updatedUpload = db.updateAdmissionSlipUpload(slipContext.record.id, {
+          consumedAt,
+          applicationId: application.id,
+          documentId: slipDocumentId
+        });
+        if (updatedUpload) {
+          await persistMirror(() => mirrorAdmissionSlipUpload(updatedUpload), 'slip consumption');
+        }
+      }
+      const notifications = await notifySubmission(application);
+
+      res.status(201).json({
+        referenceNumber: application.referenceNumber,
+        applicationId: application.id,
+        submittedAt: application.submittedAt,
+        applicationStatus: application.status,
+        resultSlipUploaded: Boolean(slipContext),
+        resultVerificationStatus: application.senior3Results?.verificationStatus,
+        schoolContact: [school.phone, school.email].filter(Boolean).join(' · '),
+        notifications
+      });
+    } catch (error) {
+      console.error('[Admissions] Submission failed:', error);
+      res.status(500).json({ error: 'Your application could not be saved. Please try again.' });
+    }
+  }
+);
+
+app.post(
+  '/api/public/admissions/tracking/request',
+  assertSameOrigin,
+  trackingRequestLimiter,
+  async (req: Request, res: Response) => {
+    const referenceNumber = sanitizeReference(req.body?.referenceNumber);
+    const contact = sanitizeInput(req.body?.contact, 200);
+    const application = db.getAdmissionByReference(referenceNumber);
+    if (!application || !contactMatches(application, contact)) {
+      res.status(400).json({ error: 'No application matches that reference number and contact.' });
+      return;
+    }
+
+    let channel: 'email' | 'sms' | 'none' = 'none';
+    if (emailConfigured() && application.applicantEmail) channel = 'email';
+    else if (smsConfigured() && (application.applicantPhone || application.guardianPhone)) channel = 'sms';
+
+    if (channel === 'none') {
+      const existing = db.getActiveVerificationByReference(referenceNumber);
+      if (existing) {
+        db.updateAdmissionVerification(existing.id, { consumedAt: new Date().toISOString() });
+      }
+      res.json({
+        requiresCode: false,
+        channel: 'none',
+        message: 'Messaging is not configured. Confirm the registered contact to view limited status information.'
+      });
+      return;
+    }
+
+    const code = generateVerificationCode();
+    const verification = {
+      id: `ver-${crypto.randomUUID()}`,
+      applicationId: application.id,
+      referenceNumber,
+      contactHash: hashValue(normalizeContact(contact)),
+      codeHash: hashValue(`${referenceNumber}:${code}`),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      attempts: 0,
+      createdAt: new Date().toISOString()
+    };
+    db.addAdmissionVerification(verification);
+    const delivery = await sendVerificationCode(application, channel, code);
+
+    if (!delivery.sent) {
+      db.updateAdmissionVerification(verification.id, { consumedAt: new Date().toISOString() });
+      res.status(503).json({
+        error: 'We could not deliver a verification code. Please try again later or contact the school.'
+      });
+      return;
+    }
+
+    res.json({
+      requiresCode: true,
+      channel,
+      message:
+        channel === 'email'
+          ? 'A verification code was sent to the email address on the application.'
+          : 'A verification code was sent to the phone number on the application.'
+    });
+  }
+);
+
+app.post(
+  '/api/public/admissions/tracking/verify',
+  assertSameOrigin,
+  trackingVerifyLimiter,
+  (req: Request, res: Response) => {
+    const referenceNumber = sanitizeReference(req.body?.referenceNumber);
+    const contact = sanitizeInput(req.body?.contact, 200);
+    const application = db.getAdmissionByReference(referenceNumber);
+    if (!application || !contactMatches(application, contact)) {
+      res.status(400).json({ error: 'No application matches that reference number and contact.' });
+      return;
+    }
+
+    const verification = db.getActiveVerificationByReference(referenceNumber);
+    if (verification) {
+      if (verification.contactHash !== hashValue(normalizeContact(contact))) {
+        res.status(400).json({ error: 'No application matches that reference number and contact.' });
+        return;
+      }
+      if (new Date(verification.expiresAt).getTime() <= Date.now()) {
+        res.status(400).json({ error: 'The verification code expired. Request a new one.' });
+        return;
+      }
+      if (verification.attempts >= 5) {
+        res.status(429).json({ error: 'Too many incorrect codes. Request a new verification code.' });
+        return;
+      }
+      const code = sanitizeInput(req.body?.code, 10);
+      if (!code || verification.codeHash !== hashValue(`${referenceNumber}:${code}`)) {
+        db.updateAdmissionVerification(verification.id, { attempts: verification.attempts + 1 });
+        res.status(400).json({ error: 'Incorrect verification code.' });
+        return;
+      }
+      db.updateAdmissionVerification(verification.id, { consumedAt: new Date().toISOString() });
+    } else if (emailConfigured() || smsConfigured()) {
+      // A provider is connected, so a code is always required.
+      res.status(400).json({ error: 'Request a verification code first.' });
+      return;
+    }
+
+    res.json({ application: limitedTrackingSummary(application) });
+  }
+);
+
+// ==========================================
+// ADMIN ADMISSIONS MANAGEMENT API
+// ==========================================
+
+app.get('/api/admissions/applications', requireAdmissionsRole('read'), (req: Request, res: Response) => {
+  const actor = getActor(req);
+  const rawType = sanitizeInput(req.query.applicationType, 40);
+  const type = APPLICATION_TYPES.includes(rawType as ApplicationType) ? (rawType as ApplicationType) : undefined;
+  const rawStatus = sanitizeInput(req.query.status, 40);
+  const status = APPLICATION_STATUSES.includes(rawStatus as ApplicationStatus) ? (rawStatus as ApplicationStatus) : undefined;
+  const academicYear = sanitizeInput(req.query.academicYear, 20);
+  if (rawType && !type) {
+    res.status(400).json({ error: 'Invalid application type filter.' });
+    return;
+  }
+  if (rawStatus && !status) {
+    res.status(400).json({ error: 'Invalid status filter.' });
+    return;
+  }
+  const applications = db.getAdmissions(actor.role === 'SUPER_ADMIN' ? undefined : actor.schoolId, {
+    search: sanitizeInput(req.query.search, 120) || undefined,
+    applicationType: type,
+    status,
+    academicYear: academicYear || undefined
+  });
+  res.json({ applications, total: applications.length });
+});
+
+app.get('/api/admissions/settings', requireAdmissionsRole('read'), (_req: Request, res: Response) => {
+  res.json(db.getAdmissionSettings());
+});
+
+app.patch('/api/admissions/settings', requireAdmissionsRole('write'), async (req: Request, res: Response) => {
+  const actor = getActor(req);
+  const resultSlipRequired = req.body?.resultSlipRequired;
+  if (typeof resultSlipRequired !== 'boolean') {
+    res.status(400).json({ error: 'Select whether a Senior 3 result slip is required.' });
+    return;
+  }
+  const exceptionNote = sanitizeInput(req.body?.resultSlipExceptionNote, 500);
+  if (!resultSlipRequired && exceptionNote.length < 5) {
+    res.status(400).json({ error: 'Add a short reason for the result slip exception.' });
+    return;
+  }
+  const settings = db.updateAdmissionSettings({
+    resultSlipRequired,
+    resultSlipExceptionNote: resultSlipRequired ? undefined : exceptionNote,
+    updatedAt: new Date().toISOString(),
+    updatedBy: actor.id
+  });
+  await persistMirror(() => mirrorAdmissionSettings(settings), 'admission settings');
+  db.logAudit(
+    actor.schoolId, actor.id, actor.fullName, actor.role,
+    'ADMISSION_SETTINGS_UPDATED', 'ADMISSION_SETTINGS', 'public_admissions',
+    `Result slip requirement set to ${resultSlipRequired ? 'required' : `waived: ${exceptionNote}`}.`, req.ip
+  );
+  res.json(settings);
+});
+
+app.get('/api/admissions/export', requireAdmissionsRole('read'), (req: Request, res: Response) => {
+  const actor = getActor(req);
+  const applications = db.getAdmissions(actor.role === 'SUPER_ADMIN' ? undefined : actor.schoolId);
+  const headers = [
+    'Reference', 'Type', 'Status', 'Submitted', 'Academic Year',
+    'Applicant', 'Date of Birth', 'Phone', 'Email', 'District', 'Sector', 'Residence',
+    'Guardian', 'Guardian Phone', 'Relationship', 'Previous/Current School', 'Requested Level/Class',
+    'Reason', 'Reviewed By', 'Reviewed At'
+  ];
+  const rows = applications.map(application =>
+    [
+      application.referenceNumber,
+      application.applicationType,
+      application.status,
+      application.submittedAt,
+      application.academicYear,
+      application.applicantFullName,
+      application.applicantDob,
+      application.applicantPhone,
+      application.applicantEmail,
+      application.applicantDistrict,
+      application.applicantSector,
+      application.applicantResidence,
+      application.guardianFullName,
+      application.guardianPhone,
+      application.guardianRelationship,
+      application.previousSchoolName || application.currentSchoolName || application.previousSchoolOther,
+      application.requestedLevel || application.requestedClass || application.requestedEducationLevel,
+      application.reasonForChoosingSchool || application.transferReason || application.applicationReason,
+      application.reviewedByName,
+      application.reviewedAt
+    ]
+      .map(csvCell)
+      .join(',')
+  );
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="schoolcare-admissions-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(`\uFEFF${headers.map(csvCell).join(',')}\n${rows.join('\n')}\n`);
+});
+
+app.get('/api/admissions/applications/:id', requireAdmissionsRole('read'), (req: Request, res: Response) => {
+  const application = findAdminApplication(req, res);
+  if (!application) return;
+  res.json({ application });
+});
+
+app.post('/api/admissions/applications/:id/review-notes', requireAdmissionsRole('write'), (req: Request, res: Response) => {
+  const application = findAdminApplication(req, res);
+  if (!application) return;
+  const actor = getActor(req);
+  const noteText = sanitizeInput(req.body?.note, 2000);
+  if (noteText.length < 2) {
+    res.status(400).json({ error: 'Enter a review note.' });
+    return;
+  }
+
+  const note = {
+    id: `note-${crypto.randomUUID()}`,
+    applicationId: application.id,
+    reviewerId: actor.id,
+    reviewerName: actor.fullName,
+    reviewerRole: actor.role,
+    note: noteText,
+    createdAt: new Date().toISOString()
+  };
+  db.addAdmissionReviewNote(application.id, note);
+  const updated = db.updateAdmission(application.id, {
+    reviewNotes: [application.reviewNotes, `${actor.fullName}: ${noteText}`].filter(Boolean).join('\n\n').slice(0, 20_000)
+  });
+  if (updated) {
+    void persistMirror(() => mirrorReviewNote(note), 'review note');
+  }
+  db.logAudit(
+    actor.schoolId, actor.id, actor.fullName, actor.role,
+    'ADMISSION_REVIEW_NOTE_ADDED', 'ADMISSION_APPLICATION', application.id,
+    `Internal review note added to ${application.referenceNumber}.`, req.ip
+  );
+  res.json({ note, application: updated });
+});
+
+app.post(
+  '/api/admissions/applications/:id/result-verification',
+  requireAdmissionsRole('write'),
+  async (req: Request, res: Response) => {
+    const application = findAdminApplication(req, res);
+    if (!application) return;
+    const actor = getActor(req);
+    if (application.applicationType !== 'NEW_STUDENT_SENIOR4' || !application.senior3Results) {
+      res.status(400).json({ error: 'This application has no Senior 3 results to verify.' });
+      return;
+    }
+
+    const status = sanitizeInput(req.body?.status, 60) as ResultSlipVerificationStatus;
+    if (!(RESULT_SLIP_VERIFICATION_STATUSES as string[]).includes(status)) {
+      res.status(400).json({ error: 'Select a valid verification status.' });
+      return;
+    }
+    const notes = sanitizeInput(req.body?.notes, 4000);
+    const academicData = normalizeAcademicPerformance(req.body?.academicPerformance);
+    if (status === 'VERIFIED' && !hasActualAcademicData(academicData)) {
+      res.status(400).json({ error: 'Enter the subjects and marks/grades from the original slip before marking it verified.' });
+      return;
+    }
+    if (
+      (status === 'VERIFICATION_FAILED' || status === 'ADDITIONAL_DOCUMENT_REQUIRED') &&
+      notes.length < 5
+    ) {
+      res.status(400).json({ error: 'Add a short explanation for this verification decision.' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const event = {
+      id: `verhist-${crypto.randomUUID()}`,
+      applicationId: application.id,
+      status,
+      notes: notes || undefined,
+      changedBy: actor.id,
+      changedByName: actor.fullName,
+      createdAt: now
+    };
+    const updated = db.updateSenior3Results(application.id, {
+      verificationStatus: status,
+      verificationNotes: notes || undefined,
+      verificationHistory: [...application.senior3Results.verificationHistory, event],
+      verifiedBy: actor.id,
+      verifiedByName: actor.fullName,
+      verifiedAt: now,
+      verifiedSummary: status === 'VERIFIED' ? academicData : application.senior3Results.verifiedSummary
+    });
+    if (!updated) {
+      res.status(404).json({ error: 'Application not found.' });
+      return;
+    }
+    await persistMirror(async () => {
+      if (updated.senior3Results) await mirrorSenior3Results(updated.senior3Results);
+      await mirrorResultVerificationEvent(event);
+    }, 'result verification');
+    db.logAudit(
+      actor.schoolId, actor.id, actor.fullName, actor.role,
+      'ADMISSION_RESULT_VERIFICATION_UPDATED', 'ADMISSION_APPLICATION', application.id,
+      `${application.referenceNumber}: result verification -> ${status}.`, req.ip
+    );
+    res.json({ application: updated, event });
+  }
+);
+
+app.post('/api/admissions/applications/:id/status', requireAdmissionsRole('write'), async (req: Request, res: Response) => {
+  const application = findAdminApplication(req, res);
+  if (!application) return;
+  const actor = getActor(req);
+  const status = sanitizeInput(req.body?.status, 40) as ApplicationStatus;
+  const reason = sanitizeInput(req.body?.reason, 2000);
+  if (!(APPLICATION_STATUSES as string[]).includes(status)) {
+    res.status(400).json({ error: 'Select a valid status.' });
+    return;
+  }
+  if ((status === 'REJECTED' || status === 'ADDITIONAL_INFO_REQUIRED') && reason.length < 5) {
+    res.status(400).json({ error: 'A short explanation is required for this status.' });
+    return;
+  }
+
+  const updated = db.updateAdmissionStatus(application.id, status, actor.id, actor.fullName, reason);
+  if (!updated) {
+    res.status(404).json({ error: 'Application not found.' });
+    return;
+  }
+  const historyEntry = updated.statusHistory[updated.statusHistory.length - 1];
+  await persistMirror(async () => {
+    await mirrorApplicationUpdate(updated);
+    if (historyEntry) await mirrorStatusHistory(historyEntry);
+  }, 'status change');
+
+  db.logAudit(
+    actor.schoolId, actor.id, actor.fullName, actor.role,
+    'ADMISSION_STATUS_CHANGED', 'ADMISSION_APPLICATION', application.id,
+    `${application.referenceNumber}: ${application.status} -> ${status}.`, req.ip
+  );
+  const notifications = await notifyStatusChange(updated, status, reason);
+  res.json({ application: updated, notifications });
+});
+
+app.get(
+  '/api/admissions/applications/:id/documents/:documentId/download',
+  requireAdmissionsRole('read'),
+  (req: Request, res: Response) => {
+    const application = findAdminApplication(req, res);
+    if (!application) return;
+    const document = application.documents.find(item => item.id === req.params.documentId);
+    if (!document) {
+      res.status(404).json({ error: 'Document not found.' });
+      return;
+    }
+    const filePath = path.resolve(UPLOAD_ROOT, document.storagePath);
+    if (!filePath.startsWith(`${UPLOAD_ROOT}${path.sep}`) || !fs.existsSync(filePath)) {
+      res.status(404).json({ error: 'Document not found.' });
+      return;
+    }
+    const fileName = safeFileName(document.fileName);
+    res.setHeader('Content-Type', document.fileMime);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+    );
+    fs.createReadStream(filePath).pipe(res);
+  }
+);
+
+app.get(
+  '/api/admissions/applications/:id/documents/:documentId/preview',
+  requireAdmissionsRole('read'),
+  (req: Request, res: Response) => {
+    const application = findAdminApplication(req, res);
+    if (!application) return;
+    const document = application.documents.find(item => item.id === req.params.documentId);
+    if (!document) {
+      res.status(404).json({ error: 'Document not found.' });
+      return;
+    }
+    const filePath = path.resolve(UPLOAD_ROOT, document.storagePath);
+    if (!filePath.startsWith(`${UPLOAD_ROOT}${path.sep}`) || !fs.existsSync(filePath)) {
+      res.status(404).json({ error: 'Document not found.' });
+      return;
+    }
+    res.setHeader('Content-Type', document.fileMime);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'");
+    res.setHeader('Content-Disposition', `inline; filename="${safeFileName(document.fileName)}"`);
+    fs.createReadStream(filePath).pipe(res);
+  }
+);
 
 // --- MySQL & XAMPP Integration Endpoints ---
 app.get('/api/mysql/status', async (_req: Request, res: Response) => {

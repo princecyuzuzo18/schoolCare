@@ -23,7 +23,10 @@ import {
   AdmissionApplication,
   AdmissionDocument,
   AdmissionReviewNote,
+  AdmissionSettings,
+  AdmissionSlipUpload,
   AdmissionStatusHistory,
+  AdmissionVerification,
   ApplicationStatus,
   ApplicationType
 } from '../src/types';
@@ -70,6 +73,9 @@ interface DatabaseSchema {
   reportCards: ReportCard[];
   auditLogs: AuditLogEntry[];
   admissions: AdmissionApplication[];
+  admissionVerifications: AdmissionVerification[];
+  admissionSlipUploads: AdmissionSlipUpload[];
+  admissionSettings: AdmissionSettings;
   modules: Record<string, Array<Record<string, unknown>>>;
 }
 
@@ -127,6 +133,9 @@ class DatabaseStore {
       reportCards: [...initialReportCards],
       auditLogs: [...initialAuditLogs],
       admissions: [],
+      admissionVerifications: [],
+      admissionSlipUploads: [],
+      admissionSettings: { resultSlipRequired: true },
       modules: {}
     };
   }
@@ -154,6 +163,30 @@ class DatabaseStore {
             parsed.modules = {};
             needsSave = true;
           }
+          if (!Array.isArray(parsed.admissions)) {
+            parsed.admissions = [];
+            needsSave = true;
+          }
+          if (!Array.isArray(parsed.admissionVerifications)) {
+            parsed.admissionVerifications = [];
+            needsSave = true;
+          }
+          if (!Array.isArray(parsed.admissionSlipUploads)) {
+            parsed.admissionSlipUploads = [];
+            needsSave = true;
+          }
+          if (
+            !parsed.admissionSettings ||
+            typeof parsed.admissionSettings !== 'object' ||
+            Array.isArray(parsed.admissionSettings) ||
+            typeof parsed.admissionSettings.resultSlipRequired !== 'boolean'
+          ) {
+            parsed.admissionSettings = {
+              ...(parsed.admissionSettings && typeof parsed.admissionSettings === 'object' ? parsed.admissionSettings : {}),
+              resultSlipRequired: true
+            };
+            needsSave = true;
+          }
           if (needsSave) {
             this.saveData(parsed);
           }
@@ -174,7 +207,12 @@ class DatabaseStore {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
       }
-      fs.writeFileSync(DB_FILE, JSON.stringify(dataToSave, null, 2), 'utf-8');
+      fs.writeFileSync(DB_FILE, JSON.stringify(dataToSave, null, 2), { encoding: 'utf-8', mode: 0o600 });
+      try {
+        fs.chmodSync(DB_FILE, 0o600);
+      } catch {
+        // Some Windows filesystems do not support POSIX permissions.
+      }
     } catch (err) {
       console.error('Failed to write to database file:', err);
     }
@@ -526,7 +564,7 @@ class DatabaseStore {
   // ==========================================
 
   public getAdmissions(
-    schoolId: string,
+    schoolId?: string,
     filters?: {
       search?: string;
       applicationType?: ApplicationType;
@@ -534,7 +572,9 @@ class DatabaseStore {
       academicYear?: string;
     }
   ): AdmissionApplication[] {
-    let list = this.data.admissions.filter(a => a.schoolId === schoolId);
+    let list = schoolId
+      ? this.data.admissions.filter(a => a.schoolId === schoolId)
+      : [...this.data.admissions];
 
     if (filters?.search) {
       const q = filters.search.toLowerCase();
@@ -646,6 +686,84 @@ class DatabaseStore {
       createdAt: new Date().toISOString()
     });
 
+    this.saveData();
+    return app;
+  }
+
+  // --- Public application verification (one-time codes) ---
+  public addAdmissionVerification(record: AdmissionVerification): AdmissionVerification {
+    this.data.admissionVerifications.push(record);
+    this.saveData();
+    return record;
+  }
+
+  public getAdmissionVerification(id: string): AdmissionVerification | undefined {
+    return this.data.admissionVerifications.find(item => item.id === id);
+  }
+
+  public getActiveVerificationByReference(referenceNumber: string): AdmissionVerification | undefined {
+    return [...this.data.admissionVerifications]
+      .reverse()
+      .find(item => item.referenceNumber === referenceNumber && !item.consumedAt);
+  }
+
+  public updateAdmissionVerification(
+    id: string,
+    updates: Partial<AdmissionVerification>
+  ): AdmissionVerification | null {
+    const index = this.data.admissionVerifications.findIndex(item => item.id === id);
+    if (index === -1) return null;
+    this.data.admissionVerifications[index] = {
+      ...this.data.admissionVerifications[index],
+      ...updates
+    };
+    this.saveData();
+    return this.data.admissionVerifications[index];
+  }
+
+  // --- Senior 3 result slip uploads (temporary, private capability records) ---
+  public addAdmissionSlipUpload(record: AdmissionSlipUpload): AdmissionSlipUpload {
+    this.data.admissionSlipUploads.push(record);
+    this.saveData();
+    return record;
+  }
+
+  public getAdmissionSlipUploadByTokenHash(tokenHash: string): AdmissionSlipUpload | undefined {
+    return this.data.admissionSlipUploads.find(item => item.tokenHash === tokenHash);
+  }
+
+  public updateAdmissionSlipUpload(
+    id: string,
+    updates: Partial<AdmissionSlipUpload>
+  ): AdmissionSlipUpload | null {
+    const index = this.data.admissionSlipUploads.findIndex(item => item.id === id);
+    if (index === -1) return null;
+    this.data.admissionSlipUploads[index] = {
+      ...this.data.admissionSlipUploads[index],
+      ...updates
+    };
+    this.saveData();
+    return this.data.admissionSlipUploads[index];
+  }
+
+  // --- Administrator-configured admission settings ---
+  public getAdmissionSettings(): AdmissionSettings {
+    return { ...this.data.admissionSettings };
+  }
+
+  public updateAdmissionSettings(updates: Partial<AdmissionSettings>): AdmissionSettings {
+    this.data.admissionSettings = { ...this.data.admissionSettings, ...updates };
+    this.saveData();
+    return this.getAdmissionSettings();
+  }
+
+  public updateSenior3Results(
+    applicationId: string,
+    updates: Partial<NonNullable<AdmissionApplication['senior3Results']>>
+  ): AdmissionApplication | null {
+    const app = this.data.admissions.find(item => item.id === applicationId);
+    if (!app || !app.senior3Results || !updates) return null;
+    app.senior3Results = { ...app.senior3Results, ...updates, updatedAt: new Date().toISOString() };
     this.saveData();
     return app;
   }

@@ -432,8 +432,7 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- ====================================================================
 
 -- Admission Applications
-DROP TABLE IF EXISTS `admission_applications`;
-CREATE TABLE `admission_applications` (
+CREATE TABLE IF NOT EXISTS `admission_applications` (
   `id` VARCHAR(50) NOT NULL,
   `school_id` VARCHAR(50) NOT NULL,
   `reference_number` VARCHAR(50) NOT NULL UNIQUE,
@@ -492,8 +491,7 @@ CREATE TABLE `admission_applications` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Admission Documents
-DROP TABLE IF EXISTS `admission_documents`;
-CREATE TABLE `admission_documents` (
+CREATE TABLE IF NOT EXISTS `admission_documents` (
   `id` VARCHAR(50) NOT NULL,
   `application_id` VARCHAR(50) NOT NULL,
   `document_type` VARCHAR(100) NOT NULL,
@@ -507,8 +505,7 @@ CREATE TABLE `admission_documents` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Admission Review Notes
-DROP TABLE IF EXISTS `admission_review_notes`;
-CREATE TABLE `admission_review_notes` (
+CREATE TABLE IF NOT EXISTS `admission_review_notes` (
   `id` VARCHAR(50) NOT NULL,
   `application_id` VARCHAR(50) NOT NULL,
   `reviewer_id` VARCHAR(50) NOT NULL,
@@ -521,8 +518,7 @@ CREATE TABLE `admission_review_notes` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Admission Status History
-DROP TABLE IF EXISTS `admission_status_history`;
-CREATE TABLE `admission_status_history` (
+CREATE TABLE IF NOT EXISTS `admission_status_history` (
   `id` VARCHAR(50) NOT NULL,
   `application_id` VARCHAR(50) NOT NULL,
   `from_status` ENUM('SUBMITTED', 'UNDER_REVIEW', 'ADDITIONAL_INFO_REQUIRED', 'APPROVED', 'REJECTED'),
@@ -532,5 +528,21 @@ CREATE TABLE `admission_status_history` (
   `reason` TEXT,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
+  FOREIGN KEY (`application_id`) REFERENCES `admission_applications`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- One-time codes for public application tracking (no account required)
+CREATE TABLE IF NOT EXISTS `admission_verifications` (
+  `id` VARCHAR(50) NOT NULL,
+  `application_id` VARCHAR(50) NOT NULL,
+  `reference_number` VARCHAR(50) NOT NULL,
+  `contact_hash` VARCHAR(128) NOT NULL,
+  `code_hash` VARCHAR(128) NOT NULL,
+  `expires_at` DATETIME NOT NULL,
+  `attempts` INT NOT NULL DEFAULT 0,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `consumed_at` DATETIME DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_verification_reference` (`reference_number`),
   FOREIGN KEY (`application_id`) REFERENCES `admission_applications`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

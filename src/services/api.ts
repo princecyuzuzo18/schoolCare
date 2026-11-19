@@ -19,7 +19,17 @@ import {
   ReportCard,
   AuditLogEntry,
   UserRole,
-  MysqlStatus
+  MysqlStatus,
+  AdmissionApplication,
+  AdmissionNotificationStatus,
+  AdmissionTrackingSummary,
+  ApplicationStatus,
+  ApplicationType,
+  AdmissionReviewNote,
+  AdmissionSettings,
+  AcademicPerformanceData,
+  ResultSlipVerificationEvent,
+  ResultSlipVerificationStatus
 } from '../types';
 
 const API_BASE = '/api';
@@ -29,6 +39,21 @@ export class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+export interface ResultSlipExtraction {
+  status: 'EXTRACTED' | 'UNAVAILABLE' | 'ERROR' | 'NOT_ATTEMPTED';
+  data?: AcademicPerformanceData | null;
+  message?: string | null;
+}
+
+export interface ResultSlipUploadResponse {
+  uploadToken: string;
+  fileName: string;
+  fileSize: number;
+  fileMime: string;
+  expiresAt: string;
+  extracted: ResultSlipExtraction;
 }
 
 class ApiService {
@@ -46,13 +71,44 @@ class ApiService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Network response was not ok' }));
-      if (res.status === 401 && !['/auth/login', '/auth/me', '/auth/password-reset/request'].includes(endpoint)) {
+      if (
+        res.status === 401 &&
+        !['/auth/login', '/auth/me', '/auth/password-reset/request'].includes(endpoint) &&
+        !endpoint.startsWith('/public/admissions/')
+      ) {
         window.dispatchEvent(new Event('schoolcare:session-expired'));
       }
       throw new ApiError(err.error || `HTTP ${res.status}`, res.status);
     }
 
     return res.json();
+  }
+
+  private async requestForm<T>(endpoint: string, formData: FormData): Promise<T> {
+    const res = await fetch(`${API_BASE}${endpoint}`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'same-origin'
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Network response was not ok' }));
+      throw new ApiError(err.error || `HTTP ${res.status}`, res.status);
+    }
+    return res.json();
+  }
+
+  private async requestBlob(endpoint: string, body: unknown): Promise<Blob> {
+    const res = await fetch(`${API_BASE}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      credentials: 'same-origin'
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Network response was not ok' }));
+      throw new ApiError(err.error || `HTTP ${res.status}`, res.status);
+    }
+    return res.blob();
   }
 
   // --- Auth ---
@@ -324,6 +380,162 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ message, context })
     });
+  }
+
+  // --- Public admissions (no account required) ---
+  public async submitAdmissionApplication(formData: FormData): Promise<{
+    referenceNumber: string;
+    applicationId: string;
+    submittedAt: string;
+    applicationStatus: ApplicationStatus;
+    resultSlipUploaded: boolean;
+    resultVerificationStatus?: ResultSlipVerificationStatus;
+    schoolContact?: string;
+    notifications: AdmissionNotificationStatus[];
+  }> {
+    return this.requestForm('/public/admissions/applications', formData);
+  }
+
+  public async getPublicAdmissionSettings(): Promise<{
+    resultSlipRequired: boolean;
+    resultSlipExceptionNote?: string;
+  }> {
+    return this.request('/public/admissions/settings');
+  }
+
+  public uploadResultSlip(
+    file: File,
+    onProgress: (percent: number) => void,
+    replaceToken?: string
+  ): Promise<ResultSlipUploadResponse> {
+    const formData = new FormData();
+    formData.append('resultSlip', file);
+    if (replaceToken) formData.append('replaceToken', replaceToken);
+
+    return new Promise<ResultSlipUploadResponse>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE}/public/admissions/result-slips`);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = event => {
+        if (event.lengthComputable) onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      };
+      xhr.onload = () => {
+        let payload: Record<string, unknown> = {};
+        try {
+          payload = JSON.parse(xhr.responseText) as Record<string, unknown>;
+        } catch {
+          // handled below
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(payload as unknown as ResultSlipUploadResponse);
+        } else {
+          reject(new ApiError(String(payload.error || 'The result slip could not be uploaded.'), xhr.status));
+        }
+      };
+      xhr.onerror = () => reject(new ApiError('The result slip could not be uploaded. Check your connection.', 0));
+      xhr.send(formData);
+    });
+  }
+
+  public async previewResultSlip(uploadToken: string): Promise<Blob> {
+    return this.requestBlob('/public/admissions/result-slips/preview', { uploadToken });
+  }
+
+  public async requestAdmissionTrackingCode(
+    referenceNumber: string,
+    contact: string
+  ): Promise<{ requiresCode: boolean; channel: 'email' | 'sms' | 'none'; message: string }> {
+    return this.request('/public/admissions/tracking/request', {
+      method: 'POST',
+      body: JSON.stringify({ referenceNumber, contact })
+    });
+  }
+
+  public async verifyAdmissionTracking(
+    referenceNumber: string,
+    contact: string,
+    code?: string
+  ): Promise<{ application: AdmissionTrackingSummary }> {
+    return this.request('/public/admissions/tracking/verify', {
+      method: 'POST',
+      body: JSON.stringify({ referenceNumber, contact, code })
+    });
+  }
+
+  // --- Admissions management (administrators only) ---
+  public async getAdmissionApplications(filters: {
+    search?: string;
+    applicationType?: ApplicationType;
+    status?: ApplicationStatus;
+    academicYear?: string;
+  } = {}): Promise<{ applications: AdmissionApplication[]; total: number }> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) params.set(key, String(value));
+    });
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return this.request(`/admissions/applications${suffix}`);
+  }
+
+  public async getAdmissionApplication(id: string): Promise<{ application: AdmissionApplication }> {
+    return this.request(`/admissions/applications/${encodeURIComponent(id)}`);
+  }
+
+  public async getAdmissionSettings(): Promise<AdmissionSettings> {
+    return this.request('/admissions/settings');
+  }
+
+  public async updateAdmissionSettings(settings: {
+    resultSlipRequired: boolean;
+    resultSlipExceptionNote?: string;
+  }): Promise<AdmissionSettings> {
+    return this.request('/admissions/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(settings)
+    });
+  }
+
+  public async updateResultVerification(
+    id: string,
+    payload: {
+      status: ResultSlipVerificationStatus;
+      notes?: string;
+      academicPerformance?: AcademicPerformanceData;
+    }
+  ): Promise<{ application: AdmissionApplication; event: ResultSlipVerificationEvent }> {
+    return this.request(`/admissions/applications/${encodeURIComponent(id)}/result-verification`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  public async addAdmissionReviewNote(
+    id: string,
+    note: string
+  ): Promise<{ note: AdmissionReviewNote; application: AdmissionApplication }> {
+    return this.request(`/admissions/applications/${encodeURIComponent(id)}/review-notes`, {
+      method: 'POST',
+      body: JSON.stringify({ note })
+    });
+  }
+
+  public async updateAdmissionStatus(
+    id: string,
+    status: ApplicationStatus,
+    reason = ''
+  ): Promise<{ application: AdmissionApplication; notifications: AdmissionNotificationStatus[] }> {
+    return this.request(`/admissions/applications/${encodeURIComponent(id)}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status, reason })
+    });
+  }
+
+  public getAdmissionDocumentUrl(applicationId: string, documentId: string): string {
+    return `${API_BASE}/admissions/applications/${encodeURIComponent(applicationId)}/documents/${encodeURIComponent(documentId)}/download`;
+  }
+
+  public getAdmissionDocumentPreviewUrl(applicationId: string, documentId: string): string {
+    return `${API_BASE}/admissions/applications/${encodeURIComponent(applicationId)}/documents/${encodeURIComponent(documentId)}/preview`;
   }
 
   // --- MySQL & XAMPP Integration ---

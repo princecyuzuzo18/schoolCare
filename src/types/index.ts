@@ -449,6 +449,94 @@ export type ApplicationStatus =
   | 'APPROVED'
   | 'REJECTED';
 
+// Result verification is intentionally separate from the application status.
+export type ResultSlipVerificationStatus =
+  | 'NOT_YET_VERIFIED'
+  | 'UNDER_VERIFICATION'
+  | 'VERIFIED'
+  | 'VERIFICATION_FAILED'
+  | 'ADDITIONAL_DOCUMENT_REQUIRED';
+
+export interface AcademicResultSubject {
+  name: string;
+  marks?: string;
+  grade?: string;
+}
+
+/** Only values actually present on the original slip or entered by a reviewer/applicant. */
+export interface AcademicPerformanceData {
+  studentName?: string;
+  examinationYear?: string;
+  subjects: AcademicResultSubject[];
+  total?: string;
+  aggregate?: string;
+  division?: string;
+}
+
+export interface ResultSlipVerificationEvent {
+  id: string;
+  applicationId: string;
+  status: ResultSlipVerificationStatus;
+  notes?: string;
+  changedBy: string;
+  changedByName: string;
+  createdAt: string;
+}
+
+export interface Senior3ResultsRecord {
+  applicationId: string;
+  documentId?: string;
+  resultSlipUploaded: boolean;
+  slipWaived?: boolean;
+  slipExceptionNote?: string;
+  previousSchoolName?: string;
+  academicYearCompleted?: string;
+  senior3CompletionYear?: string;
+  previousSchoolLocation?: string;
+  requestedLevel?: string;
+  requestedCombination?: string;
+  ocrStatus: 'NOT_ATTEMPTED' | 'EXTRACTED' | 'UNAVAILABLE' | 'ERROR';
+  ocrMessage?: string;
+  ocrAt?: string;
+  extracted?: AcademicPerformanceData;
+  applicantReviewed?: AcademicPerformanceData;
+  verifiedSummary?: AcademicPerformanceData;
+  verificationStatus: ResultSlipVerificationStatus;
+  verificationNotes?: string;
+  verificationHistory: ResultSlipVerificationEvent[];
+  verifiedBy?: string;
+  verifiedByName?: string;
+  verifiedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Internal only: never serialized to public clients. */
+export interface AdmissionSlipUpload {
+  id: string;
+  tokenHash: string;
+  storagePath: string;
+  originalFileName: string;
+  fileMime: string;
+  fileSize: number;
+  createdAt: string;
+  expiresAt: string;
+  consumedAt?: string;
+  replacedAt?: string;
+  applicationId?: string;
+  documentId?: string;
+  ocrStatus: 'NOT_ATTEMPTED' | 'EXTRACTED' | 'UNAVAILABLE' | 'ERROR';
+  ocrData?: AcademicPerformanceData;
+  ocrMessage?: string;
+}
+
+export interface AdmissionSettings {
+  resultSlipRequired: boolean;
+  resultSlipExceptionNote?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface AdmissionDocument {
   id: string;
   applicationId: string;
@@ -540,8 +628,37 @@ export interface AdmissionApplication {
   reviewedByName?: string;
   reviewNotes?: string;
   rejectionReason?: string;
+  senior3Results?: Senior3ResultsRecord;
   documents: AdmissionDocument[];
   reviewHistory: AdmissionReviewNote[];
   statusHistory: AdmissionStatusHistory[];
+}
+
+// Public application tracking (no account required)
+export interface AdmissionVerification {
+  id: string;
+  applicationId: string;
+  referenceNumber: string;
+  contactHash: string;
+  codeHash: string;
+  expiresAt: string;
+  attempts: number;
+  createdAt: string;
+  consumedAt?: string;
+}
+
+export interface AdmissionTrackingSummary {
+  referenceNumber: string;
+  applicationType: ApplicationType;
+  submittedAt: string;
+  status: ApplicationStatus;
+  schoolResponse?: string;
+}
+
+export interface AdmissionNotificationStatus {
+  channel: 'email' | 'sms';
+  configured: boolean;
+  sent: boolean;
+  detail?: string;
 }
 

@@ -9,6 +9,8 @@ import { AccessibilityProvider } from './contexts/AccessibilityContext';
 
 import { LandingPage } from './pages/LandingPage';
 import { AuthPage } from './pages/AuthPage';
+import { AdmissionsPortalPage } from './pages/AdmissionsPortalPage';
+import { AdmissionTrackingPage } from './pages/AdmissionTrackingPage';
 
 import { api } from './services/api';
 import { HealthIncident, Student, Guardian } from './types';
@@ -81,7 +83,8 @@ const MainApp: React.FC = () => {
       const requested = readHashTab();
 
       if (!currentUser) {
-        if (requested && requested !== 'login') {
+        const publicTabs = new Set(['login', 'apply', 'track']);
+        if (requested && !publicTabs.has(requested)) {
           sessionStorage.setItem('schoolcare_redirect_target', requested);
           history.replaceState(null, '', '#/login');
           window.dispatchEvent(new Event('hashchange'));
@@ -407,12 +410,40 @@ const PublicSite: React.FC = () => {
 
   return (
     <LandingPage
-      onNavigate={() => {
-        window.location.hash = '#/login';
+      onNavigate={tab => {
+        window.location.hash = tab === 'apply' ? '#/apply' : tab === 'track' ? '#/track' : '#/login';
       }}
       publicMode
     />
   );
+};
+
+/** Public admission pages are intentionally outside the authenticated shell. */
+const PublicRouteGate: React.FC = () => {
+  const [route, setRoute] = useState<string | null>(() => readHashTab());
+
+  useEffect(() => {
+    const sync = () => setRoute(readHashTab());
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('popstate', sync);
+    return () => {
+      window.removeEventListener('hashchange', sync);
+      window.removeEventListener('popstate', sync);
+    };
+  }, []);
+
+  if (route === 'apply') {
+    return (
+      <AdmissionsPortalPage
+        onBackHome={() => { window.location.hash = '#/'; }}
+        onOpenTracking={() => { window.location.hash = '#/track'; }}
+      />
+    );
+  }
+  if (route === 'track') {
+    return <AdmissionTrackingPage onBackHome={() => { window.location.hash = '#/'; }} />;
+  }
+  return <MainApp />;
 };
 
 export default function App() {
@@ -420,7 +451,7 @@ export default function App() {
     <LanguageProvider>
       <AccessibilityProvider>
         <AuthProvider>
-          <MainApp />
+          <PublicRouteGate />
         </AuthProvider>
       </AccessibilityProvider>
     </LanguageProvider>

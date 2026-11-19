@@ -29,6 +29,7 @@ import {
   Youtube
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useAdmissionsCopy } from '../i18n/admissions';
 
 interface LandingPageProps {
   onNavigate: (tab: string) => void;
@@ -157,7 +158,7 @@ const POLICY_CONTENT: Record<PolicyKey, { title: string; paragraphs: string[] }>
     title: 'Privacy Policy',
     paragraphs: [
       'SchoolCare is designed to keep school information organized, access-controlled, and available only to authorized roles.',
-      'This public demonstration page does not collect personal information through forms. Production deployments should publish the school’s approved data-protection notice before collecting student, parent, or staff data.',
+      'The public Apply Here admissions form collects only the details needed to assess an application and contact the applicant or guardian. These details are restricted to authorized school staff and are never sold or published. Deployments should publish the school’s approved data-protection notice before collecting student, parent, or staff data.',
       'For questions about how your school handles information, contact the school directly using the details in the footer.'
     ]
   },
@@ -226,6 +227,7 @@ const AnimatedNumber: React.FC<{ value: number }> = ({ value }) => {
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode = false }) => {
   const { school } = useAuth();
+  const admissionsCopy = useAdmissionsCopy();
   const [scrolled, setScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [policy, setPolicy] = useState<PolicyKey | null>(null);
@@ -272,6 +274,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
 
   const handleNavigate = (target: string) => {
     setMobileMenuOpen(false);
+    if (target === 'apply' || target === 'track') {
+      onNavigate(target);
+      return;
+    }
     if (target === 'sign-in' || target === 'get-started') {
       onNavigate(publicMode ? 'login' : 'dashboard');
       return;
@@ -300,8 +306,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
               className="group flex shrink-0 items-center gap-3 text-left"
               aria-label="SchoolCare home"
             >
-              <span className="relative grid h-11 w-11 place-items-center rounded-2xl bg-[#064E3B] shadow-lg shadow-[#064E3B]/20 transition-transform duration-300 group-hover:-rotate-3">
-                <img src="/logo.svg" alt="" className="h-8 w-8" />
+              <span className="relative grid h-11 w-11 place-items-center overflow-hidden rounded-2xl bg-white p-1 shadow-lg shadow-[#064E3B]/20 ring-1 ring-[#064E3B]/10 transition-transform duration-300 group-hover:-rotate-3">
+                <img src="/images/school-logo.png" alt="ES Rubengera Secondary School official logo" className="h-full w-full bg-white object-contain" />
               </span>
               <span className="leading-tight">
                 <span className="block text-lg font-bold tracking-tight text-[#064E3B]">SchoolCare</span>
@@ -325,6 +331,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
             </nav>
 
             <div className="hidden items-center gap-2.5 lg:flex">
+              <button
+                type="button"
+                onClick={() => handleNavigate('apply')}
+                className="inline-flex items-center gap-2 rounded-full bg-[#1D4ED8] px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-700/20 transition-colors hover:bg-[#1E40AF]"
+              >
+                {admissionsCopy.applyHere}
+                <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </button>
               <button
                 type="button"
                 onClick={() => handleNavigate('sign-in')}
@@ -371,7 +385,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
                     {link.label}
                   </button>
                 ))}
-                <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleNavigate('apply')}
+                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1D4ED8] px-4 py-3.5 text-sm font-bold text-white"
+                >
+                  {admissionsCopy.applyHere}
+                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </button>
+                <div className="mt-2 grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => handleNavigate('sign-in')}
@@ -431,10 +453,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
               <div className="mt-9 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => handleNavigate('get-started')}
-                  className="marketing-primary-btn px-7 py-4 text-sm"
+                  onClick={() => handleNavigate('apply')}
+                  className="inline-flex items-center gap-2 rounded-full bg-[#1D4ED8] px-7 py-4 text-sm font-bold text-white shadow-xl shadow-blue-700/25 transition-colors hover:bg-[#1E40AF]"
                 >
-                  Get Started
+                  {admissionsCopy.applyHere}
                   <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </button>
                 <button
@@ -444,6 +466,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
                 >
                   Explore Features
                   <ArrowDown className="h-4 w-4" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavigate('track')}
+                  className="rounded-full px-3 py-3 text-sm font-bold text-[#1D4ED8] hover:bg-blue-50"
+                >
+                  {admissionsCopy.trackApplication}
                 </button>
               </div>
 
@@ -758,15 +787,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
                   A smoother start for every new learner.
                 </h2>
                 <p className="mt-3 text-sm leading-7 text-[#61706B]">
-                  Bring registration, student records, and family communication into one clear process from the first day.
+                  Completed Senior 3, or ready to transfer from another school? Apply online in a few simple steps — no account needed.
                 </p>
+                <button
+                  type="button"
+                  onClick={() => handleNavigate('track')}
+                  className="mt-3 inline-flex items-center gap-2 text-sm font-bold text-[#1D4ED8] hover:underline"
+                >
+                  {admissionsCopy.trackApplication}
+                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </button>
               </div>
               <button
                 type="button"
-                onClick={() => handleNavigate('get-started')}
-                className="marketing-primary-btn relative mt-7 shrink-0 px-6 py-3.5 text-sm lg:mt-0"
+                onClick={() => handleNavigate('apply')}
+                className="inline-flex items-center gap-2 rounded-full bg-[#1D4ED8] px-7 py-4 text-sm font-bold text-white shadow-lg shadow-blue-700/25 transition-colors hover:bg-[#1E40AF] lg:mt-0"
               >
-                Explore Admissions
+                {admissionsCopy.applyHere}
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
@@ -812,8 +849,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
         <div className="marketing-shell grid gap-10 md:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1.1fr_1.25fr]">
           <div>
             <div className="flex items-center gap-3">
-              <span className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 ring-1 ring-white/15">
-                <img src="/logo.svg" alt="" className="h-8 w-8" />
+              <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-2xl bg-white p-1 ring-1 ring-white/25">
+                <img src="/images/school-logo.png" alt="ES Rubengera Secondary School official logo" className="h-full w-full bg-white object-contain" />
               </span>
               <div>
                 <p id="footer-heading" className="text-lg font-bold tracking-tight">SchoolCare</p>
@@ -856,6 +893,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
                   </button>
                 </li>
               ))}
+              <li>
+                <button
+                  type="button"
+                  onClick={() => handleNavigate('apply')}
+                  className="text-sm font-bold text-[#E8C97F] transition-colors hover:text-white"
+                >
+                  {admissionsCopy.applyHere}
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={() => handleNavigate('track')}
+                  className="text-sm font-medium text-[#C7D8D2] transition-colors hover:text-white"
+                >
+                  {admissionsCopy.trackApplication}
+                </button>
+              </li>
             </ul>
           </div>
 

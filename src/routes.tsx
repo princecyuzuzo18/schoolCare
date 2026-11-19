@@ -20,6 +20,7 @@ import { ReportsPage } from './pages/ReportsPage';
 import { AIAssistantPage } from './pages/AIAssistantPage';
 import { EventsPage } from './pages/EventsPage';
 import { ModuleCrud } from './pages/ModuleCrud';
+import { AdmissionsManagementPage } from './pages/AdmissionsManagementPage';
 
 export interface RouteContext {
   onNavigate: (tab: string) => void;
@@ -117,20 +118,8 @@ export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
   },
   admissions: {
     id: 'admissions',
-    title: 'Admission Management',
-    render: () => (
-      <ModuleCrud
-        title="Admission Management"
-        description="Manage student admissions"
-        fields={[
-          { key: 'studentName', label: 'Student Name' },
-          { key: 'grade', label: 'Grade' },
-          { key: 'status', label: 'Status', type: 'select', options: ['Pending', 'Approved', 'Rejected'] },
-          { key: 'date', label: 'Date', type: 'date' }
-        ]}
-        moduleKey="admissions"
-      />
-    )
+    title: 'Admissions Management',
+    render: () => <AdmissionsManagementPage />
   },
   documents: {
     id: 'documents',

@@ -154,10 +154,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
   },
   {
     id: 'admissions',
-    label: 'Admissions',
+    label: 'Admissions Management',
     icon: UserSquare2,
     section: 'people',
-    description: 'Admission applications'
+    description: 'Review public admission applications'
   },
   {
     id: 'staff',
