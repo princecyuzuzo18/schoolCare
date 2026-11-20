@@ -1,5 +1,6 @@
 import type { UserProfile, UserRole } from '../src/types';
 import {
+  ASSIGNABLE_STAFF_ROLES,
   canDelegatePermissions,
   isProtectedRole,
   isSchoolLeader
@@ -36,9 +37,15 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
   { code: 'staff.write', legacyCode: 'staff:write', labelKey: 'perm_staff_write', restricted: true },
   { code: 'staff.create', legacyCode: 'staff:create', labelKey: 'perm_staff_create', restricted: true },
   { code: 'staff.role.manage', legacyCode: 'staff:role', labelKey: 'perm_staff_role_manage', restricted: true },
+  { code: 'staff.activate', legacyCode: 'staff:activate', labelKey: 'perm_staff_activate', restricted: true },
+  { code: 'staff.suspend', legacyCode: 'staff:suspend', labelKey: 'perm_staff_suspend', restricted: true },
+  { code: 'staff.archive', legacyCode: 'staff:archive', labelKey: 'perm_staff_archive', restricted: true },
+  { code: 'staff.assign_roles', legacyCode: 'staff:assign_roles', labelKey: 'perm_staff_assign_roles', restricted: true },
   { code: 'discipline.read', legacyCode: 'discipline:read', labelKey: 'perm_discipline_read', restricted: false },
   { code: 'discipline.write', legacyCode: 'discipline:write', labelKey: 'perm_discipline_write', restricted: false },
   { code: 'reports.read', legacyCode: 'reports:read', labelKey: 'perm_reports_read', restricted: false },
+  { code: 'reports.generate', legacyCode: 'reports:generate', labelKey: 'perm_reports_generate', restricted: false },
+  { code: 'permissions.view', legacyCode: 'permissions:view', labelKey: 'perm_permissions_view', restricted: false },
   { code: 'audit.read', legacyCode: 'audit:read', labelKey: 'perm_audit_read', restricted: true },
   { code: 'audit.review', legacyCode: 'audit:review', labelKey: 'perm_audit_review', restricted: true },
   { code: 'notifications.read', legacyCode: 'notifications:read', labelKey: 'perm_notifications_read', restricted: false },
@@ -52,6 +59,53 @@ const CANONICAL_BY_ALIAS = new Map<string, string>();
 for (const permission of PERMISSION_CATALOG) {
   CANONICAL_BY_ALIAS.set(permission.code, permission.code);
   CANONICAL_BY_ALIAS.set(permission.legacyCode, permission.code);
+}
+
+/**
+ * Staff-facing permission names requested by school leadership resolve to the
+ * existing canonical codes. This keeps old stored permissions working while
+ * exposing the granular vocabulary used in the delegation screen.
+ */
+const PERMISSION_ALIASES: Record<string, string> = {
+  'staff.view': 'staff.read',
+  'staff:view': 'staff.read',
+  'staff.edit': 'staff.write',
+  'staff:edit': 'staff.write',
+  'staff.invite': 'invitations.manage',
+  'staff:invite': 'invitations.manage',
+  'students.view': 'students.read',
+  'students:view': 'students.read',
+  'students.create': 'students.write',
+  'students:create': 'students.write',
+  'students.edit': 'students.write',
+  'students:edit': 'students.write',
+  'parents.view': 'guardians.read',
+  'parents:view': 'guardians.read',
+  'parents.create': 'guardians.write',
+  'parents:create': 'guardians.write',
+  'parents.edit': 'guardians.write',
+  'parents:edit': 'guardians.write',
+  'academics.view': 'academics.read',
+  'academics:view': 'academics.read',
+  'academics.manage': 'academics.write',
+  'academics:manage': 'academics.write',
+  'finance.view': 'finance.read',
+  'finance:view': 'finance.read',
+  'finance.manage': 'finance.write',
+  'finance:manage': 'finance.write',
+  'health.view': 'health.read',
+  'health:view': 'health.read',
+  'health.manage': 'health.write',
+  'health:manage': 'health.write',
+  'discipline.view': 'discipline.read',
+  'discipline:view': 'discipline.read',
+  'discipline.manage': 'discipline.write',
+  'discipline:manage': 'discipline.write',
+  'reports.view': 'reports.read',
+  'reports:view': 'reports.read'
+};
+for (const [alias, canonical] of Object.entries(PERMISSION_ALIASES)) {
+  CANONICAL_BY_ALIAS.set(alias, canonical);
 }
 
 const ALL_PERMISSION_CODES = PERMISSION_CATALOG.map(permission => permission.code);
@@ -85,6 +139,12 @@ const HEADTEACHER_PERMISSIONS = [
   'staff.write',
   'staff.create',
   'staff.role.manage',
+  'staff.activate',
+  'staff.suspend',
+  'staff.archive',
+  'staff.assign_roles',
+  'reports.generate',
+  'permissions.view',
   'audit.read',
   'audit.review',
   'permissions.delegate',
@@ -137,8 +197,10 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
 };
 
 /**
- * Permissions a Headteacher may delegate. Security-sensitive permissions are
- * deliberately excluded: they cannot be passed on to another account.
+ * Permissions that may appear in a delegation grant. Staff-management powers
+ * are delegatable only by the Headteacher/School Admin and remain subject to a
+ * role scope. Platform, school-ownership and further-delegation powers are
+ * deliberately excluded.
  */
 export const DELEGATABLE_PERMISSIONS = [
   'dashboard.view',
@@ -156,12 +218,36 @@ export const DELEGATABLE_PERMISSIONS = [
   'academics.read',
   'academics.write',
   'staff.read',
+  'staff.write',
+  'staff.create',
+  'staff.activate',
+  'staff.suspend',
+  'staff.archive',
+  'staff.assign_roles',
+  'invitations.manage',
   'discipline.read',
   'discipline.write',
   'reports.read',
+  'reports.generate',
+  'permissions.view',
   'notifications.read',
   'notifications.write'
 ];
+
+/** Only school leadership may pass these powers to another account. */
+export const LEADER_ONLY_DELEGATABLE_PERMISSIONS = [
+  'staff.write',
+  'staff.create',
+  'staff.activate',
+  'staff.suspend',
+  'staff.archive',
+  'staff.assign_roles',
+  'invitations.manage',
+  'permissions.view',
+  'reports.generate'
+];
+
+const STAFF_CREATION_PERMISSIONS = ['staff.create', 'staff.assign_roles', 'invitations.manage'];
 
 export class PermissionError extends Error {
   constructor(message: string) {
@@ -198,21 +284,62 @@ function assertSameSchool(actor: UserProfile, target: UserProfile): void {
   }
 }
 
+function isPlatformAdminRole(role?: UserRole | null): boolean {
+  return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN';
+}
+
+function isSchoolPermissionAdministrator(actor: UserProfile): boolean {
+  return isSchoolLeader(actor.role) || actor.role === 'SCHOOL_ADMIN' || actor.role === 'SUPER_ADMIN';
+}
+
+function assertManageableTarget(actor: UserProfile, target: UserProfile): void {
+  if (actor.id === target.id) {
+    throw new PermissionError('You cannot modify your own staff account or permissions.');
+  }
+  if (isProtectedRole(target.role) || isSchoolLeader(target.role)) {
+    throw new PermissionError('The Headteacher account cannot be modified by a delegate.');
+  }
+  if (isPlatformAdminRole(target.role) && actor.role !== 'SUPER_ADMIN') {
+    throw new PermissionError('Only the Platform Super Admin may manage platform administrator accounts.');
+  }
+  assertSameSchool(actor, target);
+}
+
+function assertValidRoleScope(roleScope: UserRole[]): void {
+  if (!Array.isArray(roleScope) || roleScope.length === 0) {
+    throw new PermissionError('Choose at least one staff role this administrator may manage.');
+  }
+  const canonicalScope = [...new Set(roleScope)];
+  if (canonicalScope.length !== roleScope.length) {
+    throw new PermissionError('Each staff role may only be listed once.');
+  }
+  for (const role of canonicalScope) {
+    if (!ASSIGNABLE_STAFF_ROLES.includes(role) || isProtectedRole(role) || isPlatformAdminRole(role)) {
+      throw new PermissionError(`'${role}' cannot be assigned through delegated staff management.`);
+    }
+  }
+}
+
+function assertRoleWithinScope(actor: UserProfile, role: UserRole): void {
+  if (!ASSIGNABLE_STAFF_ROLES.includes(role) || isProtectedRole(role) || isPlatformAdminRole(role)) {
+    throw new PermissionError(`'${role}' cannot be assigned through staff management.`);
+  }
+  const scope = actor.delegatedRoleScope;
+  if (Array.isArray(scope) && !scope.includes(role)) {
+    throw new PermissionError('You are not authorised to manage this staff role.');
+  }
+}
+
 export function assertCanGrantPermissions(
   actor: UserProfile,
   target: UserProfile,
-  requestedPermissions: string[]
+  requestedPermissions: string[],
+  roleScope?: UserRole[]
 ): void {
   if (!canDelegatePermissions(actor.role) || !hasPermission(actor, 'permissions.delegate')) {
-    throw new PermissionError('Only the Headteacher may delegate permissions.');
+    throw new PermissionError('Only the Headteacher or an authorised administrator may delegate permissions.');
   }
-  if (actor.id === target.id) {
-    throw new PermissionError('You cannot grant permissions to your own account.');
-  }
-  if (isProtectedRole(target.role) || isSchoolLeader(target.role)) {
-    throw new PermissionError('The Headteacher account cannot be granted or modified by a delegate.');
-  }
-  assertSameSchool(actor, target);
+  assertManageableTarget(actor, target);
 
   if (!Array.isArray(requestedPermissions) || requestedPermissions.length === 0) {
     throw new PermissionError('Select at least one permission to delegate.');
@@ -231,40 +358,95 @@ export function assertCanGrantPermissions(
     if (!hasPermission(actor, permission)) {
       throw new PermissionError(`You cannot delegate '${permission}' because you do not hold it.`);
     }
+    if (LEADER_ONLY_DELEGATABLE_PERMISSIONS.includes(permission) && !isSchoolPermissionAdministrator(actor)) {
+      throw new PermissionError(`Only the Headteacher may delegate '${permission}'.`);
+    }
+  }
+
+  const includesStaffCreation = canonical.some(permission => STAFF_CREATION_PERMISSIONS.includes(permission));
+  if (includesStaffCreation) {
+    if (!canonical.includes('staff.read')) {
+      throw new PermissionError('Staff creation delegation must include staff.view.');
+    }
+    for (const required of STAFF_CREATION_PERMISSIONS) {
+      if (!canonical.includes(required)) {
+        throw new PermissionError(`Staff creation delegation must include '${required}'.`);
+      }
+    }
+    assertValidRoleScope(roleScope as UserRole[]);
+    const ownScope = actor.delegatedRoleScope;
+    if (Array.isArray(ownScope) && !(roleScope as UserRole[]).every(role => ownScope.includes(role))) {
+      throw new PermissionError('You cannot delegate staff roles outside your own assigned scope.');
+    }
   }
 }
 
 export function assertCanRevokePermissions(actor: UserProfile, target: UserProfile): void {
   if (!canDelegatePermissions(actor.role) || !hasPermission(actor, 'permissions.revoke')) {
-    throw new PermissionError('Only the Headteacher may revoke delegated permissions.');
+    throw new PermissionError('Only the Headteacher or an authorised administrator may revoke permissions.');
   }
-  if (actor.id === target.id) {
-    throw new PermissionError('You cannot modify your own permissions.');
+  assertManageableTarget(actor, target);
+}
+
+export function assertCanViewStaff(actor: UserProfile): void {
+  if (!hasPermission(actor, 'staff.read')) {
+    throw new PermissionError('You are not authorised to view staff records.');
   }
-  if (isProtectedRole(target.role) || isSchoolLeader(target.role)) {
-    throw new PermissionError('The Headteacher account cannot be modified by a delegate.');
+}
+
+export function assertCanCreateStaffRole(actor: UserProfile, role: UserRole): void {
+  if (!hasPermission(actor, 'staff.create') && !hasPermission(actor, 'invitations.manage')) {
+    throw new PermissionError('You are not authorised to add staff members.');
   }
-  assertSameSchool(actor, target);
+  assertRoleWithinScope(actor, role);
+}
+
+export function assertCanEditStaff(actor: UserProfile, target: UserProfile): void {
+  if (!hasPermission(actor, 'staff.write')) {
+    throw new PermissionError('You are not authorised to edit staff information.');
+  }
+  assertManageableTarget(actor, target);
+}
+
+export function assertCanActivateStaff(actor: UserProfile, target: UserProfile): void {
+  if (!hasPermission(actor, 'staff.activate')) {
+    throw new PermissionError('You are not authorised to activate staff accounts.');
+  }
+  assertManageableTarget(actor, target);
+}
+
+export function assertCanSuspendStaff(actor: UserProfile, target: UserProfile): void {
+  if (!hasPermission(actor, 'staff.suspend')) {
+    throw new PermissionError('You are not authorised to suspend staff accounts.');
+  }
+  assertManageableTarget(actor, target);
+}
+
+export function assertCanArchiveStaff(actor: UserProfile, target: UserProfile): void {
+  if (!hasPermission(actor, 'staff.archive')) {
+    throw new PermissionError('You are not authorised to archive staff accounts.');
+  }
+  assertManageableTarget(actor, target);
+}
+
+export function assertCanAssignStaffRole(actor: UserProfile, target: UserProfile, role: UserRole): void {
+  if (!hasPermission(actor, 'staff.assign_roles')) {
+    throw new PermissionError('You are not authorised to assign staff roles.');
+  }
+  assertRoleWithinScope(actor, role);
+  assertManageableTarget(actor, target);
 }
 
 export function assertCanManageStaff(actor: UserProfile, target?: UserProfile): void {
-  if (!hasPermission(actor, 'staff.create')) {
-    throw new PermissionError('Only the Headteacher may manage staff accounts.');
+  if (!hasPermission(actor, 'staff.create') && !hasPermission(actor, 'staff.write')) {
+    throw new PermissionError('You are not authorised to manage staff accounts.');
   }
-  if (target) {
-    if (actor.id === target.id) {
-      throw new PermissionError('You cannot modify your own staff account.');
-    }
-    if (isProtectedRole(target.role) || isSchoolLeader(target.role)) {
-      throw new PermissionError('The Headteacher account cannot be modified by a delegate.');
-    }
-    assertSameSchool(actor, target);
-  }
+  if (target) assertManageableTarget(actor, target);
 }
 
 export function assertCanManageInvitations(actor: UserProfile): void {
   if (!hasPermission(actor, 'invitations.manage')) {
-    throw new PermissionError('Only the Headteacher may manage staff invitations.');
+    throw new PermissionError('You are not authorised to manage staff invitations.');
   }
 }
 

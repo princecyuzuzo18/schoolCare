@@ -81,7 +81,7 @@ export const AdmissionTrackingPage: React.FC<AdmissionTrackingPageProps> = ({ on
   };
 
   return (
-    <div className="apply-page flex min-h-screen flex-col">
+    <div className="schoolcare-page-bg apply-page flex min-h-screen flex-col bg-transparent">
       <PublicAdmissionsHeader onBackHome={onBackHome} showTrackingLink={false} />
 
       <main className="apply-shell flex-1 py-10 sm:py-14">

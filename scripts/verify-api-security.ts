@@ -238,6 +238,140 @@ try {
     storedGrants.length >= 2 && storedGrants.some(record => record.permissions.includes('students.read')),
     `${storedGrants.length} records`
   );
+
+  // Stage 1: scoped delegation and expanded staff directory/actions.
+  const teacherSummary = await request('/api/staff/summary', { headers: { Cookie: teacherCookie } });
+  check('Unauthorised user cannot see staff dashboard stats', teacherSummary.status === 403, `status ${teacherSummary.status}`);
+  const headSummary = await request('/api/staff/summary', { headers: { Cookie: headCookie } });
+  check(
+    'Headteacher can see staff dashboard stats',
+    headSummary.status === 200 && typeof headSummary.body?.total === 'number' &&
+      typeof headSummary.body?.byRole?.TEACHER === 'number',
+    `status ${headSummary.status}`
+  );
+  const directory = await request('/api/staff/directory?search=teacher&page=1&pageSize=5', {
+    headers: { Cookie: headCookie }
+  });
+  check(
+    'Headteacher can search the paginated staff directory',
+    directory.status === 200 && Array.isArray(directory.body?.items) && directory.body.pageSize === 5,
+    `status ${directory.status}`
+  );
+
+  // Give the test teacher a scoped staff-creation grant and verify enforcement.
+  const scopedGrant = await request('/api/staff/accounts/user-teacher/permissions', {
+    method: 'PUT',
+    headers: { Cookie: headCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      permissions: ['staff.read', 'staff.create', 'staff.assign_roles', 'staff.write', 'invitations.manage'],
+      roleScope: ['TEACHER']
+    })
+  });
+  check('Scoped staff-creation delegation succeeds', scopedGrant.status === 200, `status ${scopedGrant.status}`);
+  check(
+    'Role scope is stored on the account',
+    Array.isArray(scopedGrant.body?.user?.delegatedRoleScope) &&
+      scopedGrant.body.user.delegatedRoleScope.includes('TEACHER'),
+    JSON.stringify(scopedGrant.body?.user?.delegatedRoleScope)
+  );
+
+  const outOfScopeCreation = await request('/api/staff/invitations', {
+    method: 'POST',
+    headers: { Cookie: teacherCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fullName: 'Out Of Scope Nurse',
+      email: 'out.scope.nurse@schoolcare.rw',
+      phone: '+250 700 999 700',
+      role: 'NURSE',
+      preferredLanguage: 'en'
+    })
+  });
+  check(
+    'Delegated user cannot create an out-of-scope role',
+    outOfScopeCreation.status === 403,
+    `status ${outOfScopeCreation.status}`
+  );
+
+  const scopedCreation = await request('/api/staff/invitations', {
+    method: 'POST',
+    headers: { Cookie: teacherCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fullName: 'Scoped Teacher',
+      email: 'scoped.teacher@schoolcare.rw',
+      phone: '+250 700 999 701',
+      role: 'TEACHER',
+      staffId: 'STF-SCOPED-001',
+      responsibilities: ['Mathematics', 'Class monitor'],
+      employmentStartDate: '2026-01-15',
+      deliveryMode: 'SECURE_ACTIVATION',
+      preferredLanguage: 'en'
+    })
+  });
+  check('Delegated user can create an in-scope teacher', scopedCreation.status === 201, `status ${scopedCreation.status}`);
+  check(
+    'Invitation carries the new staff fields without a token hash',
+    scopedCreation.body?.invitation?.staffId === 'STF-SCOPED-001' &&
+      Array.isArray(scopedCreation.body?.invitation?.responsibilities) &&
+      !('tokenHash' in scopedCreation.body.invitation),
+    JSON.stringify(scopedCreation.body?.invitation || {})
+  );
+  check(
+    'Unconfigured delivery is reported as pending',
+    scopedCreation.body?.deliveryPending === true && Array.isArray(scopedCreation.body?.delivery),
+    JSON.stringify(scopedCreation.body?.delivery)
+  );
+
+  const scopedInvitationId = scopedCreation.body?.invitation?.id;
+  if (scopedInvitationId) {
+    const resend = await request(`/api/staff/invitations/${scopedInvitationId}/resend`, {
+      method: 'POST',
+      headers: { Cookie: teacherCookie }
+    });
+    check('Delegated user can resend an invitation', resend.status === 200, `status ${resend.status}`);
+    check(
+      'Resent invitation rotates the token without exposing a hash',
+      typeof resend.body?.token === 'string' && !('tokenHash' in (resend.body?.invitation || {})),
+      `status ${resend.status}`
+    );
+    const oldActivation = await request('/api/staff/invitations/activate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: scopedCreation.body?.token, password: 'a-valid-length-password' })
+    });
+    check('Previous activation token stops working after resend', oldActivation.status === 400, `status ${oldActivation.status}`);
+  }
+
+  const profileEdit = await request('/api/staff/accounts/user-nurse/profile', {
+    method: 'PATCH',
+    headers: { Cookie: teacherCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: '+250 700 111 222', department: 'Mathematics', responsibilities: ['Algebra'] })
+  });
+  check('Delegated editor can update an in-scope profile', profileEdit.status === 200, `status ${profileEdit.status}`);
+
+  const scopeRevoke = await request('/api/staff/accounts/user-teacher/permissions/revoke', {
+    method: 'POST',
+    headers: { Cookie: headCookie }
+  });
+  check('Headteacher can revoke scoped permissions', scopeRevoke.status === 200, `status ${scopeRevoke.status}`);
+  const afterRevoke = await request('/api/staff/invitations', {
+    method: 'POST',
+    headers: { Cookie: teacherCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fullName: 'Revoked Teacher',
+      email: 'revoked.teacher@schoolcare.rw',
+      phone: '+250 700 999 702',
+      role: 'TEACHER',
+      preferredLanguage: 'en'
+    })
+  });
+  check('Revoked staff-creation permission is denied immediately', afterRevoke.status === 403, `status ${afterRevoke.status}`);
+
+  const activity = await request('/api/staff/activity', { headers: { Cookie: headCookie } });
+  check(
+    'Headteacher can review staff activity',
+    activity.status === 200 && Array.isArray(activity.body),
+    `status ${activity.status}`
+  );
 } finally {
   if (server) {
     await new Promise<void>(resolve => server!.close(() => resolve()));

@@ -16,13 +16,13 @@ export const ROLE_DASHBOARD_MAP: Record<UserRole, string> = {
 };
 
 const ALL_ADMIN_TABS = [
-  'landing','dashboard','parent-portal','student-portal','health','attendance','communication','students','guardians','academics','finance','staff','staff-management','permissions','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','report-cards','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'
+  'landing','dashboard','parent-portal','student-portal','health','attendance','communication','students','guardians','academics','finance','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','report-cards','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'
 ];
 
 export const ROLE_ALLOWED_TABS: Record<UserRole, string[]> = {
   SUPER_ADMIN: ALL_ADMIN_TABS,
   SCHOOL_ADMIN: ALL_ADMIN_TABS,
-  HEAD_TEACHER: ['landing','dashboard','attendance','communication','students','guardians','academics','staff','staff-management','permissions','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','report-cards','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'],
+  HEAD_TEACHER: ['landing','dashboard','attendance','communication','students','guardians','academics','staff','staff-management','permissions','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','report-cards','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'],
   DEPUTY_HEAD: ['landing','dashboard','attendance','communication','students','academics','timetable','events','reports','exams','teaching','report-cards'],
   TEACHER: ['landing','dashboard','attendance','students','academics','timetable','events','reports','exams','marking-guides','teaching','report-cards'],
   NURSE: ['landing','dashboard','health','events','reports'],
@@ -52,6 +52,8 @@ export const TAB_PERMISSION_REQUIREMENTS: Record<string, string> = {
   staff: 'staff.read',
   'staff-management': 'staff.create',
   permissions: 'permissions.delegate',
+  'signup-requests': 'invitations.manage',
+  'public-site': 'school.write',
   audit: 'audit.review',
   settings: 'school.write',
   reports: 'reports.read',

@@ -46,6 +46,8 @@ export interface UserProfile {
   preferredLanguage: LanguageCode;
   isActive?: boolean;
   delegatedPermissions?: string[];
+  /** Roles this account may create/edit when staff management was delegated. */
+  delegatedRoleScope?: UserRole[];
   createdAt?: string;
   invitedBy?: string;
   linkedStudentIds?: string[]; // for parents
@@ -372,11 +374,14 @@ export interface StaffMember {
   email: string;
   assignedClasses: string[];
   assignedSubjects: string[];
-  status: 'ACTIVE' | 'ON_LEAVE' | 'SUSPENDED';
+  status: 'ACTIVE' | 'ON_LEAVE' | 'SUSPENDED' | 'ARCHIVED';
   joinedDate: string;
+  photoUrl?: string;
+  responsibilities?: string[];
+  employmentStartDate?: string;
 }
 
-export type StaffAccountStatus = 'ACTIVE' | 'INVITED' | 'SUSPENDED';
+export type StaffAccountStatus = 'ACTIVE' | 'INVITED' | 'SUSPENDED' | 'ARCHIVED';
 
 export interface StaffAccount {
   id: string;
@@ -387,23 +392,41 @@ export interface StaffAccount {
   department: string;
   status: StaffAccountStatus;
   delegatedPermissions: string[];
+  delegatedRoleScope?: UserRole[];
+  staffId?: string;
+  phone?: string;
+  gender?: 'M' | 'F';
+  photoUrl?: string;
+  responsibilities?: string[];
+  employmentStartDate?: string;
   createdAt: string;
   createdBy: string;
   invitedAt?: string;
   acceptedAt?: string;
+  archivedAt?: string;
+  archivedBy?: string;
   lastModifiedBy?: string;
   lastModifiedAt?: string;
 }
+
+export type StaffInvitationDeliveryMode = 'INVITATION' | 'SECURE_ACTIVATION';
 
 export interface StaffInvitation {
   id: string;
   schoolId: string;
   fullName: string;
   email: string;
+  phone?: string;
   gender?: 'M' | 'F';
   role: UserRole;
   professionalTitle: string;
   department?: string;
+  staffId?: string;
+  photoUrl?: string;
+  responsibilities?: string[];
+  employmentStartDate?: string;
+  deliveryMode?: StaffInvitationDeliveryMode;
+  notificationStatuses?: AdmissionNotificationStatus[];
   tokenHash: string;
   expiresAt: string;
   createdAt: string;
@@ -411,6 +434,7 @@ export interface StaffInvitation {
   consumedAt?: string;
   revokedAt?: string;
   userId?: string;
+  resentAt?: string;
 }
 
 export interface PermissionGrantRecord {
@@ -419,10 +443,56 @@ export interface PermissionGrantRecord {
   userId: string;
   previousPermissions: string[];
   permissions: string[];
+  previousRoleScope?: UserRole[];
+  roleScope?: UserRole[];
   grantedBy: string;
   grantedAt: string;
   revokedAt?: string;
   revokedBy?: string;
+}
+
+export interface StaffSummary {
+  total: number;
+  active: number;
+  pendingInvitations: number;
+  suspended: number;
+  archived: number;
+  delegatedAdministrators: number;
+  byRole: Record<Extract<UserRole, 'DEPUTY_HEAD' | 'TEACHER' | 'NURSE' | 'ACCOUNTANT' | 'DISCIPLINE_OFFICER' | 'SCHOOL_IT' | 'ANIMATEUR'>, number>;
+}
+
+export interface StaffDirectoryItem {
+  accountId: string;
+  userId: string;
+  staffId: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  role: UserRole;
+  professionalTitle: string;
+  department: string;
+  gender?: 'M' | 'F';
+  photoUrl?: string;
+  responsibilities: string[];
+  employmentStartDate?: string;
+  accountStatus: StaffAccountStatus;
+  employmentStatus: 'ACTIVE' | 'ON_LEAVE' | 'SUSPENDED' | 'ARCHIVED';
+  isActive: boolean;
+  dateAdded: string;
+  delegatedPermissions: string[];
+  delegatedRoleScope: UserRole[];
+  invitedAt?: string;
+  acceptedAt?: string;
+  archivedAt?: string;
+  lastLogin?: string;
+}
+
+export interface StaffDirectoryResponse {
+  items: StaffDirectoryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
 }
 
 export interface PermissionDefinition {
@@ -436,6 +506,8 @@ export interface PermissionsResponse {
   role: UserRole;
   effectivePermissions: string[];
   delegatablePermissions: string[];
+  leaderOnlyDelegatablePermissions: string[];
+  delegatableRoleScope: UserRole[];
   rolePermissions: Record<UserRole, string[]>;
   catalog: PermissionDefinition[];
 }
@@ -450,13 +522,84 @@ export interface StaffAccountView extends StaffAccount {
     isActive?: boolean;
     lastLogin?: string;
     delegatedPermissions?: string[];
+    delegatedRoleScope?: UserRole[];
   } | null;
+  staffMember?: StaffMember | null;
 }
 
 export interface StaffInvitationResponse {
   invitation: StaffInvitation;
   token: string;
   activationUrl: string;
+  delivery: AdmissionNotificationStatus[];
+  deliveryPending: boolean;
+}
+
+export type SignupRole = 'PARENT' | 'STUDENT';
+export type SignupContactType = 'EMAIL' | 'SMS' | 'MANUAL';
+
+export interface PortalDashboardView {
+  students: Student[];
+  healthIncidents: HealthIncident[];
+  attendance: AttendanceRecord[];
+  invoices: Invoice[];
+  payments: Payment[];
+  reportCards: ReportCard[];
+  timetable: TimetableEntry[];
+  homework: HomeworkAssignment[];
+}
+
+export interface SignupRequestView {
+  id: string;
+  role: SignupRole;
+  fullName: string;
+  phone: string;
+  email: string | null;
+  signInEmail: string;
+  admissionNumber: string;
+  status: 'PENDING' | 'VERIFIED' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
+  contactType: SignupContactType;
+  verificationSent: boolean;
+  requiresManualReview: boolean;
+  message: string;
+  createdAt: string;
+}
+
+export type PublicArticleCategory = 'NEWS' | 'ANNOUNCEMENT' | 'EVENT';
+export type PublicArticleStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+
+export interface PublicContentArticleInput {
+  title: string;
+  summary: string;
+  body: string;
+  category: PublicArticleCategory;
+  status: PublicArticleStatus;
+  approved: boolean;
+  publishAt?: string;
+  eventDate?: string;
+  location?: string;
+  imageUrl?: string;
+  imageAlt?: string;
+}
+
+export interface PublicContentArticle extends PublicContentArticleInput {
+  id: string;
+  slug: string;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+  createdBy: string;
+}
+
+export interface PublicContentGalleryImage {
+  id: string;
+  src: string;
+  alt: string;
+  caption: string;
+  category: string;
+  approved: boolean;
+  createdAt: string;
+  createdBy: string;
 }
 
 export interface TimetableEntry {

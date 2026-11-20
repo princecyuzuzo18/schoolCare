@@ -6,21 +6,31 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import multer from 'multer';
+import type { RowDataPacket } from 'mysql2';
 import { db } from './server/database';
-import { authenticateUser, requirePermission, requireRole } from './server/rbac';
+import { authenticateUser, requireAnyPermission, requirePermission, requireRole } from './server/rbac';
 import { checkMysqlHealth, closeMysqlPool, getExportSqlPath, getMysqlPool } from './server/mysqlConnector';
 import { getPasswordHash, verifyPassword } from './server/authCredentials';
 import { createSession, destroySession } from './server/sessions';
 import { ASSIGNABLE_STAFF_ROLES, getProfessionalTitle } from './src/roleCatalog';
+import { registerPublicSite } from './server/publicSite';
 import {
   DELEGATABLE_PERMISSIONS,
   PERMISSION_CATALOG,
   ROLE_PERMISSIONS,
   PermissionError,
+  LEADER_ONLY_DELEGATABLE_PERMISSIONS,
+  assertCanActivateStaff,
+  assertCanArchiveStaff,
+  assertCanAssignStaffRole,
+  assertCanCreateStaffRole,
+  assertCanEditStaff,
   assertCanGrantPermissions,
   assertCanManageInvitations,
   assertCanManageStaff,
   assertCanRevokePermissions,
+  assertCanSuspendStaff,
+  assertCanViewStaff,
   canonicalPermission,
   getEffectivePermissions
 } from './server/permissions';
@@ -28,8 +38,27 @@ import {
   StaffManagementError,
   activateStaffInvitation,
   createStaffInvitation,
-  publicInvitation
+  publicInvitation,
+  resendStaffInvitation
 } from './server/staffManagement';
+import {
+  archiveStaffAccount,
+  getStaffDirectory,
+  getStaffProfile,
+  getStaffSummary,
+  updateStaffProfile
+} from './server/staffAdministration';
+import {
+  SignupError,
+  approveSignupRequest,
+  createParentSignupRequest,
+  createStudentSignupRequest,
+  getSignupRequestView,
+  listSignupRequests,
+  rejectSignupRequest,
+  resendSignupCode,
+  verifySignupRequest
+} from './server/accountSignup';
 import {
   APPLICATION_STATUSES,
   APPLICATION_TYPES,
@@ -63,6 +92,7 @@ import {
 import { extractAcademicPerformance } from './server/resultSlipOcr';
 import {
   emailConfigured,
+  notifyStaffInvitation,
   notifyStatusChange,
   notifySubmission,
   sendVerificationCode,
@@ -74,9 +104,11 @@ import {
   ApplicationStatus,
   ApplicationType,
   HealthIncident,
+  LanguageCode,
   NotificationChannel,
   NotificationMessage,
   Payment,
+  PortalDashboardView,
   ResultSlipVerificationStatus,
   UserProfile,
   UserRole
@@ -223,6 +255,7 @@ function sanitizeReference(value: unknown): string {
   return sanitizeInput(value, 40).toUpperCase();
 }
 
+const accountSignupRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 8, prefix: 'account-signup' });
 const submissionRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 8, prefix: 'admission-submit' });
 const slipUploadRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 15, prefix: 'admission-slip-upload' });
 const slipPreviewRateLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 30, prefix: 'admission-slip-preview' });
@@ -386,12 +419,15 @@ function authorizeApiRequest(req: Request, res: Response, next: () => void): voi
     ['/notifications', method === 'GET' ? 'notifications:read' : 'notifications:write'],
     ['/finance', method === 'GET' ? 'finance:read' : 'finance:write'],
     ['/academics', method === 'GET' ? 'academics:read' : 'academics:write'],
-    ['/staff', method === 'GET' ? 'staff:read' : 'staff:write'],
     ['/timetable', 'academics:read'],
     ['/homework', 'academics:read'],
     ['/reports', 'reports:read']
   ];
 
+  if (requestPath === '/staff') {
+    requirePermission(method === 'GET' ? 'staff.read' : 'staff.write')(req, res, next);
+    return;
+  }
   if (requestPath.startsWith('/schools') && method !== 'GET') {
     requiresAdmin(req, res, next);
     return;
@@ -413,12 +449,21 @@ function authorizeApiRequest(req: Request, res: Response, next: () => void): voi
   next();
 }
 
+/**
+ * Public school website. Registered BEFORE the private /api auth middleware so
+ * that anonymous visitors can read approved public content. Its own admin
+ * routes apply the existing authentication and permission middleware.
+ * The private SchoolCare SPA is unchanged and remains at /portal#/login.
+ */
+registerPublicSite(app);
+
 app.use('/api', (req, res, next) => {
   const isPublicSchoolRead = req.method === 'GET' && /^\/schools(?:\/[^/]+)?$/.test(req.path);
   const isLogin = req.method === 'POST' && req.path === '/auth/login';
   const isSessionCheck = req.method === 'GET' && req.path === '/auth/me';
   const isPasswordResetRequest = req.method === 'POST' && req.path === '/auth/password-reset/request';
   const isStaffActivation = req.method === 'POST' && req.path === '/staff/invitations/activate';
+  const isPublicAccountSignup = req.path.startsWith('/public/accounts/');
   const isPublicAdmissions = req.path.startsWith('/public/admissions/');
   if (
     isPublicSchoolRead ||
@@ -426,6 +471,7 @@ app.use('/api', (req, res, next) => {
     isSessionCheck ||
     isPasswordResetRequest ||
     isStaffActivation ||
+    isPublicAccountSignup ||
     isPublicAdmissions
   ) {
     next();
@@ -443,6 +489,34 @@ app.use((req, res, next) => {
 function getActor(req: Request) {
   if (!req.user) throw new Error('Authenticated request is missing its user context.');
   return req.user;
+}
+
+/** Student IDs a parent/student account is allowed to see. Staff return null (unrestricted). */
+function portalStudentIds(actor?: UserProfile | null): string[] | null {
+  if (!actor) return null;
+  if (actor.role === 'PARENT') return Array.isArray(actor.linkedStudentIds) ? actor.linkedStudentIds : [];
+  if (actor.role === 'STUDENT') return actor.studentId ? [actor.studentId] : [];
+  return null;
+}
+
+function assertPortalStudentAccess(actor: UserProfile, studentId: string): void {
+  const allowed = portalStudentIds(actor);
+  if (allowed && !allowed.includes(studentId)) {
+    throw new PermissionError('You can only access records linked to your own account.');
+  }
+}
+
+function scopeStudentsForActor<T extends { id: string }>(actor: UserProfile | undefined, students: T[]): T[] {
+  const allowed = portalStudentIds(actor);
+  return allowed ? students.filter(student => allowed.includes(student.id)) : students;
+}
+
+function respondWithPortalError(res: Response, error: unknown) {
+  if (error instanceof PermissionError) {
+    return res.status(403).json({ error: error.message });
+  }
+  console.error('[Portal] Unexpected error:', error);
+  return res.status(500).json({ error: 'Unable to load your portal right now.' });
 }
 
 // ==========================================
@@ -527,6 +601,268 @@ app.post('/api/auth/password-reset/request', (req: Request, res: Response) => {
   });
 });
 
+function respondWithSignupError(res: Response, error: unknown) {
+  if (error instanceof SignupError) {
+    return res.status(error.status).json({ error: error.message });
+  }
+  if (error instanceof PermissionError) {
+    return res.status(403).json({ error: error.message });
+  }
+  const code = error && typeof error === 'object' && 'code' in error ? (error as { code?: string }).code : undefined;
+  if (code === 'ER_DUP_ENTRY') {
+    return res.status(409).json({ error: 'An account with those details already exists.' });
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (/(?:mysql|database) is unavailable|connect|timed? ?out|refused/i.test(message)) {
+    return res.status(503).json({ error: 'The school database is unavailable. Try again shortly.' });
+  }
+  console.error('[AccountSignup] Unexpected error:', error);
+  return res.status(500).json({ error: 'Unable to process the request right now.' });
+}
+
+// --- Public parent and student sign-up (verification + school approval required) ---
+
+app.post(
+  '/api/public/accounts/parent/signup',
+  assertSameOrigin,
+  accountSignupRateLimiter,
+  async (req: Request, res: Response) => {
+    try {
+      const request = await createParentSignupRequest({
+        fullName: req.body?.fullName ?? '',
+        phone: req.body?.phone ?? '',
+        email: req.body?.email ?? '',
+        password: req.body?.password ?? '',
+        confirmPassword: req.body?.confirmPassword ?? '',
+        admissionNumber: req.body?.admissionNumber ?? '',
+        admissionNumbers: req.body?.admissionNumbers,
+        preferredLanguage: req.body?.preferredLanguage as LanguageCode
+      });
+      return res.status(201).json({ request });
+    } catch (error) {
+      return respondWithSignupError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/public/accounts/student/signup',
+  assertSameOrigin,
+  accountSignupRateLimiter,
+  async (req: Request, res: Response) => {
+    try {
+      const request = await createStudentSignupRequest({
+        fullName: req.body?.fullName ?? '',
+        admissionNumber: req.body?.admissionNumber ?? '',
+        dob: req.body?.dob ?? '',
+        email: req.body?.email ?? '',
+        password: req.body?.password ?? '',
+        confirmPassword: req.body?.confirmPassword ?? '',
+        preferredLanguage: req.body?.preferredLanguage as LanguageCode
+      });
+      return res.status(201).json({ request });
+    } catch (error) {
+      return respondWithSignupError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/public/accounts/verify',
+  assertSameOrigin,
+  accountSignupRateLimiter,
+  async (req: Request, res: Response) => {
+    try {
+      const request = await verifySignupRequest(req.body?.requestId ?? '', req.body?.code ?? '');
+      return res.json({ request });
+    } catch (error) {
+      return respondWithSignupError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/public/accounts/resend',
+  assertSameOrigin,
+  accountSignupRateLimiter,
+  async (req: Request, res: Response) => {
+    try {
+      const request = await resendSignupCode(req.body?.requestId ?? '');
+      return res.json({ request });
+    } catch (error) {
+      return respondWithSignupError(res, error);
+    }
+  }
+);
+
+app.get('/api/public/accounts/status/:id', async (req: Request, res: Response) => {
+  try {
+    const request = await getSignupRequestView(req.params.id);
+    return res.json({ request });
+  } catch (error) {
+    return respondWithSignupError(res, error);
+  }
+});
+
+app.get('/api/account-signup-requests', async (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    assertCanManageInvitations(actor);
+    return res.json(await listSignupRequests(actor.schoolId));
+  } catch (error) {
+    return respondWithSignupError(res, error);
+  }
+});
+
+app.post('/api/account-signup-requests/:id/approve', async (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    assertCanManageInvitations(actor);
+    const user = await approveSignupRequest(req.params.id, actor, req.body?.notes ?? '');
+    return res.json({ user });
+  } catch (error) {
+    return respondWithSignupError(res, error);
+  }
+});
+
+app.post('/api/account-signup-requests/:id/reject', async (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    assertCanManageInvitations(actor);
+    const request = await rejectSignupRequest(req.params.id, actor, req.body?.notes ?? '');
+    return res.json({ request });
+  } catch (error) {
+    return respondWithSignupError(res, error);
+  }
+});
+
+// --- Narrow parent/student self-service portal (no staff write permissions) ---
+
+app.get('/api/portal/dashboard', requireRole('PARENT', 'STUDENT'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    const allowed = portalStudentIds(actor) || [];
+    const students = scopeStudentsForActor(actor, db.getStudents(actor.schoolId)).filter(student =>
+      allowed.includes(student.id)
+    );
+    const studentIds = new Set(students.map(student => student.id));
+    const classIds = Array.from(new Set(students.map(student => student.classId).filter(Boolean)));
+
+    const timetable = classIds.flatMap(classId => db.getTimetable(actor.schoolId, classId));
+    const homework = classIds.flatMap(classId => db.getHomework(actor.schoolId, classId));
+    const dedupeById = <T extends { id: string }>(items: T[]): T[] =>
+      Array.from(new Map(items.map(item => [item.id, item])).values());
+
+    const dashboard: PortalDashboardView = {
+      students,
+      healthIncidents: db.getHealthIncidents(actor.schoolId).filter(item => studentIds.has(item.studentId)),
+      attendance: db.getAttendance(actor.schoolId).filter(item => studentIds.has(item.studentId)),
+      invoices: db.getInvoices(actor.schoolId).filter(item => studentIds.has(item.studentId)),
+      payments: db.getPayments(actor.schoolId).filter(item => studentIds.has(item.studentId)),
+      reportCards: db.getReportCards(actor.schoolId).filter(item => studentIds.has(item.studentId)),
+      timetable: dedupeById(timetable),
+      homework: dedupeById(homework)
+    };
+    return res.json(dashboard);
+  } catch (error) {
+    return respondWithPortalError(res, error);
+  }
+});
+
+app.post('/api/portal/attendance/:id/explain', requireRole('PARENT'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    const existing = db.getAttendance(actor.schoolId).find(record => record.id === req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Record not found' });
+    assertPortalStudentAccess(actor, existing.studentId);
+    const explanation = sanitizeInput(req.body?.explanation, 1000);
+    if (!explanation) return res.status(400).json({ error: 'Enter an explanation.' });
+    const updated = db.updateAttendanceExplanation(req.params.id, explanation);
+    if (!updated) return res.status(404).json({ error: 'Record not found' });
+    db.logAudit(
+      updated.schoolId,
+      actor.id,
+      actor.fullName,
+      actor.role,
+      'EXPLAIN_ABSENCE',
+      'ATTENDANCE',
+      updated.id,
+      `Parent provided an absence explanation: "${explanation}"`,
+      req.ip
+    );
+    return res.json(updated);
+  } catch (error) {
+    return respondWithPortalError(res, error);
+  }
+});
+
+app.post('/api/portal/health-incidents/:id/acknowledge', requireRole('PARENT'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    const existing = db.getHealthIncidentById(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Incident not found' });
+    assertPortalStudentAccess(actor, existing.studentId);
+    const updated = db.acknowledgeIncident(req.params.id, sanitizeInput(req.body?.notes, 1000));
+    if (!updated) return res.status(404).json({ error: 'Incident not found' });
+    db.logAudit(
+      updated.schoolId,
+      actor.id,
+      actor.fullName,
+      actor.role,
+      'ACKNOWLEDGE_HEALTH_ALERT',
+      'HEALTH_INCIDENT',
+      updated.id,
+      `Guardian acknowledged emergency incident ${updated.referenceNumber}`,
+      req.ip
+    );
+    return res.json(updated);
+  } catch (error) {
+    return respondWithPortalError(res, error);
+  }
+});
+
+app.post('/api/portal/payments', requireRole('PARENT'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    const body = req.body;
+    assertPortalStudentAccess(actor, String(body?.studentId || ''));
+    const amountRwf = Number(body?.amountRwf);
+    if (!body?.invoiceId || !Number.isFinite(amountRwf) || amountRwf <= 0) {
+      return res.status(400).json({ error: 'A valid invoice and amount are required.' });
+    }
+    const payment: Payment = {
+      id: `pay-${Date.now()}`,
+      schoolId: actor.schoolId,
+      invoiceId: body.invoiceId,
+      receiptNumber: `REC-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`,
+      studentId: body.studentId,
+      studentName: String(body.studentName || ''),
+      amountRwf,
+      method: body.method || 'MTN_MOMO',
+      reference: String(body.reference || `MOMO-RW-${Date.now()}`),
+      payerName: actor.fullName,
+      payerPhone: String(body.payerPhone || actor.phone),
+      status: 'COMPLETED',
+      date: new Date().toISOString().split('T')[0]
+    };
+    const created = db.recordPayment(payment);
+    db.logAudit(
+      actor.schoolId,
+      actor.id,
+      actor.fullName,
+      actor.role,
+      'RECORD_PAYMENT',
+      'PAYMENT',
+      created.payment.id,
+      `Parent recorded a payment of ${amountRwf.toLocaleString()} RWF for ${payment.studentId}.`,
+      req.ip
+    );
+    return res.status(201).json(created);
+  } catch (error) {
+    return respondWithPortalError(res, error);
+  }
+});
+
 app.get('/api/users', requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req: Request, res: Response) => {
   const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
   return res.json(db.getUsers(schoolId));
@@ -547,6 +883,9 @@ function respondWithStaffError(res: Response, error: unknown) {
 
 function staffAccountView(account: ReturnType<typeof db.getStaffAccounts>[number]) {
   const user = db.getUserById(account.userId);
+  const staffMember = db
+    .getStaff(account.schoolId)
+    .find(member => member.id === `stf-${account.userId}` || member.email.toLowerCase() === (user?.email || '').toLowerCase());
   return {
     ...account,
     user: user
@@ -557,9 +896,12 @@ function staffAccountView(account: ReturnType<typeof db.getStaffAccounts>[number
           role: user.role,
           phone: user.phone,
           isActive: user.isActive,
-          lastLogin: user.lastLogin
+          lastLogin: user.lastLogin,
+          delegatedPermissions: user.delegatedPermissions,
+          delegatedRoleScope: user.delegatedRoleScope
         }
-      : null
+      : null,
+    staffMember: staffMember || null
   };
 }
 
@@ -569,15 +911,83 @@ app.get('/api/permissions', (req: Request, res: Response) => {
     role: actor.role,
     effectivePermissions: getEffectivePermissions(actor),
     delegatablePermissions: DELEGATABLE_PERMISSIONS,
+    leaderOnlyDelegatablePermissions: LEADER_ONLY_DELEGATABLE_PERMISSIONS,
+    delegatableRoleScope: ASSIGNABLE_STAFF_ROLES,
     rolePermissions: ROLE_PERMISSIONS,
     catalog: PERMISSION_CATALOG
   });
 });
 
 app.get('/api/staff/accounts', requirePermission('staff.read'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    assertCanViewStaff(actor);
+    const schoolId = actor.role === 'SUPER_ADMIN' ? (req.query.schoolId as string) || actor.schoolId : actor.schoolId;
+    return res.json(db.getStaffAccounts(schoolId).map(staffAccountView));
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
+app.get('/api/staff/summary', requirePermission('staff.read'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    assertCanViewStaff(actor);
+    const schoolId = actor.role === 'SUPER_ADMIN' ? (req.query.schoolId as string) || actor.schoolId : actor.schoolId;
+    return res.json(getStaffSummary(schoolId));
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
+app.get('/api/staff/directory', requirePermission('staff.read'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    assertCanViewStaff(actor);
+    const schoolId = actor.role === 'SUPER_ADMIN' ? (req.query.schoolId as string) || actor.schoolId : actor.schoolId;
+    return res.json(
+      getStaffDirectory(schoolId, {
+        search: req.query.search as string,
+        role: req.query.role as string,
+        department: req.query.department as string,
+        status: req.query.status as string,
+        page: req.query.page as string,
+        pageSize: req.query.pageSize as string
+      })
+    );
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
+app.get('/api/staff/delegated-administrators', requirePermission('permissions.view'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    const schoolId = actor.schoolId;
+    return res.json(
+      db.getStaffAccounts(schoolId)
+        .filter(account => account.status !== 'ARCHIVED' && (account.delegatedPermissions || []).length > 0)
+        .map(staffAccountView)
+    );
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
+app.get('/api/staff/activity', requirePermission('audit.review'), (req: Request, res: Response) => {
   const actor = getActor(req);
-  const schoolId = actor.role === 'SUPER_ADMIN' ? (req.query.schoolId as string) || actor.schoolId : actor.schoolId;
-  return res.json(db.getStaffAccounts(schoolId).map(staffAccountView));
+  const logs = db.getAuditLogs(actor.schoolId);
+  const action = (req.query.action as string || '').trim().toLowerCase();
+  const staffLogs = logs.filter(entry =>
+    entry.entityType === 'STAFF_ACCOUNT' ||
+    entry.entityType === 'STAFF_INVITATION' ||
+    entry.entityType === 'STAFF_PERMISSION' ||
+    entry.action.startsWith('STAFF_') ||
+    entry.action === 'USER_LOGIN'
+  );
+  return res.json(
+    action ? staffLogs.filter(entry => entry.action.toLowerCase().includes(action)) : staffLogs
+  );
 });
 
 app.put(
@@ -594,18 +1004,38 @@ app.put(
         return res.status(400).json({ error: 'Permissions must be a list of permission names.' });
       }
       const permissions = rawPermissions.map((permission: string) => canonicalPermission(permission));
-      assertCanGrantPermissions(actor, target, permissions);
+      const rawRoleScope = Array.isArray(req.body?.roleScope) ? req.body.roleScope : undefined;
+      if (rawRoleScope && !rawRoleScope.every((role: unknown) => typeof role === 'string')) {
+        return res.status(400).json({ error: 'Role scope must be a list of staff role codes.' });
+      }
+      const roleScope = rawRoleScope?.filter((role: string) => ASSIGNABLE_STAFF_ROLES.includes(role as any)) as
+        | UserRole[]
+        | undefined;
+      assertCanGrantPermissions(actor, target, permissions, roleScope);
 
       const previousPermissions = Array.isArray(target.delegatedPermissions)
         ? target.delegatedPermissions.map(canonicalPermission)
         : [];
+      const previousRoleScope = target.delegatedRoleScope || [];
       db.setDelegatedPermissions(target.id, permissions);
+      if (roleScope || previousRoleScope.length > 0) {
+        const user = db.getUserById(target.id);
+        if (user) user.delegatedRoleScope = roleScope || [];
+        const staffAccount = db.getStaffAccountByUserId(target.id);
+        if (staffAccount) {
+          staffAccount.delegatedRoleScope = roleScope || [];
+          staffAccount.lastModifiedAt = new Date().toISOString();
+        }
+        db.persist();
+      }
       db.createPermissionGrant({
         id: `grant-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
         schoolId: actor.schoolId,
         userId: target.id,
         previousPermissions,
         permissions,
+        previousRoleScope,
+        roleScope: roleScope || [],
         grantedBy: actor.id,
         grantedAt: new Date().toISOString()
       });
@@ -617,7 +1047,7 @@ app.put(
         'STAFF_PERMISSIONS_GRANTED',
         'STAFF_ACCOUNT',
         target.id,
-        `Delegated permissions: ${permissions.join(', ') || 'none'}`,
+        `Delegated permissions: ${permissions.join(', ') || 'none'}; roles: ${(roleScope || previousRoleScope).join(', ') || 'not restricted'}`,
         req.ip
       );
 
@@ -642,13 +1072,24 @@ app.post(
       const previousPermissions = Array.isArray(target.delegatedPermissions)
         ? target.delegatedPermissions.map(canonicalPermission)
         : [];
+      const previousRoleScope = target.delegatedRoleScope || [];
       db.setDelegatedPermissions(target.id, []);
+      const revokedUser = db.getUserById(target.id);
+      if (revokedUser) revokedUser.delegatedRoleScope = [];
+      const revokedAccount = db.getStaffAccountByUserId(target.id);
+      if (revokedAccount) {
+        revokedAccount.delegatedRoleScope = [];
+        revokedAccount.lastModifiedAt = new Date().toISOString();
+      }
+      db.persist();
       db.createPermissionGrant({
         id: `grant-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
         schoolId: actor.schoolId,
         userId: target.id,
         previousPermissions,
         permissions: [],
+        previousRoleScope,
+        roleScope: [],
         grantedBy: actor.id,
         grantedAt: new Date().toISOString(),
         revokedAt: new Date().toISOString(),
@@ -662,7 +1103,7 @@ app.post(
         'STAFF_PERMISSIONS_REVOKED',
         'STAFF_ACCOUNT',
         target.id,
-        `Revoked permissions: ${previousPermissions.join(', ') || 'none'}`,
+        `Revoked permissions: ${previousPermissions.join(', ') || 'none'}; roles: ${previousRoleScope.join(', ') || 'none'}`,
         req.ip
       );
 
@@ -676,18 +1117,18 @@ app.post(
 
 app.patch(
   '/api/staff/accounts/:userId/role',
-  requirePermission('staff.role.manage'),
+  requireAnyPermission('staff.assign_roles', 'staff.role.manage'),
   (req: Request, res: Response) => {
     try {
       const actor = getActor(req);
       const target = db.getUserById(req.params.userId);
       if (!target) return res.status(404).json({ error: 'Staff account not found.' });
-      assertCanManageStaff(actor, target);
 
       const role = req.body?.role as UserRole;
       if (!ASSIGNABLE_STAFF_ROLES.includes(role)) {
         return res.status(400).json({ error: 'Choose a valid assignable staff role.' });
       }
+      assertCanAssignStaffRole(actor, target, role);
 
       const previousRole = target.role;
       db.updateUserRole(target.id, role);
@@ -727,18 +1168,19 @@ app.patch(
 
 app.patch(
   '/api/staff/accounts/:userId/status',
-  requirePermission('staff.create'),
+  requireAnyPermission('staff.activate', 'staff.suspend'),
   (req: Request, res: Response) => {
     try {
       const actor = getActor(req);
       const target = db.getUserById(req.params.userId);
       if (!target) return res.status(404).json({ error: 'Staff account not found.' });
-      assertCanManageStaff(actor, target);
 
       const status = req.body?.status;
       if (status !== 'ACTIVE' && status !== 'SUSPENDED') {
         return res.status(400).json({ error: 'Status must be ACTIVE or SUSPENDED.' });
       }
+      if (status === 'ACTIVE') assertCanActivateStaff(actor, target);
+      else assertCanSuspendStaff(actor, target);
 
       db.setUserActive(target.id, status === 'ACTIVE');
       const account = db.getStaffAccountByUserId(target.id);
@@ -766,6 +1208,88 @@ app.patch(
   }
 );
 
+app.get('/api/staff/accounts/:userId', requirePermission('staff.read'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    assertCanViewStaff(actor);
+    const profile = getStaffProfile(actor.schoolId, req.params.userId);
+    if (!profile) return res.status(404).json({ error: 'Staff account not found.' });
+    return res.json(profile);
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
+app.patch(
+  '/api/staff/accounts/:userId/profile',
+  requirePermission('staff.write'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const target = db.getUserById(req.params.userId);
+      if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+      assertCanEditStaff(actor, target);
+
+      const input = {
+        fullName: typeof req.body?.fullName === 'string' ? req.body.fullName : undefined,
+        phone: typeof req.body?.phone === 'string' ? req.body.phone : undefined,
+        staffId: typeof req.body?.staffId === 'string' ? req.body.staffId : undefined,
+        professionalTitle: typeof req.body?.professionalTitle === 'string' ? req.body.professionalTitle : undefined,
+        department: typeof req.body?.department === 'string' ? req.body.department : undefined,
+        gender: req.body?.gender === 'M' || req.body?.gender === 'F' ? req.body.gender : undefined,
+        photoUrl: typeof req.body?.photoUrl === 'string' ? req.body.photoUrl : undefined,
+        responsibilities: Array.isArray(req.body?.responsibilities) ? req.body.responsibilities : undefined,
+        employmentStartDate: typeof req.body?.employmentStartDate === 'string' ? req.body.employmentStartDate : undefined
+      };
+      const profile = updateStaffProfile(actor.schoolId, target.id, input, actor.id);
+      if (!profile) return res.status(404).json({ error: 'Staff account not found.' });
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STAFF_ACCOUNT_EDITED',
+        'STAFF_ACCOUNT',
+        target.id,
+        `Updated professional profile for ${profile.fullName}`,
+        req.ip
+      );
+      return res.json(profile);
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/staff/accounts/:userId/archive',
+  requirePermission('staff.archive'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const target = db.getUserById(req.params.userId);
+      if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+      assertCanArchiveStaff(actor, target);
+      const archived = archiveStaffAccount(actor.schoolId, target.id, actor.id);
+      if (!archived) return res.status(404).json({ error: 'Staff account not found.' });
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STAFF_ACCOUNT_ARCHIVED',
+        'STAFF_ACCOUNT',
+        target.id,
+        `Archived staff record for ${archived.item.fullName}; history preserved`,
+        req.ip
+      );
+      return res.json(archived);
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
 app.get(
   '/api/staff/invitations',
   requirePermission('invitations.manage'),
@@ -783,23 +1307,41 @@ app.get(
 app.post(
   '/api/staff/invitations',
   requirePermission('invitations.manage'),
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
       const actor = getActor(req);
       assertCanManageInvitations(actor);
+      const role = req.body?.role as UserRole;
+      assertCanCreateStaffRole(actor, role);
       const { invitation, token } = createStaffInvitation(
         {
           fullName: req.body?.fullName,
           email: req.body?.email,
           phone: req.body?.phone,
-          role: req.body?.role,
+          role,
           gender: req.body?.gender,
           preferredLanguage: req.body?.preferredLanguage,
           professionalTitle: req.body?.professionalTitle,
-          department: req.body?.department
+          department: req.body?.department,
+          staffId: req.body?.staffId,
+          photoUrl: typeof req.body?.photoUrl === 'string' ? req.body.photoUrl : undefined,
+          responsibilities: req.body?.responsibilities,
+          employmentStartDate: req.body?.employmentStartDate,
+          deliveryMode: req.body?.deliveryMode
         },
         actor
       );
+      const activationUrl = `/portal#/staff-activate?token=${encodeURIComponent(token)}`;
+      const delivery = await notifyStaffInvitation({
+        fullName: invitation.fullName,
+        email: invitation.email,
+        phone: invitation.phone,
+        role: invitation.role,
+        activationUrl,
+        deliveryMode: invitation.deliveryMode
+      });
+      invitation.notificationStatuses = delivery;
+      db.updateStaffInvitation(invitation.id, { notificationStatuses: delivery });
       db.logAudit(
         actor.schoolId,
         actor.id,
@@ -814,7 +1356,9 @@ app.post(
       return res.status(201).json({
         invitation: publicInvitation(invitation),
         token,
-        activationUrl: `/#/staff-activate?token=${encodeURIComponent(token)}`
+        activationUrl,
+        delivery,
+        deliveryPending: !delivery.some(status => status.sent)
       });
     } catch (error) {
       return respondWithStaffError(res, error);
@@ -851,6 +1395,52 @@ app.post(
         req.ip
       );
       return res.json({ invitation: updated ? publicInvitation(updated) : null });
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/staff/invitations/:id/resend',
+  requirePermission('invitations.manage'),
+  async (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      assertCanManageInvitations(actor);
+      const invitation = db.getStaffInvitationById(req.params.id);
+      if (!invitation || invitation.schoolId !== actor.schoolId) {
+        return res.status(404).json({ error: 'Invitation not found.' });
+      }
+      const { invitation: updated, token } = resendStaffInvitation(invitation);
+      const activationUrl = `/portal#/staff-activate?token=${encodeURIComponent(token)}`;
+      const delivery = await notifyStaffInvitation({
+        fullName: updated.fullName,
+        email: updated.email,
+        phone: updated.phone,
+        role: updated.role,
+        activationUrl,
+        deliveryMode: updated.deliveryMode
+      });
+      const withDelivery = db.updateStaffInvitation(updated.id, { notificationStatuses: delivery });
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STAFF_INVITATION_RESENT',
+        'STAFF_INVITATION',
+        updated.id,
+        `Resent invitation for ${updated.email}`,
+        req.ip
+      );
+      return res.json({
+        invitation: publicInvitation(withDelivery || updated),
+        token,
+        activationUrl,
+        delivery,
+        deliveryPending: !delivery.some(status => status.sent)
+      });
     } catch (error) {
       return respondWithStaffError(res, error);
     }
@@ -999,7 +1589,7 @@ app.get('/api/students', requirePermission('students:read'), async (req: Request
     const mysqlPool = pool;
 
     if (!mysqlPool || !mysqlStatus.connected) {
-      const students = db.getStudents(schoolId, classId, search);
+      const students = scopeStudentsForActor(actor, db.getStudents(schoolId, classId, search));
       return res.json(students);
     }
 
@@ -1073,12 +1663,10 @@ app.get('/api/students/:id', requirePermission('students:read'), (req: Request, 
   if (!student) return res.status(404).json({ error: 'Student not found' });
 
   const actor = req.user;
-  if (actor && actor.role === 'PARENT' && actor.linkedStudentIds && !actor.linkedStudentIds.includes(student.id)) {
-    return res.status(403).json({ error: 'You are not authorized to access that student record.' });
-  }
-
-  if (actor && actor.role === 'STUDENT' && actor.studentId && actor.studentId !== student.id) {
-    return res.status(403).json({ error: 'You are not authorized to access that student record.' });
+  try {
+    if (actor) assertPortalStudentAccess(actor, student.id);
+  } catch (error) {
+    return respondWithPortalError(res, error);
   }
 
   const guardians = db.getGuardiansForStudent(student.id);
@@ -1411,7 +1999,14 @@ app.patch('/api/students/:id', requirePermission('students:write'), async (req: 
 // --- Guardians & Links ---
 app.get('/api/guardians', (req: Request, res: Response) => {
   const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
-  return res.json(db.getGuardians(schoolId));
+  const guardians = db.getGuardians(schoolId);
+  const allowed = portalStudentIds(req.user);
+  if (!allowed) return res.json(guardians);
+
+  const linkedGuardianIds = new Set(
+    allowed.flatMap(studentId => db.getGuardiansForStudent(studentId).map(item => item.guardian.id))
+  );
+  return res.json(guardians.filter(guardian => linkedGuardianIds.has(guardian.id)));
 });
 
 app.post('/api/guardians', (req: Request, res: Response) => {
@@ -1451,17 +2046,29 @@ app.post('/api/guardians', (req: Request, res: Response) => {
 });
 
 app.get('/api/guardians/student/:studentId', (req: Request, res: Response) => {
-  const guardians = db.getGuardiansForStudent(req.params.studentId);
-  return res.json(guardians);
+  try {
+    if (req.user) assertPortalStudentAccess(req.user, req.params.studentId);
+  } catch (error) {
+    return respondWithPortalError(res, error);
+  }
+  return res.json(db.getGuardiansForStudent(req.params.studentId));
 });
 
 app.get('/api/guardians/my-children/:guardianId', requireRole('PARENT'), (req: Request, res: Response) => {
-  const actor = req.user;
-  if (actor && actor.role === 'PARENT' && actor.id !== req.params.guardianId) {
+  const actor = getActor(req);
+  const allowed = portalStudentIds(actor) || [];
+  const isLinkedGuardian =
+    Boolean(actor.linkedGuardianIds?.includes(req.params.guardianId)) ||
+    allowed.some(studentId =>
+      db.getGuardiansForStudent(studentId).some(item => item.guardian.id === req.params.guardianId)
+    );
+  if (!isLinkedGuardian) {
     return res.status(403).json({ error: 'Parents can only view records for their own linked children.' });
   }
 
-  const children = db.getStudentsForGuardian(req.params.guardianId);
+  const children = db
+    .getStudentsForGuardian(req.params.guardianId)
+    .filter(item => allowed.includes(item.student.id));
   return res.json(children);
 });
 
@@ -1470,7 +2077,9 @@ app.get('/api/attendance', requirePermission('attendance:read'), (req: Request, 
   const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
   const date = req.query.date as string | undefined;
   const classId = req.query.classId as string | undefined;
-  return res.json(db.getAttendance(schoolId, date, classId));
+  const records = db.getAttendance(schoolId, date, classId);
+  const allowed = portalStudentIds(req.user);
+  return res.json(allowed ? records.filter(record => allowed.includes(record.studentId)) : records);
 });
 
 app.post('/api/attendance/batch', requirePermission('attendance:write'), (req: Request, res: Response) => {
@@ -1525,10 +2134,17 @@ app.post('/api/attendance/batch', requirePermission('attendance:write'), (req: R
 });
 
 app.post('/api/attendance/:id/explain', (req: Request, res: Response) => {
+  const actor = getActor(req);
+  const existing = db.getAttendance(actor.schoolId).find(record => record.id === req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Record not found' });
+  try {
+    assertPortalStudentAccess(actor, existing.studentId);
+  } catch (error) {
+    return respondWithPortalError(res, error);
+  }
   const { explanation } = req.body;
   const updated = db.updateAttendanceExplanation(req.params.id, explanation);
   if (!updated) return res.status(404).json({ error: 'Record not found' });
-  const actor = getActor(req);
   db.logAudit(
     updated.schoolId,
     actor.id,
@@ -1546,12 +2162,19 @@ app.post('/api/attendance/:id/explain', (req: Request, res: Response) => {
 // --- Health & Emergency Incidents ---
 app.get('/api/health-incidents', (req: Request, res: Response) => {
   const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
-  return res.json(db.getHealthIncidents(schoolId));
+  const incidents = db.getHealthIncidents(schoolId);
+  const allowed = portalStudentIds(req.user);
+  return res.json(allowed ? incidents.filter(incident => allowed.includes(incident.studentId)) : incidents);
 });
 
 app.get('/api/health-incidents/:id', (req: Request, res: Response) => {
   const incident = db.getHealthIncidentById(req.params.id);
   if (!incident) return res.status(404).json({ error: 'Incident not found' });
+  try {
+    if (req.user) assertPortalStudentAccess(req.user, incident.studentId);
+  } catch (error) {
+    return respondWithPortalError(res, error);
+  }
   return res.json(incident);
 });
 
@@ -1635,6 +2258,13 @@ app.post('/api/health-incidents', (req: Request, res: Response) => {
 
 app.post('/api/health-incidents/:id/action', (req: Request, res: Response) => {
   const actor = getActor(req);
+  const existing = db.getHealthIncidentById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Incident not found' });
+  try {
+    assertPortalStudentAccess(actor, existing.studentId);
+  } catch (error) {
+    return respondWithPortalError(res, error);
+  }
   const { action } = req.body;
   const updated = db.addIncidentAction(req.params.id, action, actor.fullName);
   if (!updated) return res.status(404).json({ error: 'Incident not found' });
@@ -1643,6 +2273,13 @@ app.post('/api/health-incidents/:id/action', (req: Request, res: Response) => {
 
 app.post('/api/health-incidents/:id/acknowledge', (req: Request, res: Response) => {
   const actor = getActor(req);
+  const existing = db.getHealthIncidentById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Incident not found' });
+  try {
+    assertPortalStudentAccess(actor, existing.studentId);
+  } catch (error) {
+    return respondWithPortalError(res, error);
+  }
   const { notes } = req.body;
   const updated = db.acknowledgeIncident(req.params.id, notes);
   if (!updated) return res.status(404).json({ error: 'Incident not found' });
@@ -1756,18 +2393,33 @@ app.get('/api/finance/fee-structures', (req: Request, res: Response) => {
 app.get('/api/finance/invoices', (req: Request, res: Response) => {
   const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
   const studentId = req.query.studentId as string | undefined;
-  return res.json(db.getInvoices(schoolId, studentId));
+  const allowed = portalStudentIds(req.user);
+  if (studentId && allowed && !allowed.includes(studentId)) {
+    return res.status(403).json({ error: 'You can only access records linked to your own account.' });
+  }
+  const invoices = db.getInvoices(schoolId, studentId);
+  return res.json(allowed ? invoices.filter(invoice => allowed.includes(invoice.studentId)) : invoices);
 });
 
 app.get('/api/finance/payments', (req: Request, res: Response) => {
   const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
   const studentId = req.query.studentId as string | undefined;
-  return res.json(db.getPayments(schoolId, studentId));
+  const allowed = portalStudentIds(req.user);
+  if (studentId && allowed && !allowed.includes(studentId)) {
+    return res.status(403).json({ error: 'You can only access records linked to your own account.' });
+  }
+  const payments = db.getPayments(schoolId, studentId);
+  return res.json(allowed ? payments.filter(payment => allowed.includes(payment.studentId)) : payments);
 });
 
 app.post('/api/finance/payments', (req: Request, res: Response) => {
   const actor = getActor(req);
   const body = req.body;
+  try {
+    assertPortalStudentAccess(actor, String(body.studentId || ''));
+  } catch (error) {
+    return respondWithPortalError(res, error);
+  }
   const receiptNo = `REC-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
 
   const newPayment: Payment = {
@@ -1815,7 +2467,12 @@ app.get('/api/academics/subjects', (req: Request, res: Response) => {
 app.get('/api/academics/report-cards', (req: Request, res: Response) => {
   const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
   const studentId = req.query.studentId as string | undefined;
-  return res.json(db.getReportCards(schoolId, studentId));
+  const allowed = portalStudentIds(req.user);
+  if (studentId && allowed && !allowed.includes(studentId)) {
+    return res.status(403).json({ error: 'You can only access records linked to your own account.' });
+  }
+  const cards = db.getReportCards(schoolId, studentId);
+  return res.json(allowed ? cards.filter(card => allowed.includes(card.studentId)) : cards);
 });
 
 // --- Staff, Timetable, Homework, Events, Audit ---

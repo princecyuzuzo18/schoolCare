@@ -9,7 +9,8 @@ import {
   Invoice,
   Payment,
   ReportCard,
-  HomeworkAssignment
+  HomeworkAssignment,
+  PortalDashboardView
 } from '../types';
 import {
   UserSquare2,
@@ -36,6 +37,7 @@ export const ParentPortalPage: React.FC = () => {
 
   const [children, setChildren] = useState<Student[]>([]);
   const [selectedChildId, setSelectedChildId] = useState<string>('');
+  const [dashboard, setDashboard] = useState<PortalDashboardView | null>(null);
   const [incidents, setIncidents] = useState<HealthIncident[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -43,6 +45,7 @@ export const ParentPortalPage: React.FC = () => {
   const [reportCards, setReportCards] = useState<ReportCard[]>([]);
   const [homework, setHomework] = useState<HomeworkAssignment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [portalError, setPortalError] = useState('');
 
   // Absence excuse modal state
   const [showExcuseModal, setShowExcuseModal] = useState(false);
@@ -53,37 +56,23 @@ export const ParentPortalPage: React.FC = () => {
   const [showPayModal, setShowPayModal] = useState(false);
   const [payAmount, setPayAmount] = useState('35000');
   const [payMethod, setPayMethod] = useState<'MTN_MOMO' | 'AIRTEL_MONEY' | 'BANK_TRANSFER'>('MTN_MOMO');
-  const [payPhone, setPayPhone] = useState(currentUser?.phone || '+250 788 888 707');
+  const [payPhone, setPayPhone] = useState(currentUser?.phone || '');
   const [isProcessingPay, setIsProcessingPay] = useState(false);
 
   const loadPortalData = async () => {
     try {
       setLoading(true);
-      // Kevin Ishimwe and Clarisse Uwera
-      const allStudents = await api.getStudents();
-      const linked = allStudents.filter(
-        s => s.id === 'std-kevin-ishimwe-01' || s.id === 'std-clarisse-uwera-06'
+      setPortalError('');
+      const data = await api.getPortalDashboard();
+      const linkedIds = currentUser?.linkedStudentIds || [];
+      const linkedStudents = data.students.filter(student => linkedIds.includes(student.id));
+      setDashboard({ ...data, students: linkedStudents });
+      setChildren(linkedStudents);
+      setSelectedChildId(previous =>
+        linkedStudents.some(student => student.id === previous) ? previous : linkedStudents[0]?.id || ''
       );
-      setChildren(linked.length > 0 ? linked : allStudents.slice(0, 2));
-      const activeChildId = linked[0]?.id || allStudents[0]?.id || '';
-      setSelectedChildId(activeChildId);
-
-      const [allInc, allAtt, allInv, allPay, allRc, allHw] = await Promise.all([
-        api.getHealthIncidents(),
-        api.getAttendance(),
-        api.getInvoices(activeChildId),
-        api.getPayments(activeChildId),
-        api.getReportCards(activeChildId),
-        api.getHomework()
-      ]);
-
-      setIncidents(allInc.filter(i => i.studentId === activeChildId));
-      setAttendance(allAtt.filter(a => a.studentId === activeChildId));
-      setInvoices(allInv);
-      setPayments(allPay);
-      setReportCards(allRc);
-      setHomework(allHw);
-    } catch (err) {
+    } catch (err: any) {
+      setPortalError(err?.message || 'Failed to load parent portal.');
       console.error('Failed to load parent portal:', err);
     } finally {
       setLoading(false);
@@ -92,28 +81,21 @@ export const ParentPortalPage: React.FC = () => {
 
   useEffect(() => {
     loadPortalData();
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
-  // When child switcher changes
-  const handleSelectChild = async (id: string) => {
-    setSelectedChildId(id);
-    const [allInc, allAtt, allInv, allPay, allRc] = await Promise.all([
-      api.getHealthIncidents(),
-      api.getAttendance(),
-      api.getInvoices(id),
-      api.getPayments(id),
-      api.getReportCards(id)
-    ]);
-    setIncidents(allInc.filter(i => i.studentId === id));
-    setAttendance(allAtt.filter(a => a.studentId === id));
-    setInvoices(allInv);
-    setPayments(allPay);
-    setReportCards(allRc);
-  };
+  useEffect(() => {
+    if (!dashboard || !selectedChildId) return;
+    setIncidents(dashboard.healthIncidents.filter(item => item.studentId === selectedChildId));
+    setAttendance(dashboard.attendance.filter(item => item.studentId === selectedChildId));
+    setInvoices(dashboard.invoices.filter(item => item.studentId === selectedChildId));
+    setPayments(dashboard.payments.filter(item => item.studentId === selectedChildId));
+    setReportCards(dashboard.reportCards.filter(item => item.studentId === selectedChildId));
+    setHomework(dashboard.homework.filter(item => item.classId === dashboard.students.find(s => s.id === selectedChildId)?.classId));
+  }, [dashboard, selectedChildId]);
 
   const handleAcknowledgeIncident = async (incidentId: string) => {
     try {
-      await api.acknowledgeIncident(incidentId, 'Parent confirmed via Parent Portal');
+      await api.acknowledgePortalIncident(incidentId, 'Parent confirmed via Parent Portal');
       loadPortalData();
       confetti({ particleCount: 50, spread: 60, origin: { y: 0.7 } });
     } catch (err: any) {
@@ -125,7 +107,7 @@ export const ParentPortalPage: React.FC = () => {
     e.preventDefault();
     if (!excuseText.trim()) return;
     try {
-      await api.explainAbsence(excuseRecordId, excuseText);
+      await api.explainPortalAbsence(excuseRecordId, excuseText);
       setShowExcuseModal(false);
       setExcuseText('');
       loadPortalData();
@@ -137,18 +119,17 @@ export const ParentPortalPage: React.FC = () => {
   const handleMakePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     const invoice = invoices[0];
-    if (!invoice) return;
+    if (!invoice || !selectedChild) return;
 
     try {
       setIsProcessingPay(true);
-      await api.recordPayment({
+      await api.recordPortalPayment({
         invoiceId: invoice.id,
         studentId: selectedChild.id,
         studentName: `${selectedChild.firstName} ${selectedChild.lastName}`,
         amountRwf: Number(payAmount),
         method: payMethod,
         reference: `MOMO-RW-${Date.now().toString().slice(-6)}`,
-        payerName: currentUser?.fullName || 'Chantal Mukantabana',
         payerPhone: payPhone
       });
 
@@ -162,15 +143,27 @@ export const ParentPortalPage: React.FC = () => {
     }
   };
 
+  const handleSelectChild = (id: string) => setSelectedChildId(id);
+
   const selectedChild = children.find(c => c.id === selectedChildId) || children[0];
   const urgentCase = incidents.find(i => !i.resolved && (i.priority === 'URGENT' || i.priority === 'EMERGENCY'));
   const activeInvoice = invoices[0];
   const reportCard = reportCards[0];
 
-  if (loading || !selectedChild) {
+  if (loading) {
     return (
       <div className="p-8 flex items-center justify-center min-h-[500px]">
         <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!selectedChild) {
+    return (
+      <div className="p-8">
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+          {portalError || 'No child is linked to this parent account yet. Contact the school if you expected access.'}
+        </div>
       </div>
     );
   }

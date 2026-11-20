@@ -3,8 +3,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import type { TranslationKey } from '../i18n';
 import { api, ApiError } from '../services/api';
-import { getProfessionalTitle, isProtectedRole } from '../roleCatalog';
-import type { PermissionsResponse, StaffAccountView } from '../types';
+import { getProfessionalTitle, isProtectedRole, isSchoolLeader } from '../roleCatalog';
+import type { PermissionsResponse, StaffAccountView, UserRole } from '../types';
 import { KeyRound, LockKeyhole, RotateCcw, ShieldCheck } from 'lucide-react';
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -21,6 +21,7 @@ export const PermissionsPage: React.FC = () => {
   const [accounts, setAccounts] = useState<StaffAccountView[]>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+  const [selectedRoleScope, setSelectedRoleScope] = useState<UserRole[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -63,17 +64,29 @@ export const PermissionsPage: React.FC = () => {
     if (manageableAccounts.length === 0) {
       setSelectedUserId('');
       setSelectedPermissions([]);
+      setSelectedRoleScope([]);
       return;
     }
     if (!manageableAccounts.some(account => account.userId === selectedUserId)) {
       const first = manageableAccounts[0];
       setSelectedUserId(first.userId);
       setSelectedPermissions(first.delegatedPermissions || []);
+      setSelectedRoleScope(first.delegatedRoleScope || []);
     }
   }, [manageableAccounts, selectedUserId]);
 
   const selectedAccount = manageableAccounts.find(account => account.userId === selectedUserId);
-  const delegatable = permissionData?.delegatablePermissions ?? [];
+  const isLeader =
+    isSchoolLeader(currentUser?.role) ||
+    currentUser?.role === 'SCHOOL_ADMIN' ||
+    currentUser?.role === 'SUPER_ADMIN';
+  const leaderOnly = permissionData?.leaderOnlyDelegatablePermissions ?? [];
+  const delegatable = (permissionData?.delegatablePermissions ?? []).filter(
+    permission => isLeader || !leaderOnly.includes(permission)
+  );
+  const staffCreationPermissions = ['staff.create', 'staff.assign_roles', 'invitations.manage'];
+  const needsRoleScope = selectedPermissions.some(permission => staffCreationPermissions.includes(permission));
+  const roleScopeOptions = permissionData?.delegatableRoleScope ?? [];
   const labelByCode = useMemo(() => {
     const map = new Map<string, string>();
     for (const definition of permissionData?.catalog ?? []) {
@@ -97,11 +110,19 @@ export const PermissionsPage: React.FC = () => {
 
   const handleSave = async () => {
     if (!selectedUserId) return;
+    if (needsRoleScope && selectedRoleScope.length === 0) {
+      setError(t('roleScopeRequired'));
+      return;
+    }
     setSaving(true);
     setError('');
     setSuccess('');
     try {
-      await api.grantStaffPermissions(selectedUserId, selectedPermissions);
+      await api.grantStaffPermissions(
+        selectedUserId,
+        selectedPermissions,
+        needsRoleScope ? selectedRoleScope : undefined
+      );
       setSuccess(t('permissionsSaved'));
       await load();
     } catch (err) {
@@ -176,6 +197,7 @@ export const PermissionsPage: React.FC = () => {
                   onClick={() => {
                     setSelectedUserId(account.userId);
                     setSelectedPermissions(account.delegatedPermissions || []);
+                    setSelectedRoleScope(account.delegatedRoleScope || []);
                   }}
                   className={`w-full rounded-xl border px-3 py-2 text-left transition-colors ${
                     selectedUserId === account.userId
@@ -239,6 +261,35 @@ export const PermissionsPage: React.FC = () => {
                   </span>
                 </label>
               ))}
+            </div>
+          )}
+
+          {needsRoleScope && (
+            <div className="mt-5 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+              <p className="text-[11px] font-bold text-indigo-900">{t('roleScopeTitle')}</p>
+              <p className="mt-0.5 text-[10px] text-indigo-800">{t('roleScopeHelp')}</p>
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {roleScopeOptions.map(role => (
+                  <label
+                    key={role}
+                    className="flex items-center gap-2 rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-slate-700"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedRoleScope.includes(role)}
+                      onChange={() =>
+                        setSelectedRoleScope(previous =>
+                          previous.includes(role)
+                            ? previous.filter(item => item !== role)
+                            : [...previous, role]
+                        )
+                      }
+                      className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    {getProfessionalTitle(role)}
+                  </label>
+                ))}
+              </div>
             </div>
           )}
 

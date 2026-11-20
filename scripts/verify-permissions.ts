@@ -5,8 +5,15 @@ import {
   PermissionError,
   assertCanGrantPermissions,
   assertCanManageInvitations,
+  assertCanActivateStaff,
+  assertCanArchiveStaff,
+  assertCanAssignStaffRole,
+  assertCanCreateStaffRole,
+  assertCanEditStaff,
   assertCanManageStaff,
   assertCanReviewAudit,
+  assertCanSuspendStaff,
+  assertCanViewStaff,
   hasPermission
 } from '../server/permissions';
 
@@ -82,17 +89,17 @@ check('Inactive user has no effective permissions', !hasPermission(user('user-of
 check('Unknown permission is denied', !hasPermission(head, 'superuser.anything'));
 
 for (const sensitivePermission of [
-  'staff.create',
   'staff.role.manage',
-  'staff.write',
   'school.write',
   'permissions.delegate',
   'permissions.revoke',
-  'invitations.manage',
   'audit.read',
   'audit.review'
 ]) {
   check(`'${sensitivePermission}' is not delegatable`, !DELEGATABLE_PERMISSIONS.includes(sensitivePermission));
+}
+for (const scopedPermission of ['staff.create', 'staff.assign_roles', 'invitations.manage']) {
+  check(`'${scopedPermission}' is only delegatable with a role scope`, DELEGATABLE_PERMISSIONS.includes(scopedPermission));
 }
 
 try {
@@ -114,8 +121,19 @@ expectDenied('Headteacher cannot grant to another Headteacher', () =>
 expectDenied('Cross-school delegation is denied', () =>
   assertCanGrantPermissions(head, otherSchoolTeacher, ['students.read'])
 );
-expectDenied('Sensitive permission cannot be delegated', () =>
+expectDenied('School ownership cannot be delegated', () =>
+  assertCanGrantPermissions(head, nominatedTeacher, ['school.write'])
+);
+expectDenied('Staff creation requires an explicit role scope', () =>
   assertCanGrantPermissions(head, nominatedTeacher, ['staff.create'])
+);
+expectDenied('Protected staff roles cannot be used as delegation scope', () =>
+  assertCanGrantPermissions(
+    head,
+    nominatedTeacher,
+    ['staff.read', 'staff.create', 'staff.assign_roles', 'invitations.manage'],
+    ['HEAD_TEACHER' as UserRole]
+  )
 );
 expectDenied('Empty delegation is denied', () =>
   assertCanGrantPermissions(head, nominatedTeacher, [])
@@ -145,6 +163,64 @@ try {
 } catch (error) {
   check('Headteacher can manage invitations and review audit logs', false, error instanceof Error ? error.message : String(error));
 }
+
+const scopedDeputy = user('user-deputy', 'DEPUTY_HEAD', {
+  delegatedPermissions: ['staff.create', 'staff.assign_roles', 'invitations.manage', 'staff.read'],
+  delegatedRoleScope: ['TEACHER']
+});
+
+function expectAllowed(name: string, action: () => void): void {
+  try {
+    action();
+    check(name, true);
+  } catch (error) {
+    check(name, false, error instanceof Error ? error.message : String(error));
+  }
+}
+
+try {
+  assertCanGrantPermissions(
+    head,
+    nominatedTeacher,
+    ['staff.read', 'staff.create', 'staff.assign_roles', 'invitations.manage'],
+    ['TEACHER']
+  );
+  check('Headteacher can delegate scoped staff creation', true);
+} catch (error) {
+  check('Headteacher can delegate scoped staff creation', false, error instanceof Error ? error.message : String(error));
+}
+expectAllowed('Delegated deputy can create an in-scope teacher', () =>
+  assertCanCreateStaffRole(scopedDeputy, 'TEACHER')
+);
+expectDenied('Delegated deputy cannot create an out-of-scope nurse', () =>
+  assertCanCreateStaffRole(scopedDeputy, 'NURSE')
+);
+expectDenied('Delegated deputy cannot create a Headteacher', () =>
+  assertCanCreateStaffRole(scopedDeputy, 'HEAD_TEACHER')
+);
+expectDenied('Delegated deputy cannot pass on staff-creation powers', () =>
+  assertCanGrantPermissions(scopedDeputy, teacher, ['staff.create'], ['TEACHER'])
+);
+expectDenied('Unauthorised teacher cannot add staff', () => assertCanCreateStaffRole(teacher, 'TEACHER'));
+expectDenied('No self-promotion to Headteacher', () =>
+  assertCanAssignStaffRole(head, head, 'HEAD_TEACHER')
+);
+expectDenied('Cross-school staff management is denied', () => assertCanManageStaff(head, otherSchoolTeacher));
+expectAllowed('Headteacher can view, edit and change staff status', () => {
+  assertCanViewStaff(head);
+  assertCanEditStaff(head, teacher);
+  assertCanActivateStaff(head, teacher);
+  assertCanSuspendStaff(head, teacher);
+  assertCanArchiveStaff(head, teacher);
+  assertCanAssignStaffRole(head, teacher, 'TEACHER');
+});
+expectDenied('Deputy without staff.write cannot edit staff', () => assertCanEditStaff(scopedDeputy, teacher));
+
+const revokedDeputy = user('user-revoked', 'DEPUTY_HEAD', { delegatedPermissions: [] });
+check(
+  'Revoked delegation takes effect immediately',
+  !hasPermission(revokedDeputy, 'staff.create') && !hasPermission(revokedDeputy, 'staff.read')
+);
 
 const failed = checks.filter(item => !item.passed);
 for (const item of checks) {

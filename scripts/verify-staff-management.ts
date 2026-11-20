@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { UserRole } from '../src/types';
+import { ASSIGNABLE_STAFF_ROLES } from '../src/roleCatalog';
 
 type Check = { name: string; passed: boolean; detail?: string };
 
@@ -20,8 +21,10 @@ try {
     StaffManagementError,
     activateStaffInvitation,
     createStaffInvitation,
-    publicInvitation
+    publicInvitation,
+    resendStaffInvitation
   } = await import('../server/staffManagement');
+  const { archiveStaffAccount, getStaffProfile } = await import('../server/staffAdministration');
 
   const actor = db.getUserById('user-super-admin');
   check('Headteacher account exists after normalization', actor?.role === 'HEAD_TEACHER');
@@ -65,6 +68,41 @@ try {
       check('Duplicate pending invitation is rejected', error instanceof StaffManagementError);
     }
 
+    for (const role of ASSIGNABLE_STAFF_ROLES) {
+      const createdRole = createStaffInvitation(
+        {
+          fullName: `Test ${role}`,
+          email: `role.${role.toLowerCase()}.test@schoolcare.rw`,
+          phone: '+250 700 222 333',
+          role,
+          staffId: `STF-${role.slice(0, 3)}`,
+          professionalTitle: 'Professional title',
+          department: 'Test department',
+          responsibilities: ['Duty one', 'Duty two'],
+          employmentStartDate: '2026-01-10',
+          deliveryMode: 'SECURE_ACTIVATION',
+          preferredLanguage: 'en'
+        },
+        actor
+      );
+      check(
+        `${role} invitation stores full professional details`,
+        createdRole.invitation.role === role &&
+          createdRole.invitation.staffId === `STF-${role.slice(0, 3)}` &&
+          (createdRole.invitation.responsibilities || []).length === 2 &&
+          createdRole.invitation.deliveryMode === 'SECURE_ACTIVATION'
+      );
+    }
+
+    const oldTokenHash = created.invitation.tokenHash;
+    const resent = resendStaffInvitation(created.invitation);
+    check(
+      'Resending an invitation rotates the token hash',
+      resent.token !== created.token &&
+        resent.invitation.tokenHash !== oldTokenHash &&
+        Boolean(resent.invitation.resentAt)
+    );
+
     try {
       createStaffInvitation(
         {
@@ -81,6 +119,16 @@ try {
       check('Headteacher role cannot be invited', error instanceof StaffManagementError);
     }
   }
+
+  const archived = archiveStaffAccount('school-es-rubengera-01', 'user-teacher', 'user-super-admin');
+  check(
+    'Archiving preserves the record and blocks sign-in',
+    archived?.item.accountStatus === 'ARCHIVED' && archived.user.isActive === false
+  );
+  check(
+    'Archived staff profile remains available',
+    getStaffProfile('school-es-rubengera-01', 'user-teacher')?.accountStatus === 'ARCHIVED'
+  );
 
   try {
     await activateStaffInvitation({ token: 'bad-token', password: 'a-very-long-password' });

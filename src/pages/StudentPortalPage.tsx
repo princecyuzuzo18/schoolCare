@@ -32,41 +32,46 @@ export const StudentPortalPage: React.FC = () => {
   const [homework, setHomework] = useState<HomeworkAssignment[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [portalError, setPortalError] = useState('');
+
   useEffect(() => {
     const loadStudentData = async () => {
       try {
         setLoading(true);
-        // Student Kevin Ishimwe
-        const allStudents = await api.getStudents();
-        const me = allStudents.find(s => s.id === 'std-kevin-ishimwe-01') || allStudents[0];
-        setStudent(me);
-
+        setPortalError('');
+        const data = await api.getPortalDashboard();
+        const me = data.students.find(item => item.id === currentUser?.studentId);
+        setStudent(me || null);
         if (me) {
-          const [rcList, attList, ttList, hwList] = await Promise.all([
-            api.getReportCards(me.id),
-            api.getAttendance(undefined, me.classId),
-            api.getTimetable(me.classId),
-            api.getHomework(me.classId)
-          ]);
-
-          setReportCards(rcList);
-          setAttendance(attList.filter(a => a.studentId === me.id));
-          setTimetable(ttList);
-          setHomework(hwList);
+          setReportCards(data.reportCards.filter(item => item.studentId === me.id));
+          setAttendance(data.attendance.filter(item => item.studentId === me.id));
+          setTimetable(data.timetable.filter(item => item.classId === me.classId));
+          setHomework(data.homework.filter(item => item.classId === me.classId));
         }
-      } catch (err) {
+      } catch (err: any) {
+        setPortalError(err?.message || 'Failed to load student portal.');
         console.error(err);
       } finally {
         setLoading(false);
       }
     };
     loadStudentData();
-  }, [currentUser]);
+  }, [currentUser?.studentId]);
 
-  if (loading || !student) {
+  if (loading) {
     return (
       <div className="p-8 flex items-center justify-center min-h-[500px]">
         <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!student) {
+    return (
+      <div className="p-8">
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+          {portalError || 'Your student account is not linked to an active student record. Contact the school.'}
+        </div>
       </div>
     );
   }

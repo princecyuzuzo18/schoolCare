@@ -1,5 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { LanguageCode, StaffInvitation, UserProfile, UserRole } from '../src/types';
+import type {
+  LanguageCode,
+  StaffInvitation,
+  StaffInvitationDeliveryMode,
+  UserProfile,
+  UserRole
+} from '../src/types';
 import { ASSIGNABLE_STAFF_ROLES, getProfessionalTitle } from '../src/roleCatalog';
 import { createInvitedAccount } from './authCredentials';
 import { db } from './database';
@@ -24,6 +30,11 @@ export interface CreateStaffInvitationInput {
   preferredLanguage: LanguageCode;
   professionalTitle?: string;
   department?: string;
+  staffId?: string;
+  photoUrl?: string;
+  responsibilities?: string[];
+  employmentStartDate?: string;
+  deliveryMode?: StaffInvitationDeliveryMode;
 }
 
 export interface ActivateStaffInvitationInput {
@@ -40,6 +51,18 @@ export function hashInvitationToken(token: string): string {
 export function publicInvitation(invitation: StaffInvitation) {
   const { tokenHash: _tokenHash, ...safeInvitation } = invitation;
   return safeInvitation;
+}
+
+function normalizeList(values?: string[]): string[] {
+  if (!Array.isArray(values)) return [];
+  return Array.from(
+    new Set(
+      values
+        .filter((value): value is string => typeof value === 'string')
+        .map(value => value.trim())
+        .filter(Boolean)
+    )
+  ).slice(0, 30);
 }
 
 function validateCreateInput(input: CreateStaffInvitationInput): void {
@@ -64,6 +87,21 @@ function validateCreateInput(input: CreateStaffInvitationInput): void {
   }
   if (input.gender !== undefined && input.gender !== 'M' && input.gender !== 'F') {
     throw new StaffManagementError('Gender must be M or F.');
+  }
+  if (input.staffId !== undefined && input.staffId.trim().length > 50) {
+    throw new StaffManagementError('Staff ID must be at most 50 characters.');
+  }
+  if (input.photoUrl !== undefined && input.photoUrl.trim().length > 500) {
+    throw new StaffManagementError('Photo URL must be at most 500 characters.');
+  }
+  if (input.employmentStartDate && Number.isNaN(new Date(input.employmentStartDate).getTime())) {
+    throw new StaffManagementError('Enter a valid employment start date.');
+  }
+  if (input.deliveryMode !== undefined && input.deliveryMode !== 'INVITATION' && input.deliveryMode !== 'SECURE_ACTIVATION') {
+    throw new StaffManagementError('Choose a valid invitation delivery method.');
+  }
+  if (input.responsibilities && !Array.isArray(input.responsibilities)) {
+    throw new StaffManagementError('Responsibilities must be a list of text values.');
   }
 }
 
@@ -102,11 +140,19 @@ export function createStaffInvitation(
     ...(input.gender ? { gender: input.gender } : {}),
     role,
     professionalTitle,
+    staffId: input.staffId?.trim() || `STF-${randomBytes(3).toString('hex').toUpperCase()}`,
+    phone: input.phone?.trim(),
+    ...(input.photoUrl?.trim() ? { photoUrl: input.photoUrl.trim() } : {}),
+    department: input.department?.trim() || professionalTitle,
+    responsibilities: normalizeList(input.responsibilities),
+    employmentStartDate: input.employmentStartDate
+      ? new Date(input.employmentStartDate).toISOString().slice(0, 10)
+      : now.toISOString().slice(0, 10),
+    deliveryMode: input.deliveryMode || 'INVITATION',
     tokenHash: hashInvitationToken(token),
     expiresAt: new Date(now.getTime() + INVITATION_TTL_MS).toISOString(),
     createdAt: now.toISOString(),
-    createdBy: actor.id,
-    department: input.department?.trim() || professionalTitle
+    createdBy: actor.id
   };
 
   db.createStaffInvitation(invitation);
@@ -201,6 +247,12 @@ export async function activateStaffInvitation(
     department: invitation.department || title,
     status: 'ACTIVE',
     delegatedPermissions: [],
+    staffId: invitation.staffId,
+    phone: invitation.phone,
+    gender: invitation.gender,
+    photoUrl: invitation.photoUrl,
+    responsibilities: invitation.responsibilities || [],
+    employmentStartDate: invitation.employmentStartDate,
     createdAt: now,
     createdBy: invitation.createdBy,
     invitedAt: invitation.createdAt,
@@ -214,7 +266,7 @@ export async function activateStaffInvitation(
     db.createStaffMember({
       id: `stf-${userId}`,
       schoolId: invitation.schoolId,
-      staffId: `STF-${randomBytes(3).toString('hex').toUpperCase()}`,
+      staffId: invitation.staffId || `STF-${randomBytes(3).toString('hex').toUpperCase()}`,
       fullName: invitation.fullName,
       gender: invitation.gender ?? 'M',
       role: invitation.role,
@@ -223,13 +275,40 @@ export async function activateStaffInvitation(
       phone,
       email: invitation.email,
       assignedClasses: [],
-      assignedSubjects: [],
+      assignedSubjects: normalizeList(invitation.responsibilities),
+      responsibilities: normalizeList(invitation.responsibilities),
+      photoUrl: invitation.photoUrl,
+      employmentStartDate: invitation.employmentStartDate,
       status: 'ACTIVE',
-      joinedDate: now.slice(0, 10)
+      joinedDate: invitation.employmentStartDate || now.slice(0, 10)
     });
   }
 
   db.updateStaffInvitation(invitation.id, { consumedAt: now, userId });
 
   return { user, invitation: { ...invitation, consumedAt: now, userId } };
+}
+
+/** Replaces an invitation token so the previous link stops working immediately. */
+export function resendStaffInvitation(
+  invitation: StaffInvitation
+): { invitation: StaffInvitation; token: string } {
+  if (invitation.consumedAt) {
+    throw new StaffManagementError('A used invitation cannot be resent.');
+  }
+  if (invitation.revokedAt) {
+    throw new StaffManagementError('A revoked invitation cannot be resent. Create a new one.');
+  }
+
+  const token = randomBytes(32).toString('base64url');
+  const now = new Date().toISOString();
+  const updated = db.updateStaffInvitation(invitation.id, {
+    tokenHash: hashInvitationToken(token),
+    expiresAt: new Date(Date.now() + INVITATION_TTL_MS).toISOString(),
+    resentAt: now
+  });
+  if (!updated) {
+    throw new StaffManagementError('Invitation not found.');
+  }
+  return { invitation: updated, token };
 }

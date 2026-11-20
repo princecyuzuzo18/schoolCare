@@ -34,6 +34,14 @@ import {
   StaffAccountView,
   StaffInvitationResponse,
   StaffInvitation,
+  StaffSummary,
+  StaffDirectoryResponse,
+  StaffDirectoryItem,
+  SignupRequestView,
+  PortalDashboardView,
+  PublicContentArticle,
+  PublicContentArticleInput,
+  PublicContentGalleryImage,
   LanguageCode
 } from '../types';
 
@@ -139,6 +147,163 @@ class ApiService {
     });
   }
 
+  // --- Parent and student self-service sign-up ---
+
+  public async submitParentSignup(data: {
+    fullName: string;
+    phone: string;
+    email: string;
+    password: string;
+    confirmPassword: string;
+    admissionNumber: string;
+    admissionNumbers?: string[] | string;
+    preferredLanguage: LanguageCode;
+  }): Promise<{ request: SignupRequestView }> {
+    return this.request('/public/accounts/parent/signup', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  public async submitStudentSignup(data: {
+    fullName: string;
+    admissionNumber: string;
+    dob: string;
+    email: string;
+    password: string;
+    confirmPassword: string;
+    preferredLanguage: LanguageCode;
+  }): Promise<{ request: SignupRequestView }> {
+    return this.request('/public/accounts/student/signup', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  public async verifySignup(requestId: string, code: string): Promise<{ request: SignupRequestView }> {
+    return this.request('/public/accounts/verify', {
+      method: 'POST',
+      body: JSON.stringify({ requestId, code })
+    });
+  }
+
+  public async resendSignupCode(requestId: string): Promise<{ request: SignupRequestView }> {
+    return this.request('/public/accounts/resend', {
+      method: 'POST',
+      body: JSON.stringify({ requestId })
+    });
+  }
+
+  public async getSignupStatus(requestId: string): Promise<{ request: SignupRequestView }> {
+    return this.request(`/public/accounts/status/${encodeURIComponent(requestId)}`);
+  }
+
+  public async getSignupRequests(): Promise<SignupRequestView[]> {
+    return this.request('/account-signup-requests');
+  }
+
+  public async approveSignupRequest(id: string, notes = ''): Promise<{ user: UserProfile }> {
+    return this.request(`/account-signup-requests/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ notes })
+    });
+  }
+
+  public async rejectSignupRequest(id: string, notes = ''): Promise<{ request: SignupRequestView }> {
+    return this.request(`/account-signup-requests/${encodeURIComponent(id)}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ notes })
+    });
+  }
+
+  // --- Public school website content (requires school:write) ---
+
+  public async getPublicContentArticles(): Promise<PublicContentArticle[]> {
+    return this.request<PublicContentArticle[]>('/admin/public-content/articles');
+  }
+
+  public async createPublicContentArticle(data: PublicContentArticleInput): Promise<PublicContentArticle> {
+    return this.request<PublicContentArticle>('/admin/public-content/articles', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  public async updatePublicContentArticle(
+    id: string,
+    data: Partial<PublicContentArticleInput>
+  ): Promise<PublicContentArticle> {
+    return this.request<PublicContentArticle>(`/admin/public-content/articles/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data)
+    });
+  }
+
+  public async deletePublicContentArticle(id: string): Promise<{ deleted: boolean }> {
+    return this.request<{ deleted: boolean }>(`/admin/public-content/articles/${encodeURIComponent(id)}`, {
+      method: 'DELETE'
+    });
+  }
+
+  public async getPublicContentGallery(): Promise<PublicContentGalleryImage[]> {
+    return this.request<PublicContentGalleryImage[]>('/admin/public-content/gallery');
+  }
+
+  public async uploadPublicContentImage(formData: FormData): Promise<PublicContentGalleryImage> {
+    return this.requestForm<PublicContentGalleryImage>('/admin/public-content/gallery/upload', formData);
+  }
+
+  public async setPublicContentImageApproval(
+    id: string,
+    approved: boolean
+  ): Promise<PublicContentGalleryImage> {
+    return this.request<PublicContentGalleryImage>(
+      `/admin/public-content/gallery/${encodeURIComponent(id)}/approval`,
+      { method: 'PATCH', body: JSON.stringify({ approved }) }
+    );
+  }
+
+  public async deletePublicContentImage(id: string): Promise<{ deleted: boolean }> {
+    return this.request<{ deleted: boolean }>(`/admin/public-content/gallery/${encodeURIComponent(id)}`, {
+      method: 'DELETE'
+    });
+  }
+
+  // --- Scoped parent/student portal data and self-service actions ---
+
+  public async getPortalDashboard(): Promise<PortalDashboardView> {
+    return this.request('/portal/dashboard');
+  }
+
+  public async explainPortalAbsence(recordId: string, explanation: string): Promise<unknown> {
+    return this.request(`/portal/attendance/${encodeURIComponent(recordId)}/explain`, {
+      method: 'POST',
+      body: JSON.stringify({ explanation })
+    });
+  }
+
+  public async acknowledgePortalIncident(incidentId: string, notes = ''): Promise<unknown> {
+    return this.request(`/portal/health-incidents/${encodeURIComponent(incidentId)}/acknowledge`, {
+      method: 'POST',
+      body: JSON.stringify({ notes })
+    });
+  }
+
+  public async recordPortalPayment(data: {
+    invoiceId: string;
+    studentId: string;
+    studentName: string;
+    amountRwf: number;
+    method: 'MTN_MOMO' | 'AIRTEL_MONEY' | 'BANK_TRANSFER';
+    reference: string;
+    payerPhone: string;
+  }): Promise<unknown> {
+    return this.request('/portal/payments', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
   public async getUsers(): Promise<UserProfile[]> {
     return this.request<UserProfile[]>('/users');
   }
@@ -152,13 +317,71 @@ class ApiService {
     return this.request<StaffAccountView[]>('/staff/accounts');
   }
 
+  public async getStaffSummary(): Promise<StaffSummary> {
+    return this.request<StaffSummary>('/staff/summary');
+  }
+
+  public async getStaffDirectory(query: {
+    search?: string;
+    role?: string;
+    department?: string;
+    status?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}): Promise<StaffDirectoryResponse> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== '') params.set(key, String(value));
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return this.request<StaffDirectoryResponse>(`/staff/directory${suffix}`);
+  }
+
+  public async getStaffProfile(userId: string): Promise<StaffDirectoryItem> {
+    return this.request<StaffDirectoryItem>(`/staff/accounts/${encodeURIComponent(userId)}`);
+  }
+
+  public async updateStaffProfile(
+    userId: string,
+    input: {
+      fullName?: string;
+      phone?: string;
+      staffId?: string;
+      professionalTitle?: string;
+      department?: string;
+      gender?: 'M' | 'F';
+      photoUrl?: string;
+      responsibilities?: string[];
+      employmentStartDate?: string;
+    }
+  ): Promise<StaffDirectoryItem> {
+    return this.request<StaffDirectoryItem>(`/staff/accounts/${encodeURIComponent(userId)}/profile`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+  }
+
+  public async archiveStaffAccount(userId: string): Promise<{ user: UserProfile; item: StaffDirectoryItem }> {
+    return this.request(`/staff/accounts/${encodeURIComponent(userId)}/archive`, { method: 'POST' });
+  }
+
+  public async getDelegatedAdministrators(): Promise<StaffAccountView[]> {
+    return this.request<StaffAccountView[]>('/staff/delegated-administrators');
+  }
+
+  public async getStaffActivity(action?: string): Promise<AuditLogEntry[]> {
+    const suffix = action ? `?action=${encodeURIComponent(action)}` : '';
+    return this.request<AuditLogEntry[]>(`/staff/activity${suffix}`);
+  }
+
   public async grantStaffPermissions(
     userId: string,
-    permissions: string[]
+    permissions: string[],
+    roleScope?: UserRole[]
   ): Promise<{ user: UserProfile; account: StaffAccountView | null }> {
     return this.request(`/staff/accounts/${encodeURIComponent(userId)}/permissions`, {
       method: 'PUT',
-      body: JSON.stringify({ permissions })
+      body: JSON.stringify({ permissions, roleScope })
     });
   }
 
@@ -202,6 +425,12 @@ class ApiService {
     gender?: 'M' | 'F';
     preferredLanguage: LanguageCode;
     department?: string;
+    staffId?: string;
+    photoUrl?: string;
+    professionalTitle?: string;
+    responsibilities?: string[];
+    employmentStartDate?: string;
+    deliveryMode?: 'INVITATION' | 'SECURE_ACTIVATION';
   }): Promise<StaffInvitationResponse> {
     return this.request<StaffInvitationResponse>('/staff/invitations', {
       method: 'POST',
@@ -211,6 +440,12 @@ class ApiService {
 
   public async revokeStaffInvitation(id: string): Promise<{ invitation: StaffInvitation }> {
     return this.request(`/staff/invitations/${encodeURIComponent(id)}/revoke`, {
+      method: 'POST'
+    });
+  }
+
+  public async resendStaffInvitation(id: string): Promise<StaffInvitationResponse> {
+    return this.request<StaffInvitationResponse>(`/staff/invitations/${encodeURIComponent(id)}/resend`, {
       method: 'POST'
     });
   }

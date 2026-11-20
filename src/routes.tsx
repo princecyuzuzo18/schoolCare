@@ -23,6 +23,8 @@ import { ModuleCrud } from './pages/ModuleCrud';
 import { AdmissionsManagementPage } from './pages/AdmissionsManagementPage';
 import { StaffManagementPage } from './pages/StaffManagementPage';
 import { PermissionsPage } from './pages/PermissionsPage';
+import { SignupRequestsPage } from './pages/SignupRequestsPage';
+import { PublicSiteManagementPage } from './pages/PublicSiteManagementPage';
 
 export interface RouteContext {
   onNavigate: (tab: string) => void;
@@ -107,6 +109,16 @@ export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
     id: 'permissions',
     title: 'Staff Permissions',
     render: () => <PermissionsPage />
+  },
+  'signup-requests': {
+    id: 'signup-requests',
+    title: 'Parent & Student Sign-ups',
+    render: () => <SignupRequestsPage />
+  },
+  'public-site': {
+    id: 'public-site',
+    title: 'Public Website',
+    render: () => <PublicSiteManagementPage />
   },
   timetable: {
     id: 'timetable',

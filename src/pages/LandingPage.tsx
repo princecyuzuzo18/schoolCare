@@ -290,13 +290,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
   };
 
   return (
-    <div className="marketing-page min-h-screen overflow-x-hidden bg-[#FAF7EF] text-[#202B29]">
+    <div className="marketing-page schoolcare-page-bg min-h-screen overflow-x-hidden text-[var(--schoolcare-text)]">
       {publicMode && (
         <header
           className={`fixed inset-x-0 top-0 z-50 transition-all duration-300 ${
             scrolled || mobileMenuOpen
-              ? 'border-b border-[#064E3B]/10 bg-[#FAF7EF]/95 shadow-[0_12px_40px_rgba(6,78,59,0.09)] backdrop-blur-xl'
-              : 'border-b border-transparent bg-[#FAF7EF]/80 backdrop-blur-md'
+              ? 'border-b border-[var(--schoolcare-border)] bg-white/95 shadow-[0_12px_40px_rgba(16,43,80,0.08)] backdrop-blur-xl'
+              : 'border-b border-transparent bg-white/80 backdrop-blur-md'
           }`}
         >
           <div className="marketing-shell flex h-[4.5rem] items-center justify-between gap-4">
@@ -372,7 +372,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
             <nav
               id="mobile-navigation"
               aria-label="Mobile navigation"
-              className="border-t border-[#064E3B]/10 bg-[#FAF7EF] px-5 pb-6 pt-4 shadow-xl lg:hidden"
+              className="border-t border-[var(--schoolcare-border)] bg-white px-5 pb-6 pt-4 shadow-xl lg:hidden"
             >
               <div className="mx-auto flex max-w-md flex-col gap-1">
                 {NAV_LINKS.map(link => (
@@ -614,7 +614,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
                   { icon: Users, label: 'Family connected' },
                   { icon: BarChart3, label: 'Insight ready' }
                 ].map(({ icon: Icon, label }) => (
-                  <div key={label} className="flex items-center gap-3 rounded-2xl border border-[#E9E4D9] bg-[#FAF7EF] px-4 py-3">
+                  <div key={label} className="flex items-center gap-3 rounded-2xl border border-[var(--schoolcare-border)] bg-white/80 px-4 py-3">
                     <Icon className="h-5 w-5 shrink-0 text-[#0B6B51]" aria-hidden="true" />
                     <span className="text-sm font-bold text-[#31413C]">{label}</span>
                   </div>
@@ -694,7 +694,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
 
             <div className="space-y-4">
               {BENEFITS.map(({ title, description, icon: Icon }, index) => (
-                <article key={title} className="marketing-card group flex gap-5 rounded-[1.6rem] bg-[#FAF7EF] p-6">
+                <article key={title} className="marketing-card group flex gap-5 rounded-[1.6rem] bg-white/80 p-6">
                   <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-[#0B6B51] shadow-sm">
                     <Icon className="h-5 w-5" aria-hidden="true" />
                   </span>
@@ -779,7 +779,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
 
         <section id="admissions" aria-labelledby="admissions-heading" className="bg-white pb-20 lg:pb-28">
           <div className="marketing-shell">
-            <div className="relative overflow-hidden rounded-[2.2rem] border border-[#E9E4D9] bg-[#FAF7EF] px-6 py-10 sm:px-10 lg:flex lg:items-center lg:justify-between lg:gap-10 lg:py-12">
+            <div className="relative overflow-hidden rounded-[2.2rem] border border-[var(--schoolcare-border)] bg-white/70 px-6 py-10 sm:px-10 lg:flex lg:items-center lg:justify-between lg:gap-10 lg:py-12">
               <div className="absolute -right-16 -top-24 h-56 w-56 rounded-full bg-[#D6A84F]/12 blur-2xl" aria-hidden="true" />
               <div className="relative max-w-2xl">
                 <span className="marketing-eyebrow">Admissions</span>

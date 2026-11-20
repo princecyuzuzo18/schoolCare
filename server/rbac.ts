@@ -52,6 +52,23 @@ export function requirePermission(permission: string) {
   };
 }
 
+export function requireAnyPermission(...permissions: string[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const user = req.user;
+    if (!user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    if (!permissions.some(permission => hasPermission(user, permission))) {
+      res.status(403).json({ error: `Forbidden: missing one of: ${permissions.join(', ')}.` });
+      return;
+    }
+
+    next();
+  };
+}
+
 declare global {
   namespace Express {
     interface Request {

@@ -9,12 +9,14 @@ interface AuthContextType {
   school: School | null;
   isLoading: boolean;
   sessionExpired: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<UserProfile>;
   logout: () => Promise<void>;
   switchRole: (role: UserRole) => Promise<void>;
   availableUsers: UserProfile[];
   effectivePermissions: string[];
   delegatablePermissions: string[];
+  leaderOnlyDelegatablePermissions: string[];
+  delegatableRoleScope: UserRole[];
   permissionCatalog: PermissionsResponse['catalog'];
   rolePermissions: PermissionsResponse['rolePermissions'] | null;
   hasPermission: (permission: string) => boolean;
@@ -74,7 +76,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => window.removeEventListener('schoolcare:session-expired', handleSessionExpired);
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<UserProfile> => {
     const { user } = await api.login(email, password);
     setCurrentUser(user);
     await loadPermissions();
@@ -85,6 +87,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         window.sessionStorage.setItem('schoolcare_redirect_target', getRoleDashboard(user.role));
       }
     }
+    return user;
   };
 
   const logout = async () => {
@@ -124,6 +127,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         availableUsers,
         effectivePermissions,
         delegatablePermissions: permissions?.delegatablePermissions ?? [],
+        leaderOnlyDelegatablePermissions: permissions?.leaderOnlyDelegatablePermissions ?? [],
+        delegatableRoleScope: permissions?.delegatableRoleScope ?? [],
         permissionCatalog: permissions?.catalog ?? [],
         rolePermissions: permissions?.rolePermissions ?? null,
         hasPermission: (permission: string) => effectivePermissions.includes(permission),

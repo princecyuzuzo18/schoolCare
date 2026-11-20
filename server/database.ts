@@ -342,6 +342,11 @@ class DatabaseStore {
     }
   }
 
+  /** Persists in-memory mutations made through public helpers that mutate fields in place. */
+  public persist(): void {
+    this.saveData();
+  }
+
   public resetToSeed(): DatabaseSchema {
     this.data = this.getDefaultData();
     this.normalizeStaffData(this.data);
@@ -420,6 +425,21 @@ class DatabaseStore {
     const user = this.data.users.find(item => item.id === userId);
     if (!user) return undefined;
     user.role = role;
+    this.saveData();
+    return user;
+  }
+
+  public updateUserProfile(
+    userId: string,
+    updates: Partial<Pick<UserProfile, 'fullName' | 'phone' | 'avatarUrl' | 'teacherDepartment'>>
+  ): UserProfile | undefined {
+    const user = this.data.users.find(item => item.id === userId);
+    if (!user) return undefined;
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined) {
+        (user as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
     this.saveData();
     return user;
   }
@@ -587,7 +607,7 @@ class DatabaseStore {
   public createGuardian(guardian: Guardian, linkWithStudentId?: string, relationship = 'GUARDIAN'): Guardian {
     this.data.guardians.push(guardian);
     if (linkWithStudentId) {
-      this.data.studentGuardians.push({
+      this.createGuardianLink({
         studentId: linkWithStudentId,
         guardianId: guardian.id,
         relationship,
@@ -595,9 +615,38 @@ class DatabaseStore {
         canPickup: guardian.canPickup ?? true,
         isPrimary: true
       });
+    } else {
+      this.saveData();
     }
-    this.saveData();
     return guardian;
+  }
+
+  public getGuardianLink(studentId: string, guardianId: string): StudentGuardianLink | undefined {
+    return this.data.studentGuardians.find(
+      link => link.studentId === studentId && link.guardianId === guardianId
+    );
+  }
+
+  public createGuardianLink(link: StudentGuardianLink): StudentGuardianLink {
+    const existing = this.getGuardianLink(link.studentId, link.guardianId);
+    if (existing) return existing;
+    this.data.studentGuardians.push(link);
+    this.saveData();
+    return link;
+  }
+
+  public deleteGuardian(id: string): void {
+    this.data.guardians = this.data.guardians.filter(guardian => guardian.id !== id);
+    this.data.studentGuardians = this.data.studentGuardians.filter(link => link.guardianId !== id);
+    this.saveData();
+  }
+
+  public getUserByStudentId(studentId: string): UserProfile | undefined {
+    return this.data.users.find(user => user.studentId === studentId);
+  }
+
+  public getUserByGuardianId(guardianId: string): UserProfile | undefined {
+    return this.data.users.find(user => user.linkedGuardianIds?.includes(guardianId));
   }
 
   // --- Classes & Subjects ---

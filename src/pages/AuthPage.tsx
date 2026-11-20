@@ -103,7 +103,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack }) => {
   ];
 
   return (
-    <main className="min-h-screen bg-white lg:grid lg:grid-cols-2">
+    <main className="schoolcare-page-bg min-h-screen bg-transparent lg:grid lg:grid-cols-2">
       <aside className="relative isolate flex min-h-[410px] flex-col overflow-hidden bg-[color:var(--schoolcare-brand-900)] px-6 py-8 text-white sm:px-10 lg:min-h-screen lg:px-14 lg:py-12">
         <div
           aria-hidden="true"
@@ -153,7 +153,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack }) => {
         </footer>
       </aside>
 
-      <section className="relative flex min-h-[530px] items-center justify-center px-5 pb-12 pt-24 sm:px-10 lg:min-h-screen lg:px-14 lg:py-16">
+      <section className="relative flex min-h-[530px] items-center justify-center bg-transparent px-5 pb-12 pt-24 sm:px-10 lg:min-h-screen lg:px-14 lg:py-16">
         <div className="absolute left-5 top-5 right-5 flex items-center justify-between gap-3 sm:left-8 sm:right-8 sm:top-8">
           {onBack ? (
             <button
@@ -289,6 +289,22 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack }) => {
                 {isSubmitting ? t('authSigningIn') : t('authSignIn')}
                 {!isSubmitting && <ArrowRight className="h-4 w-4" aria-hidden="true" />}
               </button>
+              <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => { window.location.hash = '#/parent-signup'; }}
+                  className="min-h-11 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-100"
+                >
+                  {t('signupParentTitle')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { window.location.hash = '#/student-signup'; }}
+                  className="min-h-11 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-100"
+                >
+                  {t('signupStudentTitle')}
+                </button>
+              </div>
               <p className="mt-5 text-center text-xs leading-5 text-slate-500">
                 {t('authContactAdministrator')}
               </p>

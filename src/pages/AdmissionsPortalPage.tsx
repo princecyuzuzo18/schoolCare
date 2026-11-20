@@ -900,7 +900,7 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
   };
 
   return (
-    <div className="apply-page flex min-h-screen flex-col">
+    <div className="schoolcare-page-bg apply-page flex min-h-screen flex-col bg-transparent">
       <a
         href="#apply-main"
         className="skip-link"
@@ -964,7 +964,7 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
                   <p className="mt-2 text-sm leading-6 text-[#687570]">{copy.chooseApplicationTypeDesc}</p>
                   <div className="mt-7 space-y-3">
                     {TYPE_OPTIONS.map(({ type: optionType, titleKey, icon: Icon }, index) => (
-                      <div key={optionType} className="flex items-center gap-3 rounded-2xl border border-[#E9E4D9] bg-[#FAF7EF] p-3.5">
+                      <div key={optionType} className="flex items-center gap-3 rounded-2xl border border-[#E9E4D9] bg-[var(--schoolcare-surface-muted)] p-3.5">
                         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-[#0B6B51]">
                           <Icon className="h-4 w-4" aria-hidden="true" />
                         </span>
@@ -1555,7 +1555,7 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
                 </div>
               )}
 
-              <div className="mt-8 rounded-2xl border border-[#E9E4D9] bg-[#FAF7EF] p-5 text-left">
+              <div className="mt-8 rounded-2xl border border-[#E9E4D9] bg-[var(--schoolcare-surface-muted)] p-5 text-left">
                 <p className="text-sm font-bold text-[#064E3B]">{copy.nextSteps}</p>
                 <ul className="mt-3 space-y-2">
                   {[copy.nextStepOne, copy.nextStepTwo, copy.nextStepThree].map(stepText => (

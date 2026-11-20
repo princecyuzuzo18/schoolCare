@@ -22,6 +22,7 @@ import {
   Sparkles,
   UserCheck,
   UserCog,
+  UserPlus,
   UserSquare2,
   Users
 } from 'lucide-react';
@@ -299,6 +300,24 @@ export const NAV_ITEMS: readonly NavItem[] = [
     section: 'system',
     description: 'Delegate and revoke operational permissions',
     permissionKey: 'permissions.delegate'
+  },
+  {
+    id: 'signup-requests',
+    label: 'Parent & Student Sign-ups',
+    labelKey: 'signupRequestsTitle',
+    icon: UserPlus,
+    section: 'system',
+    description: 'Review and approve parent and student registrations',
+    permissionKey: 'invitations.manage'
+  },
+  {
+    id: 'public-site',
+    label: 'Public Website',
+    labelKey: 'navPublicSite',
+    icon: FileText,
+    section: 'system',
+    description: 'Manage approved public news, events and gallery photos',
+    permissionKey: 'school.write'
   },
   {
     id: 'settings',

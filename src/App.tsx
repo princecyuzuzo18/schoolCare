@@ -12,6 +12,7 @@ import { AuthPage } from './pages/AuthPage';
 import { AdmissionsPortalPage } from './pages/AdmissionsPortalPage';
 import { AdmissionTrackingPage } from './pages/AdmissionTrackingPage';
 import { StaffActivationPage } from './pages/StaffActivationPage';
+import { AccountSignupPage } from './pages/AccountSignupPage';
 
 import { api } from './services/api';
 import { HealthIncident, Student, Guardian } from './types';
@@ -208,7 +209,7 @@ const MainApp: React.FC = () => {
 
   if (isLoading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-6 text-center">
+      <main className="schoolcare-page-bg flex min-h-screen items-center justify-center px-6 text-center">
         <p role="status" className="text-sm font-medium text-slate-600">{t('loading')}</p>
       </main>
     );
@@ -219,7 +220,7 @@ const MainApp: React.FC = () => {
   }
 
   return (
-    <div className="schoolcare-app min-h-screen bg-slate-50 flex flex-col text-slate-900">
+    <div className="schoolcare-app schoolcare-page-bg min-h-screen flex flex-col text-slate-900">
       <a
         href="#main-content"
         className="skip-link"
@@ -353,7 +354,7 @@ const MainApp: React.FC = () => {
       {/* Mobile Bottom Quick Navigation Bar */}
       <nav
         aria-label="Quick navigation"
-        className="mobile-quick-nav md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-slate-200 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] flex items-center justify-around shadow-[0_-8px_24px_rgba(15,23,42,0.08)]"
+        className="mobile-quick-nav md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-[var(--schoolcare-border)] px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] flex items-center justify-around shadow-[0_-8px_24px_rgba(15,23,42,0.08)]"
       >
         {mobileQuickNavItems.map(({ id, label, icon: Icon }) => (
           <button
@@ -445,6 +446,15 @@ const PublicRouteGate: React.FC = () => {
   }
   if (route === 'track') {
     return <AdmissionTrackingPage onBackHome={() => { window.location.hash = '#/'; }} />;
+  }
+  if (route === 'parent-signup' || route === 'student-signup') {
+    return (
+      <AccountSignupPage
+        mode={route === 'parent-signup' ? 'parent' : 'student'}
+        onBack={() => { window.location.hash = '#/login'; }}
+        onSignIn={() => { window.location.hash = '#/login'; }}
+      />
+    );
   }
   if (route?.startsWith('staff-activate')) {
     return (

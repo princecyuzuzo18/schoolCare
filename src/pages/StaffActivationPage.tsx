@@ -66,7 +66,7 @@ export const StaffActivationPage: React.FC<StaffActivationPageProps> = ({ onActi
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-10">
+    <div className="schoolcare-page-bg flex min-h-screen items-center justify-center bg-transparent px-4 py-10">
       <main className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-800">

@@ -2,7 +2,8 @@ import nodemailer from 'nodemailer';
 import type {
   AdmissionApplication,
   AdmissionNotificationStatus,
-  ApplicationStatus
+  ApplicationStatus,
+  StaffInvitationDeliveryMode
 } from '../src/types';
 
 function commaList(value?: string): string[] {
@@ -170,4 +171,72 @@ export async function sendVerificationCode(
     );
   }
   return sendSms(application.guardianPhone || application.applicantPhone, message);
+}
+
+/**
+ * Sends a one-time code for account sign-up through the same configured
+ * SMS/email gateways used by admissions. Callers must hash the code before
+ * storing it; the raw code is never persisted.
+ */
+export async function sendAccountVerificationCode(
+  to: string,
+  channel: 'email' | 'sms',
+  code: string
+): Promise<AdmissionNotificationStatus> {
+  const recipient = to.trim();
+  if (!recipient) {
+    return { channel, configured: false, sent: false, detail: 'No verification contact is on file.' };
+  }
+  const message =
+    `Your SchoolCare account verification code is ${code}. ` +
+    'It expires in 10 minutes. Do not share it with anyone.';
+  if (channel === 'email') {
+    return sendEmail(recipient, 'Verify your SchoolCare account', message);
+  }
+  return sendSms(recipient, message);
+}
+
+/**
+ * Attempts to deliver a staff invitation through the configured channels.
+ * The raw activation token is only placed in the message body; it is never
+ * written to application logs or to the invitation record.
+ */
+export async function notifyStaffInvitation(input: {
+  fullName: string;
+  email: string;
+  phone?: string;
+  role: string;
+  activationUrl: string;
+  deliveryMode?: StaffInvitationDeliveryMode;
+}): Promise<AdmissionNotificationStatus[]> {
+  if (input.deliveryMode === 'SECURE_ACTIVATION') {
+    return [{
+      channel: 'email',
+      configured: false,
+      sent: false,
+      detail: 'Secure activation link was prepared for manual handover.'
+    }];
+  }
+
+  const results: AdmissionNotificationStatus[] = [];
+  const message =
+    `SchoolCare staff invitation for ${input.fullName} (${input.role}). ` +
+    `Open this one-time activation link to set your password: ${input.activationUrl} ` +
+    'The link expires in 7 days. Do not share it.';
+
+  if (input.email) {
+    results.push(await sendEmail(input.email, 'Your SchoolCare staff invitation', message));
+  }
+  if (smsConfigured() && input.phone) {
+    results.push(await sendSms(input.phone, message));
+  }
+  if (results.length === 0) {
+    results.push({
+      channel: 'email',
+      configured: false,
+      sent: false,
+      detail: 'No delivery contact available. Share the activation link securely.'
+    });
+  }
+  return results;
 }
