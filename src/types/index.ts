@@ -6,6 +6,9 @@ export type UserRole =
   | 'TEACHER'
   | 'NURSE'
   | 'ACCOUNTANT'
+  | 'DISCIPLINE_OFFICER'
+  | 'SCHOOL_IT'
+  | 'ANIMATEUR'
   | 'PARENT'
   | 'STUDENT';
 
@@ -41,6 +44,10 @@ export interface UserProfile {
   phone: string;
   avatarUrl: string;
   preferredLanguage: LanguageCode;
+  isActive?: boolean;
+  delegatedPermissions?: string[];
+  createdAt?: string;
+  invitedBy?: string;
   linkedStudentIds?: string[]; // for parents
   linkedGuardianIds?: string[];
   studentId?: string; // for students
@@ -367,6 +374,89 @@ export interface StaffMember {
   assignedSubjects: string[];
   status: 'ACTIVE' | 'ON_LEAVE' | 'SUSPENDED';
   joinedDate: string;
+}
+
+export type StaffAccountStatus = 'ACTIVE' | 'INVITED' | 'SUSPENDED';
+
+export interface StaffAccount {
+  id: string;
+  userId: string;
+  schoolId: string;
+  role: UserRole;
+  professionalTitle: string;
+  department: string;
+  status: StaffAccountStatus;
+  delegatedPermissions: string[];
+  createdAt: string;
+  createdBy: string;
+  invitedAt?: string;
+  acceptedAt?: string;
+  lastModifiedBy?: string;
+  lastModifiedAt?: string;
+}
+
+export interface StaffInvitation {
+  id: string;
+  schoolId: string;
+  fullName: string;
+  email: string;
+  gender?: 'M' | 'F';
+  role: UserRole;
+  professionalTitle: string;
+  department?: string;
+  tokenHash: string;
+  expiresAt: string;
+  createdAt: string;
+  createdBy: string;
+  consumedAt?: string;
+  revokedAt?: string;
+  userId?: string;
+}
+
+export interface PermissionGrantRecord {
+  id: string;
+  schoolId: string;
+  userId: string;
+  previousPermissions: string[];
+  permissions: string[];
+  grantedBy: string;
+  grantedAt: string;
+  revokedAt?: string;
+  revokedBy?: string;
+}
+
+export interface PermissionDefinition {
+  code: string;
+  legacyCode: string;
+  labelKey: string;
+  restricted: boolean;
+}
+
+export interface PermissionsResponse {
+  role: UserRole;
+  effectivePermissions: string[];
+  delegatablePermissions: string[];
+  rolePermissions: Record<UserRole, string[]>;
+  catalog: PermissionDefinition[];
+}
+
+export interface StaffAccountView extends StaffAccount {
+  user?: {
+    id: string;
+    fullName: string;
+    email: string;
+    role: UserRole;
+    phone: string;
+    isActive?: boolean;
+    lastLogin?: string;
+    delegatedPermissions?: string[];
+  } | null;
+}
+
+export interface StaffInvitationResponse {
+  invitation: StaffInvitation;
+  token: string;
+  activationUrl: string;
 }
 
 export interface TimetableEntry {

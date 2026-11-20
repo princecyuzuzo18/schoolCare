@@ -29,7 +29,12 @@ import {
   AdmissionSettings,
   AcademicPerformanceData,
   ResultSlipVerificationEvent,
-  ResultSlipVerificationStatus
+  ResultSlipVerificationStatus,
+  PermissionsResponse,
+  StaffAccountView,
+  StaffInvitationResponse,
+  StaffInvitation,
+  LanguageCode
 } from '../types';
 
 const API_BASE = '/api';
@@ -73,7 +78,7 @@ class ApiService {
       const err = await res.json().catch(() => ({ error: 'Network response was not ok' }));
       if (
         res.status === 401 &&
-        !['/auth/login', '/auth/me', '/auth/password-reset/request'].includes(endpoint) &&
+        !['/auth/login', '/auth/me', '/auth/password-reset/request', '/staff/invitations/activate'].includes(endpoint) &&
         !endpoint.startsWith('/public/admissions/')
       ) {
         window.dispatchEvent(new Event('schoolcare:session-expired'));
@@ -136,6 +141,90 @@ class ApiService {
 
   public async getUsers(): Promise<UserProfile[]> {
     return this.request<UserProfile[]>('/users');
+  }
+
+  // --- Permissions and staff administration ---
+  public async getPermissions(): Promise<PermissionsResponse> {
+    return this.request<PermissionsResponse>('/permissions');
+  }
+
+  public async getStaffAccounts(): Promise<StaffAccountView[]> {
+    return this.request<StaffAccountView[]>('/staff/accounts');
+  }
+
+  public async grantStaffPermissions(
+    userId: string,
+    permissions: string[]
+  ): Promise<{ user: UserProfile; account: StaffAccountView | null }> {
+    return this.request(`/staff/accounts/${encodeURIComponent(userId)}/permissions`, {
+      method: 'PUT',
+      body: JSON.stringify({ permissions })
+    });
+  }
+
+  public async revokeStaffPermissions(
+    userId: string
+  ): Promise<{ user: UserProfile; account: StaffAccountView | null }> {
+    return this.request(`/staff/accounts/${encodeURIComponent(userId)}/permissions/revoke`, {
+      method: 'POST'
+    });
+  }
+
+  public async changeStaffRole(
+    userId: string,
+    role: UserRole
+  ): Promise<{ user: UserProfile; account: StaffAccountView | null }> {
+    return this.request(`/staff/accounts/${encodeURIComponent(userId)}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role })
+    });
+  }
+
+  public async setStaffStatus(
+    userId: string,
+    status: 'ACTIVE' | 'SUSPENDED'
+  ): Promise<{ user: UserProfile; account: StaffAccountView | null }> {
+    return this.request(`/staff/accounts/${encodeURIComponent(userId)}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status })
+    });
+  }
+
+  public async getStaffInvitations(): Promise<StaffInvitation[]> {
+    return this.request<StaffInvitation[]>('/staff/invitations');
+  }
+
+  public async createStaffInvitation(data: {
+    fullName: string;
+    email: string;
+    phone: string;
+    role: UserRole;
+    gender?: 'M' | 'F';
+    preferredLanguage: LanguageCode;
+    department?: string;
+  }): Promise<StaffInvitationResponse> {
+    return this.request<StaffInvitationResponse>('/staff/invitations', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  public async revokeStaffInvitation(id: string): Promise<{ invitation: StaffInvitation }> {
+    return this.request(`/staff/invitations/${encodeURIComponent(id)}/revoke`, {
+      method: 'POST'
+    });
+  }
+
+  public async activateStaffInvitation(data: {
+    token: string;
+    password: string;
+    phone?: string;
+    preferredLanguage?: LanguageCode;
+  }): Promise<{ user: UserProfile }> {
+    return this.request<{ user: UserProfile }>('/staff/invitations/activate', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
   }
 
   // --- Schools ---

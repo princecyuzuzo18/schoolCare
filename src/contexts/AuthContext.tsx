@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserProfile, UserRole, School } from '../types';
+import { UserProfile, UserRole, School, PermissionsResponse } from '../types';
 import { api } from '../services/api';
 import { getRoleDashboard } from '../rbac';
 
@@ -13,6 +13,12 @@ interface AuthContextType {
   logout: () => Promise<void>;
   switchRole: (role: UserRole) => Promise<void>;
   availableUsers: UserProfile[];
+  effectivePermissions: string[];
+  delegatablePermissions: string[];
+  permissionCatalog: PermissionsResponse['catalog'];
+  rolePermissions: PermissionsResponse['rolePermissions'] | null;
+  hasPermission: (permission: string) => boolean;
+  refreshPermissions: () => Promise<void>;
   refreshSchool: () => Promise<void>;
 }
 
@@ -24,6 +30,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [availableUsers, setAvailableUsers] = useState<UserProfile[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [permissions, setPermissions] = useState<PermissionsResponse | null>(null);
+
+  const loadPermissions = async () => {
+    try {
+      const data = await api.getPermissions();
+      setPermissions(data);
+    } catch (err) {
+      console.error('Failed to load permissions:', err);
+      setPermissions(null);
+    }
+  };
 
   const initAuth = async () => {
     try {
@@ -33,6 +50,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentUser(authResult.user);
       if (authResult.user) {
         setAvailableUsers([]);
+        await loadPermissions();
+      } else {
+        setPermissions(null);
       }
     } catch (err) {
       console.error('Failed to initialize auth:', err);
@@ -57,6 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     const { user } = await api.login(email, password);
     setCurrentUser(user);
+    await loadPermissions();
     setSessionExpired(false);
     if (typeof window !== 'undefined') {
       const existingTarget = window.sessionStorage.getItem('schoolcare_redirect_target');
@@ -71,6 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await api.logout();
     } finally {
       setCurrentUser(null);
+      setPermissions(null);
       sessionStorage.removeItem('schoolcare_redirect_target');
       setSessionExpired(false);
     }
@@ -86,6 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const role = currentUser?.role ?? null;
+  const effectivePermissions = permissions?.effectivePermissions ?? [];
 
   return (
     <AuthContext.Provider
@@ -99,6 +122,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         switchRole,
         availableUsers,
+        effectivePermissions,
+        delegatablePermissions: permissions?.delegatablePermissions ?? [],
+        permissionCatalog: permissions?.catalog ?? [],
+        rolePermissions: permissions?.rolePermissions ?? null,
+        hasPermission: (permission: string) => effectivePermissions.includes(permission),
+        refreshPermissions: loadPermissions,
         refreshSchool
       }}
     >

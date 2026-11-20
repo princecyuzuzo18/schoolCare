@@ -47,7 +47,7 @@ export const initialUsers: UserProfile[] = [
     schoolId: 'school-es-rubengera-01',
     email: 'esrubengera@gmail.com',
     fullName: 'Dr. Emmanuel Habimana',
-    role: 'SUPER_ADMIN',
+    role: 'HEAD_TEACHER',
     phone: '+250 788 111 000',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
     preferredLanguage: 'en',
@@ -69,7 +69,7 @@ export const initialUsers: UserProfile[] = [
     schoolId: 'school-es-rubengera-01',
     email: 'headteacher@esrubengera.rw',
     fullName: 'Jean Bosco Mugiraneza',
-    role: 'HEAD_TEACHER',
+    role: 'ANIMATEUR',
     phone: '+250 788 333 202',
     avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
     preferredLanguage: 'rw',
@@ -888,9 +888,9 @@ export const initialStaff: StaffMember[] = [
     staffId: 'STF-001',
     fullName: 'Jean Bosco Mugiraneza',
     gender: 'M',
-    role: 'HEAD_TEACHER',
-    title: 'Directeur / Head of Institution',
-    department: 'School Leadership',
+    role: 'ANIMATEUR',
+    title: 'Animateur / Student Activities Coordinator',
+    department: 'Co-Curricular & Student Welfare',
     phone: '+250 788 333 202',
     email: 'headteacher@esrubengera.rw',
     assignedClasses: [],
@@ -961,6 +961,22 @@ export const initialStaff: StaffMember[] = [
     assignedSubjects: [],
     status: 'ACTIVE',
     joinedDate: '2019-01-15'
+  },
+  {
+    id: 'stf-06',
+    schoolId: 'school-es-rubengera-01',
+    staffId: 'STF-006',
+    fullName: 'Dr. Emmanuel Habimana',
+    gender: 'M',
+    role: 'HEAD_TEACHER',
+    title: 'Headteacher',
+    department: 'School Leadership',
+    phone: '+250 788 111 000',
+    email: 'esrubengera@gmail.com',
+    assignedClasses: [],
+    assignedSubjects: [],
+    status: 'ACTIVE',
+    joinedDate: '2015-08-01'
   }
 ];
 

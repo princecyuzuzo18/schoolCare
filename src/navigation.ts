@@ -11,6 +11,7 @@ import {
   GraduationCap,
   HeartPulse,
   Home,
+  KeyRound,
   LayoutDashboard,
   Lightbulb,
   Mail,
@@ -20,6 +21,7 @@ import {
   ShieldAlert,
   Sparkles,
   UserCheck,
+  UserCog,
   UserSquare2,
   Users
 } from 'lucide-react';
@@ -43,6 +45,7 @@ export interface NavItem {
   icon: LucideIcon;
   section: NavSectionId;
   description?: string;
+  permissionKey?: string;
 }
 
 export interface NavSection {
@@ -165,7 +168,17 @@ export const NAV_ITEMS: readonly NavItem[] = [
     labelKey: 'navStaff',
     icon: Briefcase,
     section: 'people',
-    description: 'Staff directory and assignments'
+    description: 'Staff directory and assignments',
+    permissionKey: 'staff.read'
+  },
+  {
+    id: 'staff-management',
+    label: 'Staff Management',
+    labelKey: 'navStaffManagement',
+    icon: UserCog,
+    section: 'people',
+    description: 'Create staff accounts, roles and invitations',
+    permissionKey: 'staff.create'
   },
   {
     id: 'discipline',
@@ -279,12 +292,22 @@ export const NAV_ITEMS: readonly NavItem[] = [
     description: 'Security and activity audit trail'
   },
   {
+    id: 'permissions',
+    label: 'Staff Permissions',
+    labelKey: 'navPermissions',
+    icon: KeyRound,
+    section: 'system',
+    description: 'Delegate and revoke operational permissions',
+    permissionKey: 'permissions.delegate'
+  },
+  {
     id: 'settings',
     label: 'School Settings',
     labelKey: 'navSettings',
     icon: Settings,
     section: 'system',
-    description: 'School configuration'
+    description: 'School configuration',
+    permissionKey: 'school.write'
   }
 ] as const;
 
@@ -316,18 +339,25 @@ export const NAV_ITEM_MAP: Readonly<Record<string, NavItem>> = NAV_ITEMS.reduce(
   {} as Record<string, NavItem>
 );
 
-export function getVisibleNavSections(role: UserRole | null | undefined): NavSection[] {
+export function getVisibleNavSections(
+  role: UserRole | null | undefined,
+  effectivePermissions?: readonly string[]
+): NavSection[] {
   return SECTION_ORDER.map(sectionId => ({
     id: sectionId,
     label: SECTION_LABELS[sectionId],
     items: NAV_ITEMS.filter(
-      item => item.section === sectionId && isTabAllowedForRole(role, item.id)
+      item =>
+        item.section === sectionId && isTabAllowedForRole(role, item.id, effectivePermissions)
     )
   })).filter(section => section.items.length > 0);
 }
 
-export function getVisibleNavItems(role: UserRole | null | undefined): NavItem[] {
-  return NAV_ITEMS.filter(item => isTabAllowedForRole(role, item.id));
+export function getVisibleNavItems(
+  role: UserRole | null | undefined,
+  effectivePermissions?: readonly string[]
+): NavItem[] {
+  return NAV_ITEMS.filter(item => isTabAllowedForRole(role, item.id, effectivePermissions));
 }
 
 export function getNavItem(id: string): NavItem | undefined {
@@ -337,27 +367,36 @@ export function getNavItem(id: string): NavItem | undefined {
 const QUICK_NAV_PREFERENCES: Record<UserRole, string[]> = {
   SUPER_ADMIN: ['dashboard', 'health', 'attendance', 'finance'],
   SCHOOL_ADMIN: ['dashboard', 'health', 'attendance', 'finance'],
-  HEAD_TEACHER: ['dashboard', 'attendance', 'students', 'reports'],
+  HEAD_TEACHER: ['dashboard', 'attendance', 'students', 'staff-management'],
   DEPUTY_HEAD: ['dashboard', 'attendance', 'timetable', 'reports'],
   TEACHER: ['dashboard', 'attendance', 'timetable', 'reports'],
   NURSE: ['dashboard', 'health', 'events', 'reports'],
   ACCOUNTANT: ['dashboard', 'finance', 'inventory', 'reports'],
+  DISCIPLINE_OFFICER: ['dashboard', 'discipline', 'attendance', 'students'],
+  SCHOOL_IT: ['dashboard', 'students', 'staff', 'reports'],
+  ANIMATEUR: ['dashboard', 'events', 'students', 'communication'],
   PARENT: ['parent-portal', 'events', 'reports', 'health'],
   STUDENT: ['student-portal', 'events', 'reports', 'timetable']
 };
 
-export function getQuickNavItems(role: UserRole | null | undefined): NavItem[] {
+export function getQuickNavItems(
+  role: UserRole | null | undefined,
+  effectivePermissions?: readonly string[]
+): NavItem[] {
   if (!role) {
     return [];
   }
   const preferredIds = QUICK_NAV_PREFERENCES[role] ?? ['dashboard'];
   const preferred = preferredIds
     .map(id => NAV_ITEM_MAP[id])
-    .filter((item): item is NavItem => Boolean(item) && isTabAllowedForRole(role, item.id));
+    .filter(
+      (item): item is NavItem =>
+        Boolean(item) && isTabAllowedForRole(role, item.id, effectivePermissions)
+    );
 
   if (preferred.length > 0) {
     return preferred.slice(0, 4);
   }
 
-  return getVisibleNavItems(role).slice(0, 4);
+  return getVisibleNavItems(role, effectivePermissions).slice(0, 4);
 }

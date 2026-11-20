@@ -1,6 +1,6 @@
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import type { RowDataPacket } from 'mysql2';
-import { getMysqlPool } from './mysqlConnector';
+import { DB_CONNECT_TIMEOUT_MS, getMysqlPool } from './mysqlConnector';
 
 const KEY_LENGTH = 64;
 const SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1 };
@@ -29,7 +29,7 @@ function deriveKey(password: string, salt: Buffer): Promise<Buffer> {
 function requireMysqlPool() {
   const pool = getMysqlPool();
   if (!pool) {
-    throw new Error('MySQL is unavailable. Start XAMPP MySQL and check the database settings in .env.');
+    throw new Error('Database is unavailable. Check the MariaDB service and DB_* settings in .env.');
   }
   return pool;
 }
@@ -121,7 +121,10 @@ export async function getPasswordHash(email: string): Promise<string | undefined
     return await Promise.race([
       query,
       new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('MySQL is unavailable. Start XAMPP MySQL and check the database settings in .env.')), 4000);
+        setTimeout(
+          () => reject(new Error('Database is unavailable. Check the MariaDB service and DB_* settings in .env.')),
+          DB_CONNECT_TIMEOUT_MS + 1000
+        );
       })
     ]);
   } catch (error) {
@@ -131,9 +134,9 @@ export async function getPasswordHash(email: string): Promise<string | undefined
       code === 'ECONNREFUSED' ||
       code === 'ETIMEDOUT' ||
       code === 'PROTOCOL_SEQUENCE_TIMEOUT' ||
-      /mysql is unavailable|connect|timed? ?out|refused/i.test(message)
+      /(?:mysql|database) is unavailable|connect|timed? ?out|refused/i.test(message)
     ) {
-      throw new Error('MySQL is unavailable. Start XAMPP MySQL and check the database settings in .env.');
+      throw new Error('Database is unavailable. Check the MariaDB service and DB_* settings in .env.');
     }
     throw error;
   }
@@ -146,4 +149,52 @@ export async function provisionInitialPassword(userId: string, password: string)
     'INSERT INTO user_auth_credentials (user_id, password_hash) VALUES (?, ?)',
     [userId, passwordHash]
   );
+}
+
+export interface InvitedAccountProfile {
+  id: string;
+  schoolId: string;
+  roleId: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  preferredLanguage: string;
+}
+
+/**
+ * Creates the MariaDB identity and its scrypt credential together.
+ * The plaintext password never leaves this function and is never logged.
+ */
+export async function createInvitedAccount(
+  profile: InvitedAccountProfile,
+  password: string
+): Promise<void> {
+  const pool = requireMysqlPool();
+  const passwordHash = await hashPassword(password);
+
+  await pool.execute(
+    `INSERT INTO user_profiles
+      (id, school_id, role_id, full_name, email, phone, preferred_language, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    [
+      profile.id,
+      profile.schoolId,
+      profile.roleId,
+      profile.fullName,
+      profile.email,
+      profile.phone,
+      profile.preferredLanguage
+    ]
+  );
+
+  try {
+    await pool.execute(
+      'INSERT INTO user_auth_credentials (user_id, password_hash) VALUES (?, ?)',
+      [profile.id, passwordHash]
+    );
+  } catch (error) {
+    // Roll back only the profile row created by this same activation attempt.
+    await pool.execute('DELETE FROM user_profiles WHERE id = ?', [profile.id]);
+    throw error;
+  }
 }

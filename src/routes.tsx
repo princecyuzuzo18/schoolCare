@@ -21,6 +21,8 @@ import { AIAssistantPage } from './pages/AIAssistantPage';
 import { EventsPage } from './pages/EventsPage';
 import { ModuleCrud } from './pages/ModuleCrud';
 import { AdmissionsManagementPage } from './pages/AdmissionsManagementPage';
+import { StaffManagementPage } from './pages/StaffManagementPage';
+import { PermissionsPage } from './pages/PermissionsPage';
 
 export interface RouteContext {
   onNavigate: (tab: string) => void;
@@ -95,6 +97,16 @@ export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
     id: 'staff',
     title: 'Teachers & Staff',
     render: () => <StaffPage />
+  },
+  'staff-management': {
+    id: 'staff-management',
+    title: 'Staff Management',
+    render: ({ onNavigate }) => <StaffManagementPage onNavigate={onNavigate} />
+  },
+  permissions: {
+    id: 'permissions',
+    title: 'Staff Permissions',
+    render: () => <PermissionsPage />
   },
   timetable: {
     id: 'timetable',

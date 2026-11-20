@@ -11,6 +11,7 @@ import { LandingPage } from './pages/LandingPage';
 import { AuthPage } from './pages/AuthPage';
 import { AdmissionsPortalPage } from './pages/AdmissionsPortalPage';
 import { AdmissionTrackingPage } from './pages/AdmissionTrackingPage';
+import { StaffActivationPage } from './pages/StaffActivationPage';
 
 import { api } from './services/api';
 import { HealthIncident, Student, Guardian } from './types';
@@ -26,7 +27,7 @@ function readHashTab(): string | null {
 }
 
 const MainApp: React.FC = () => {
-  const { role, currentUser, isLoading } = useAuth();
+  const { role, currentUser, isLoading, effectivePermissions } = useAuth();
   const { t } = useLanguage();
 
   const [currentTab, setCurrentTab] = useState<string>('landing');
@@ -68,7 +69,7 @@ const MainApp: React.FC = () => {
   }, [role, currentUser]);
 
   const handleNavigate = useCallback((tab: string) => {
-    const nextTab = resolveRequestedTab(role, tab, getRoleDashboard(role));
+    const nextTab = resolveRequestedTab(role, tab, getRoleDashboard(role), effectivePermissions);
     setCurrentTab(nextTab);
     setMobileMenuOpen(false);
     const nextHash = `#/${nextTab}`;
@@ -76,7 +77,7 @@ const MainApp: React.FC = () => {
       window.location.hash = nextHash;
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [role]);
+  }, [role, effectivePermissions]);
 
   useEffect(() => {
     const syncRoute = () => {
@@ -96,11 +97,11 @@ const MainApp: React.FC = () => {
       const fallback = getRoleDashboard(role);
       const storedRedirect = sessionStorage.getItem('schoolcare_redirect_target');
       const target = !requested || requested === 'login'
-        ? (storedRedirect && isTabAllowedForRole(role, storedRedirect) ? storedRedirect : fallback)
+        ? (storedRedirect && isTabAllowedForRole(role, storedRedirect, effectivePermissions) ? storedRedirect : fallback)
         : requested;
 
       sessionStorage.removeItem('schoolcare_redirect_target');
-      const nextTab = resolveRequestedTab(role, target, fallback);
+      const nextTab = resolveRequestedTab(role, target, fallback, effectivePermissions);
       setCurrentTab(nextTab);
 
       const nextHash = `#/${nextTab}`;
@@ -116,7 +117,7 @@ const MainApp: React.FC = () => {
       window.removeEventListener('hashchange', syncRoute);
       window.removeEventListener('popstate', syncRoute);
     };
-  }, [currentUser, role]);
+  }, [currentUser, role, effectivePermissions]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -169,7 +170,7 @@ const MainApp: React.FC = () => {
   }, [mobileMenuOpen]);
 
   const urgentCases = incidents.filter(i => !i.resolved && (i.priority === 'URGENT' || i.priority === 'EMERGENCY'));
-  const mobileQuickNavItems = getQuickNavItems(role).map(item => ({
+  const mobileQuickNavItems = getQuickNavItems(role, effectivePermissions).map(item => ({
     id: item.id,
     label: item.labelKey ? t(item.labelKey) : item.label,
     icon: item.icon
@@ -329,7 +330,9 @@ const MainApp: React.FC = () => {
             tabIndex={-1}
             className="app-main min-w-0 flex-1 overflow-x-hidden min-h-[calc(100vh-4rem)] pb-20 md:pb-8 outline-none"
           >
-            {renderRoute(isTabAllowedForRole(role, currentTab) ? currentTab : 'dashboard')}
+            {renderRoute(
+              isTabAllowedForRole(role, currentTab, effectivePermissions) ? currentTab : 'dashboard'
+            )}
           </main>
         </div>
       )}
@@ -442,6 +445,14 @@ const PublicRouteGate: React.FC = () => {
   }
   if (route === 'track') {
     return <AdmissionTrackingPage onBackHome={() => { window.location.hash = '#/'; }} />;
+  }
+  if (route?.startsWith('staff-activate')) {
+    return (
+      <StaffActivationPage
+        onActivated={() => { window.location.hash = '#/login'; }}
+        onBackHome={() => { window.location.hash = '#/'; }}
+      />
+    );
   }
   return <MainApp />;
 };

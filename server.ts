@@ -8,9 +8,28 @@ import fs from 'fs';
 import multer from 'multer';
 import { db } from './server/database';
 import { authenticateUser, requirePermission, requireRole } from './server/rbac';
-import { checkMysqlHealth, getExportSqlPath, getMysqlPool } from './server/mysqlConnector';
+import { checkMysqlHealth, closeMysqlPool, getExportSqlPath, getMysqlPool } from './server/mysqlConnector';
 import { getPasswordHash, verifyPassword } from './server/authCredentials';
 import { createSession, destroySession } from './server/sessions';
+import { ASSIGNABLE_STAFF_ROLES, getProfessionalTitle } from './src/roleCatalog';
+import {
+  DELEGATABLE_PERMISSIONS,
+  PERMISSION_CATALOG,
+  ROLE_PERMISSIONS,
+  PermissionError,
+  assertCanGrantPermissions,
+  assertCanManageInvitations,
+  assertCanManageStaff,
+  assertCanRevokePermissions,
+  canonicalPermission,
+  getEffectivePermissions
+} from './server/permissions';
+import {
+  StaffManagementError,
+  activateStaffInvitation,
+  createStaffInvitation,
+  publicInvitation
+} from './server/staffManagement';
 import {
   APPLICATION_STATUSES,
   APPLICATION_TYPES,
@@ -283,20 +302,20 @@ const MODULE_ACCESS: Record<string, { read: UserRole[]; write: UserRole[] }> = {
     write: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'NURSE']
   },
   collaboration: {
-    read: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'ACCOUNTANT'],
-    write: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'ACCOUNTANT']
+    read: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'ACCOUNTANT', 'ANIMATEUR'],
+    write: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'ACCOUNTANT', 'ANIMATEUR']
   },
   meetings: {
-    read: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'ACCOUNTANT'],
-    write: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'ACCOUNTANT']
+    read: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'ACCOUNTANT', 'ANIMATEUR'],
+    write: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'ACCOUNTANT', 'ANIMATEUR']
   },
   inventory: {
     read: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'ACCOUNTANT'],
     write: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'ACCOUNTANT']
   },
   discipline: {
-    read: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER'],
-    write: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD']
+    read: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'DISCIPLINE_OFFICER'],
+    write: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'DISCIPLINE_OFFICER']
   },
   'partner-schools': {
     read: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER'],
@@ -311,14 +330,17 @@ const MODULE_ACCESS: Record<string, { read: UserRole[]; write: UserRole[] }> = {
       'TEACHER',
       'NURSE',
       'ACCOUNTANT',
+      'DISCIPLINE_OFFICER',
+      'SCHOOL_IT',
+      'ANIMATEUR',
       'PARENT',
       'STUDENT'
     ],
     write: ['SUPER_ADMIN', 'SCHOOL_ADMIN']
   },
   innovations: {
-    read: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER'],
-    write: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER']
+    read: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'SCHOOL_IT'],
+    write: ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'SCHOOL_IT']
   }
 };
 
@@ -396,8 +418,16 @@ app.use('/api', (req, res, next) => {
   const isLogin = req.method === 'POST' && req.path === '/auth/login';
   const isSessionCheck = req.method === 'GET' && req.path === '/auth/me';
   const isPasswordResetRequest = req.method === 'POST' && req.path === '/auth/password-reset/request';
+  const isStaffActivation = req.method === 'POST' && req.path === '/staff/invitations/activate';
   const isPublicAdmissions = req.path.startsWith('/public/admissions/');
-  if (isPublicSchoolRead || isLogin || isSessionCheck || isPasswordResetRequest || isPublicAdmissions) {
+  if (
+    isPublicSchoolRead ||
+    isLogin ||
+    isSessionCheck ||
+    isPasswordResetRequest ||
+    isStaffActivation ||
+    isPublicAdmissions
+  ) {
     next();
     return;
   }
@@ -438,7 +468,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
 
   const mysql = await checkMysqlHealth();
   if (!mysql.connected) {
-    return res.status(503).json({ error: 'Sign-in requires MySQL. Start MySQL in XAMPP, then try again.' });
+    return res.status(503).json({ error: 'Sign-in requires MariaDB. Check the database service and DB_* settings, then try again.' });
   }
 
   const user = db.getUserByEmail(email);
@@ -448,12 +478,12 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[Auth] Password verification failed:', error);
     const message = error instanceof Error ? error.message : '';
-    if (/mysql is unavailable/i.test(message)) {
-      return res.status(503).json({ error: 'Sign-in requires MySQL. Start MySQL in XAMPP, then try again.' });
+    if (/(?:mysql|database) is unavailable/i.test(message)) {
+      return res.status(503).json({ error: 'Sign-in requires MariaDB. Check the database service and DB_* settings, then try again.' });
     }
     return res.status(500).json({ error: 'Unable to authenticate at this time.' });
   }
-  if (!user || !passwordMatches) {
+  if (!user || !passwordMatches || user.isActive === false) {
     const nextAttempt = attempt && attempt.resetAt > now
       ? { count: attempt.count + 1, resetAt: attempt.resetAt }
       : { count: 1, resetAt: now + LOGIN_WINDOW_MS };
@@ -502,10 +532,363 @@ app.get('/api/users', requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req: Request,
   return res.json(db.getUsers(schoolId));
 });
 
+// --- Staff management, delegated permissions and invitations ---
+
+function respondWithStaffError(res: Response, error: unknown) {
+  if (error instanceof PermissionError) {
+    return res.status(403).json({ error: error.message });
+  }
+  if (error instanceof StaffManagementError) {
+    return res.status(400).json({ error: error.message });
+  }
+  console.error('[Staff] Unhandled error:', error);
+  return res.status(500).json({ error: 'The staff action could not be completed.' });
+}
+
+function staffAccountView(account: ReturnType<typeof db.getStaffAccounts>[number]) {
+  const user = db.getUserById(account.userId);
+  return {
+    ...account,
+    user: user
+      ? {
+          id: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          role: user.role,
+          phone: user.phone,
+          isActive: user.isActive,
+          lastLogin: user.lastLogin
+        }
+      : null
+  };
+}
+
+app.get('/api/permissions', (req: Request, res: Response) => {
+  const actor = getActor(req);
+  return res.json({
+    role: actor.role,
+    effectivePermissions: getEffectivePermissions(actor),
+    delegatablePermissions: DELEGATABLE_PERMISSIONS,
+    rolePermissions: ROLE_PERMISSIONS,
+    catalog: PERMISSION_CATALOG
+  });
+});
+
+app.get('/api/staff/accounts', requirePermission('staff.read'), (req: Request, res: Response) => {
+  const actor = getActor(req);
+  const schoolId = actor.role === 'SUPER_ADMIN' ? (req.query.schoolId as string) || actor.schoolId : actor.schoolId;
+  return res.json(db.getStaffAccounts(schoolId).map(staffAccountView));
+});
+
+app.put(
+  '/api/staff/accounts/:userId/permissions',
+  requirePermission('permissions.delegate'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const target = db.getUserById(req.params.userId);
+      if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+
+      const rawPermissions = Array.isArray(req.body?.permissions) ? req.body.permissions : [];
+      if (!rawPermissions.every((permission: unknown) => typeof permission === 'string')) {
+        return res.status(400).json({ error: 'Permissions must be a list of permission names.' });
+      }
+      const permissions = rawPermissions.map((permission: string) => canonicalPermission(permission));
+      assertCanGrantPermissions(actor, target, permissions);
+
+      const previousPermissions = Array.isArray(target.delegatedPermissions)
+        ? target.delegatedPermissions.map(canonicalPermission)
+        : [];
+      db.setDelegatedPermissions(target.id, permissions);
+      db.createPermissionGrant({
+        id: `grant-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+        schoolId: actor.schoolId,
+        userId: target.id,
+        previousPermissions,
+        permissions,
+        grantedBy: actor.id,
+        grantedAt: new Date().toISOString()
+      });
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STAFF_PERMISSIONS_GRANTED',
+        'STAFF_ACCOUNT',
+        target.id,
+        `Delegated permissions: ${permissions.join(', ') || 'none'}`,
+        req.ip
+      );
+
+      const account = db.getStaffAccountByUserId(target.id);
+      return res.json({ user: target, account: account ? staffAccountView(account) : null });
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/staff/accounts/:userId/permissions/revoke',
+  requirePermission('permissions.revoke'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const target = db.getUserById(req.params.userId);
+      if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+
+      assertCanRevokePermissions(actor, target);
+      const previousPermissions = Array.isArray(target.delegatedPermissions)
+        ? target.delegatedPermissions.map(canonicalPermission)
+        : [];
+      db.setDelegatedPermissions(target.id, []);
+      db.createPermissionGrant({
+        id: `grant-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+        schoolId: actor.schoolId,
+        userId: target.id,
+        previousPermissions,
+        permissions: [],
+        grantedBy: actor.id,
+        grantedAt: new Date().toISOString(),
+        revokedAt: new Date().toISOString(),
+        revokedBy: actor.id
+      });
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STAFF_PERMISSIONS_REVOKED',
+        'STAFF_ACCOUNT',
+        target.id,
+        `Revoked permissions: ${previousPermissions.join(', ') || 'none'}`,
+        req.ip
+      );
+
+      const account = db.getStaffAccountByUserId(target.id);
+      return res.json({ user: target, account: account ? staffAccountView(account) : null });
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.patch(
+  '/api/staff/accounts/:userId/role',
+  requirePermission('staff.role.manage'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const target = db.getUserById(req.params.userId);
+      if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+      assertCanManageStaff(actor, target);
+
+      const role = req.body?.role as UserRole;
+      if (!ASSIGNABLE_STAFF_ROLES.includes(role)) {
+        return res.status(400).json({ error: 'Choose a valid assignable staff role.' });
+      }
+
+      const previousRole = target.role;
+      db.updateUserRole(target.id, role);
+      const account = db.getStaffAccountByUserId(target.id);
+      if (account) {
+        db.updateStaffAccount(account.id, {
+          role,
+          professionalTitle: getProfessionalTitle(role)
+        });
+      }
+      const staffMember = db.getStaff(actor.schoolId).find(
+        member => member.email.toLowerCase() === target.email.toLowerCase()
+      );
+      if (staffMember) {
+        db.updateStaffMember(staffMember.id, { role, title: getProfessionalTitle(role) });
+      }
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STAFF_ROLE_CHANGED',
+        'STAFF_ACCOUNT',
+        target.id,
+        `${previousRole} -> ${role}`,
+        req.ip
+      );
+
+      const updatedUser = db.getUserById(target.id);
+      const updatedAccount = db.getStaffAccountByUserId(target.id);
+      return res.json({ user: updatedUser, account: updatedAccount ? staffAccountView(updatedAccount) : null });
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.patch(
+  '/api/staff/accounts/:userId/status',
+  requirePermission('staff.create'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const target = db.getUserById(req.params.userId);
+      if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+      assertCanManageStaff(actor, target);
+
+      const status = req.body?.status;
+      if (status !== 'ACTIVE' && status !== 'SUSPENDED') {
+        return res.status(400).json({ error: 'Status must be ACTIVE or SUSPENDED.' });
+      }
+
+      db.setUserActive(target.id, status === 'ACTIVE');
+      const account = db.getStaffAccountByUserId(target.id);
+      if (account) db.updateStaffAccount(account.id, { status });
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        status === 'ACTIVE' ? 'STAFF_ACCOUNT_ACTIVATED' : 'STAFF_ACCOUNT_SUSPENDED',
+        'STAFF_ACCOUNT',
+        target.id,
+        `Account status set to ${status}`,
+        req.ip
+      );
+
+      const updatedAccount = db.getStaffAccountByUserId(target.id);
+      return res.json({
+        user: db.getUserById(target.id),
+        account: updatedAccount ? staffAccountView(updatedAccount) : null
+      });
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.get(
+  '/api/staff/invitations',
+  requirePermission('invitations.manage'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      assertCanManageInvitations(actor);
+      return res.json(db.getStaffInvitations(actor.schoolId).map(publicInvitation));
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/staff/invitations',
+  requirePermission('invitations.manage'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      assertCanManageInvitations(actor);
+      const { invitation, token } = createStaffInvitation(
+        {
+          fullName: req.body?.fullName,
+          email: req.body?.email,
+          phone: req.body?.phone,
+          role: req.body?.role,
+          gender: req.body?.gender,
+          preferredLanguage: req.body?.preferredLanguage,
+          professionalTitle: req.body?.professionalTitle,
+          department: req.body?.department
+        },
+        actor
+      );
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STAFF_INVITATION_CREATED',
+        'STAFF_INVITATION',
+        invitation.id,
+        `Invited ${invitation.email} as ${invitation.role}`,
+        req.ip
+      );
+      return res.status(201).json({
+        invitation: publicInvitation(invitation),
+        token,
+        activationUrl: `/#/staff-activate?token=${encodeURIComponent(token)}`
+      });
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/staff/invitations/:id/revoke',
+  requirePermission('invitations.manage'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      assertCanManageInvitations(actor);
+      const invitation = db.getStaffInvitationById(req.params.id);
+      if (!invitation || invitation.schoolId !== actor.schoolId) {
+        return res.status(404).json({ error: 'Invitation not found.' });
+      }
+      if (invitation.consumedAt) {
+        return res.status(400).json({ error: 'A used invitation cannot be revoked.' });
+      }
+      const updated = db.updateStaffInvitation(invitation.id, {
+        revokedAt: new Date().toISOString()
+      });
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STAFF_INVITATION_REVOKED',
+        'STAFF_INVITATION',
+        invitation.id,
+        `Revoked invitation for ${invitation.email}`,
+        req.ip
+      );
+      return res.json({ invitation: updated ? publicInvitation(updated) : null });
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.post('/api/staff/invitations/activate', async (req: Request, res: Response) => {
+  try {
+    const { user, invitation } = await activateStaffInvitation({
+      token: req.body?.token,
+      password: req.body?.password,
+      phone: typeof req.body?.phone === 'string' ? req.body.phone : undefined,
+      preferredLanguage: req.body?.preferredLanguage
+    });
+    db.logAudit(
+      user.schoolId,
+      user.id,
+      user.fullName,
+      user.role,
+      'STAFF_INVITATION_ACCEPTED',
+      'STAFF_INVITATION',
+      invitation.id,
+      `Activated account ${user.email}`,
+      req.ip
+    );
+    return res.status(201).json({ user });
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
 // --- AI Assistant (server-side key only) ---
 app.post(
   '/api/ai/assistant',
-  requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER', 'ACCOUNTANT'),
+  requireRole(
+    'SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER',
+    'ACCOUNTANT', 'DISCIPLINE_OFFICER', 'SCHOOL_IT', 'ANIMATEUR'
+  ),
   async (req: Request, res: Response) => {
     const actor = getActor(req);
     const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
@@ -1674,7 +2057,7 @@ app.post('/api/events', (req: Request, res: Response) => {
   return res.status(201).json(newEvent);
 });
 
-app.get('/api/audit-logs', requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER'), (req: Request, res: Response) => {
+app.get('/api/audit-logs', requirePermission('audit.review'), (req: Request, res: Response) => {
   const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
   return res.json(db.getAuditLogs(schoolId));
 });
@@ -2337,7 +2720,26 @@ app.get(
   }
 );
 
-// --- MySQL & XAMPP Integration Endpoints ---
+// --- MariaDB Integration & Health Endpoints ---
+/**
+ * Protected, minimal database health check.
+ * Admin-only via RBAC; deliberately omits host, user, database name and driver errors.
+ */
+app.get('/api/health/database', requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN'), async (_req: Request, res: Response) => {
+  const startedAt = Date.now();
+  const status = await checkMysqlHealth();
+  const payload = {
+    ok: status.connected,
+    status: status.connected ? 'up' : 'down',
+    engine: status.connected ? 'MariaDB/MySQL' : undefined,
+    latencyMs: Date.now() - startedAt,
+    checkedAt: new Date().toISOString(),
+    ...(status.connected ? {} : { error: status.error ?? 'Database is unavailable.' })
+  };
+  return status.connected ? res.json(payload) : res.status(503).json(payload);
+});
+
+// Legacy endpoint kept for the existing Settings page (admin-only).
 app.get('/api/mysql/status', async (_req: Request, res: Response) => {
   const status = await checkMysqlHealth();
   return res.json(status);
@@ -2381,11 +2783,41 @@ async function startServer() {
     console.log(`Port 3000 was unavailable. SchoolCare is running on http://localhost:${PORT}`);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`SchoolCare Rwanda Server running at http://localhost:${PORT}`);
   });
+
+  let shuttingDown = false;
+  const shutdown = (signal: 'SIGTERM' | 'SIGINT'): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[SchoolCare] ${signal} received. Closing server and MariaDB pool.`);
+
+    const forceExit = setTimeout(() => {
+      console.error('[SchoolCare] Forced shutdown after 10s timeout.');
+      process.exit(1);
+    }, 10_000);
+    forceExit.unref();
+
+    server.close(async () => {
+      clearTimeout(forceExit);
+      try {
+        await closeMysqlPool();
+        console.log('[SchoolCare] Shutdown complete.');
+        process.exit(0);
+      } catch (error) {
+        console.error('[SchoolCare] Error during shutdown:', error);
+        process.exit(1);
+      }
+    });
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-startServer().catch(err => {
-  console.error('Failed to start server:', err);
-});
+if (process.env.SCHOOLCARE_SKIP_SERVER_START !== '1') {
+  startServer().catch(err => {
+    console.error('Failed to start server:', err);
+  });
+}

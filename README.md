@@ -69,7 +69,7 @@ npm run start
 
 ### Account setup and sign-in
 
-Seeded user profiles do not include passwords. To provision an existing account, first start **MySQL** in the XAMPP Control Panel and verify the `.env` `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` values. Then open **PowerShell as Administrator** (right-click PowerShell and choose **Run as administrator**), change to the project folder, and run:
+Seeded user profiles do not include passwords. On **Zorin/Linux**, verify the `.env` `DB_*` values and run `npm run auth:provision-account` in an interactive terminal (see `/mysql/README_ZORIN.md`). On **Windows/XAMPP**, first start MySQL in the XAMPP Control Panel, open **PowerShell as Administrator**, change to the project folder, and run:
 
 ```powershell
 Set-Location 'D:\PROJECT\schoolcare (1)'
@@ -91,7 +91,8 @@ Password-recovery email delivery is not implemented/configured. Users who forget
 SchoolCare is fully architected for **MySQL (5.7+, 8.0+)** and **MariaDB (10.3+)** running with **XAMPP & phpMyAdmin**:
 
 - Complete SQL Dump: `/mysql/schoolcare_db.sql` (relational InnoDB tables, foreign keys, and seed data)
-- Setup Guide: `/mysql/README_XAMPP.md` (Step-by-step instructions for XAMPP and phpMyAdmin)
+- Setup Guide (XAMPP/Windows): `/mysql/README_XAMPP.md`
+- Setup Guide (Zorin OS / MariaDB 10.11): `/mysql/README_ZORIN.md` — use this on Linux
 - Direct Download Endpoint: `GET /api/mysql/export` (Download SQL dump directly in your browser)
 - MySQL Health Status: `GET /api/mysql/status` (Live connection monitoring)
 

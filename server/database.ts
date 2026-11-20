@@ -3,6 +3,7 @@ import path from 'path';
 import {
   School,
   UserProfile,
+  UserRole,
   Student,
   Guardian,
   StudentGuardianLink,
@@ -15,6 +16,9 @@ import {
   Invoice,
   Payment,
   StaffMember,
+  StaffAccount,
+  StaffInvitation,
+  PermissionGrantRecord,
   TimetableEntry,
   HomeworkAssignment,
   SchoolEvent,
@@ -51,6 +55,7 @@ import {
   initialReportCards,
   initialAuditLogs
 } from './seedData';
+import { getProfessionalTitle, isStaffRole } from '../src/roleCatalog';
 
 interface DatabaseSchema {
   schools: School[];
@@ -67,6 +72,9 @@ interface DatabaseSchema {
   invoices: Invoice[];
   payments: Payment[];
   staff: StaffMember[];
+  staffAccounts: StaffAccount[];
+  staffInvitations: StaffInvitation[];
+  permissionGrants: PermissionGrantRecord[];
   timetable: TimetableEntry[];
   homework: HomeworkAssignment[];
   events: SchoolEvent[];
@@ -127,6 +135,9 @@ class DatabaseStore {
       invoices: [...initialInvoices],
       payments: [...initialPayments],
       staff: [...initialStaff],
+      staffAccounts: [],
+      staffInvitations: [],
+      permissionGrants: [],
       timetable: [...initialTimetable],
       homework: [...initialHomework],
       events: [...initialEvents],
@@ -138,6 +149,117 @@ class DatabaseStore {
       admissionSettings: { resultSlipRequired: true },
       modules: {}
     };
+  }
+
+  /**
+   * One-time, additive normalization for the Headteacher transition.
+   * It only changes the two legacy role values chosen by the school and adds
+   * missing staff-management collections. No existing record is deleted.
+   */
+  private normalizeStaffData(data: DatabaseSchema): boolean {
+    let changed = false;
+
+    if (!Array.isArray(data.users)) {
+      data.users = [];
+      changed = true;
+    }
+    if (!Array.isArray(data.staff)) {
+      data.staff = [];
+      changed = true;
+    }
+    if (!Array.isArray(data.staffAccounts)) {
+      data.staffAccounts = [];
+      changed = true;
+    }
+    if (!Array.isArray(data.staffInvitations)) {
+      data.staffInvitations = [];
+      changed = true;
+    }
+    if (!Array.isArray(data.permissionGrants)) {
+      data.permissionGrants = [];
+      changed = true;
+    }
+
+    const superAdminAccount = data.users.find(user => user.id === 'user-super-admin');
+    if (superAdminAccount && superAdminAccount.role === 'SUPER_ADMIN') {
+      superAdminAccount.role = 'HEAD_TEACHER';
+      changed = true;
+    }
+
+    const legacyHeadAccount = data.users.find(user => user.id === 'user-head-teacher');
+    if (legacyHeadAccount && legacyHeadAccount.role === 'HEAD_TEACHER') {
+      legacyHeadAccount.role = 'ANIMATEUR';
+      changed = true;
+    }
+
+    const now = new Date().toISOString();
+    for (const account of data.users) {
+      if (account.isActive === undefined) {
+        account.isActive = true;
+        changed = true;
+      }
+
+      const staffMember = data.staff.find(
+        member => member.email.toLowerCase() === account.email.toLowerCase()
+      );
+      if (staffMember && staffMember.role !== account.role) {
+        staffMember.role = account.role;
+        staffMember.title = getProfessionalTitle(account.role);
+        changed = true;
+      }
+
+      if (!isStaffRole(account.role)) continue;
+
+      const title = getProfessionalTitle(account.role);
+      const existingStaffAccount = data.staffAccounts.find(item => item.userId === account.id);
+      if (!existingStaffAccount) {
+        data.staffAccounts.push({
+          id: `staff-account-${account.id}`,
+          userId: account.id,
+          schoolId: account.schoolId,
+          role: account.role,
+          professionalTitle: title,
+          department: account.teacherDepartment || title,
+          status: 'ACTIVE',
+          delegatedPermissions: Array.isArray(account.delegatedPermissions)
+            ? [...account.delegatedPermissions]
+            : [],
+          createdAt: account.createdAt || now,
+          createdBy: 'system-migration',
+          acceptedAt: account.createdAt || now
+        });
+        changed = true;
+      } else if (existingStaffAccount.role !== account.role) {
+        existingStaffAccount.role = account.role;
+        existingStaffAccount.professionalTitle = title;
+        changed = true;
+      }
+    }
+
+    const hasHeadteacherDirectoryRecord = data.staff.some(
+      member => member.email.toLowerCase() === 'esrubengera@gmail.com'
+    );
+    if (!hasHeadteacherDirectoryRecord && superAdminAccount) {
+      data.staff.push({
+        id: 'stf-06',
+        schoolId: superAdminAccount.schoolId,
+        staffId: 'STF-006',
+        fullName: superAdminAccount.fullName,
+        gender: 'M',
+        role: 'HEAD_TEACHER',
+        title: 'Headteacher',
+        department: 'School Leadership',
+        phone: superAdminAccount.phone,
+        email: superAdminAccount.email,
+        assignedClasses: [],
+        assignedSubjects: [],
+        status: 'ACTIVE',
+        joinedDate: now.slice(0, 10)
+      });
+      changed = true;
+    }
+
+    return changed;
   }
 
   private loadOrSeed(): DatabaseSchema {
@@ -187,6 +309,7 @@ class DatabaseStore {
             };
             needsSave = true;
           }
+          needsSave = this.normalizeStaffData(parsed) || needsSave;
           if (needsSave) {
             this.saveData(parsed);
           }
@@ -198,6 +321,7 @@ class DatabaseStore {
     }
 
     const defaultData = this.getDefaultData();
+    this.normalizeStaffData(defaultData);
     this.saveData(defaultData);
     return defaultData;
   }
@@ -220,6 +344,7 @@ class DatabaseStore {
 
   public resetToSeed(): DatabaseSchema {
     this.data = this.getDefaultData();
+    this.normalizeStaffData(this.data);
     this.saveData(this.data);
     return this.data;
   }
@@ -249,11 +374,8 @@ class DatabaseStore {
       ipAddress,
       timestamp: new Date().toISOString()
     };
+    // Audit events are append-only: never truncate or overwrite prior entries.
     this.data.auditLogs.unshift(log);
-    // keep latest 200 logs
-    if (this.data.auditLogs.length > 200) {
-      this.data.auditLogs = this.data.auditLogs.slice(0, 200);
-    }
     this.saveData();
   }
 
@@ -292,6 +414,113 @@ class DatabaseStore {
     this.data.users.push(user);
     this.saveData();
     return user;
+  }
+
+  public updateUserRole(userId: string, role: UserRole): UserProfile | undefined {
+    const user = this.data.users.find(item => item.id === userId);
+    if (!user) return undefined;
+    user.role = role;
+    this.saveData();
+    return user;
+  }
+
+  public setUserActive(userId: string, isActive: boolean): UserProfile | undefined {
+    const user = this.data.users.find(item => item.id === userId);
+    if (!user) return undefined;
+    user.isActive = isActive;
+    this.saveData();
+    return user;
+  }
+
+  public setDelegatedPermissions(userId: string, permissions: string[]): UserProfile | undefined {
+    const user = this.data.users.find(item => item.id === userId);
+    if (!user) return undefined;
+    user.delegatedPermissions = [...permissions];
+    const staffAccount = this.data.staffAccounts.find(account => account.userId === userId);
+    if (staffAccount) {
+      staffAccount.delegatedPermissions = [...permissions];
+      staffAccount.lastModifiedAt = new Date().toISOString();
+    }
+    this.saveData();
+    return user;
+  }
+
+  // --- Staff accounts, invitations and permission history ---
+
+  public getStaffAccounts(schoolId?: string): StaffAccount[] {
+    return schoolId
+      ? this.data.staffAccounts.filter(account => account.schoolId === schoolId)
+      : [...this.data.staffAccounts];
+  }
+
+  public getStaffAccountById(id: string): StaffAccount | undefined {
+    return this.data.staffAccounts.find(account => account.id === id);
+  }
+
+  public getStaffAccountByUserId(userId: string): StaffAccount | undefined {
+    return this.data.staffAccounts.find(account => account.userId === userId);
+  }
+
+  public createStaffAccount(account: StaffAccount): StaffAccount {
+    this.data.staffAccounts.push(account);
+    this.saveData();
+    return account;
+  }
+
+  public updateStaffAccount(id: string, updates: Partial<StaffAccount>): StaffAccount | undefined {
+    const account = this.data.staffAccounts.find(item => item.id === id);
+    if (!account) return undefined;
+    Object.assign(account, updates, { lastModifiedAt: new Date().toISOString() });
+    this.saveData();
+    return account;
+  }
+
+  public getStaffInvitations(schoolId?: string): StaffInvitation[] {
+    return schoolId
+      ? this.data.staffInvitations.filter(invitation => invitation.schoolId === schoolId)
+      : [...this.data.staffInvitations];
+  }
+
+  public getStaffInvitationById(id: string): StaffInvitation | undefined {
+    return this.data.staffInvitations.find(invitation => invitation.id === id);
+  }
+
+  public getStaffInvitationByTokenHash(tokenHash: string): StaffInvitation | undefined {
+    return this.data.staffInvitations.find(invitation => invitation.tokenHash === tokenHash);
+  }
+
+  public createStaffInvitation(invitation: StaffInvitation): StaffInvitation {
+    this.data.staffInvitations.push(invitation);
+    this.saveData();
+    return invitation;
+  }
+
+  public updateStaffInvitation(id: string, updates: Partial<StaffInvitation>): StaffInvitation | undefined {
+    const invitation = this.data.staffInvitations.find(item => item.id === id);
+    if (!invitation) return undefined;
+    Object.assign(invitation, updates);
+    this.saveData();
+    return invitation;
+  }
+
+  public getPermissionGrants(schoolId?: string): PermissionGrantRecord[] {
+    return schoolId
+      ? this.data.permissionGrants.filter(record => record.schoolId === schoolId)
+      : [...this.data.permissionGrants];
+  }
+
+  public createPermissionGrant(record: PermissionGrantRecord): PermissionGrantRecord {
+    this.data.permissionGrants.push(record);
+    this.saveData();
+    return record;
+  }
+
+  public updatePermissionGrant(id: string, updates: Partial<PermissionGrantRecord>): PermissionGrantRecord | undefined {
+    const record = this.data.permissionGrants.find(item => item.id === id);
+    if (!record) return undefined;
+    Object.assign(record, updates);
+    this.saveData();
+    return record;
   }
 
   // --- Students ---
@@ -522,6 +751,20 @@ class DatabaseStore {
   // --- Staff & Timetable & Homework ---
   public getStaff(schoolId: string): StaffMember[] {
     return this.data.staff.filter(s => s.schoolId === schoolId);
+  }
+
+  public createStaffMember(member: StaffMember): StaffMember {
+    this.data.staff.push(member);
+    this.saveData();
+    return member;
+  }
+
+  public updateStaffMember(id: string, updates: Partial<StaffMember>): StaffMember | undefined {
+    const member = this.data.staff.find(item => item.id === id);
+    if (!member) return undefined;
+    Object.assign(member, updates);
+    this.saveData();
+    return member;
   }
 
   public getTimetable(schoolId: string, classId?: string): TimetableEntry[] {

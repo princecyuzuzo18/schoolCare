@@ -52,7 +52,7 @@ export const AuditPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-900 text-white flex items-center gap-1">
             <Lock className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Immutable Audit Trail & Security Center</span>
+            <span>Append-only Audit Trail & Security Center</span>
           </span>
           <span className="text-xs text-slate-500">Law No 058/2021 (Rwanda Data Protection)</span>
         </div>
@@ -66,7 +66,7 @@ export const AuditPage: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase text-slate-400">MySQL / XAMPP Isolation</span>
+            <span className="text-xs font-bold uppercase text-slate-400">MariaDB Isolation</span>
             <ShieldCheck className="w-5 h-5 text-emerald-400" />
           </div>
           <p className="text-lg font-black text-white mt-2">Active (InnoDB Enforced)</p>

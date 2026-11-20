@@ -1,46 +1,10 @@
 import type { NextFunction, Request, Response } from 'express';
 import { db } from './database';
 import type { UserProfile, UserRole } from '../src/types';
+import { hasPermission, ROLE_PERMISSIONS } from './permissions';
 import { getSessionUserId } from './sessions';
 
-export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
-  SUPER_ADMIN: [
-    'school:read', 'school:write', 'students:read', 'students:write', 'guardians:read',
-    'guardians:write', 'attendance:read', 'attendance:write', 'health:read', 'health:write',
-    'finance:read', 'finance:write', 'academics:read', 'academics:write', 'staff:read',
-    'staff:write', 'reports:read', 'audit:read', 'notifications:read', 'notifications:write'
-  ],
-  SCHOOL_ADMIN: [
-    'school:read', 'school:write', 'students:read', 'students:write', 'guardians:read',
-    'guardians:write', 'attendance:read', 'attendance:write', 'health:read', 'health:write',
-    'finance:read', 'finance:write', 'academics:read', 'academics:write', 'staff:read',
-    'staff:write', 'reports:read', 'audit:read', 'notifications:read', 'notifications:write'
-  ],
-  HEAD_TEACHER: [
-    'students:read', 'attendance:read', 'attendance:write', 'academics:read', 'academics:write',
-    'reports:read', 'notifications:read', 'guardians:read'
-  ],
-  DEPUTY_HEAD: [
-    'students:read', 'attendance:read', 'academics:read', 'reports:read', 'notifications:read'
-  ],
-  TEACHER: [
-    'students:read', 'attendance:read', 'attendance:write', 'academics:read', 'notifications:read'
-  ],
-  NURSE: [
-    'health:read', 'health:write', 'students:read', 'guardians:read', 'notifications:read',
-    'notifications:write'
-  ],
-  ACCOUNTANT: [
-    'finance:read', 'finance:write', 'students:read', 'reports:read', 'notifications:read'
-  ],
-  PARENT: [
-    'students:read', 'guardians:read', 'attendance:read', 'academics:read', 'finance:read',
-    'notifications:read'
-  ],
-  STUDENT: [
-    'students:read', 'attendance:read', 'academics:read', 'notifications:read'
-  ]
-};
+export { ROLE_PERMISSIONS };
 
 export function authenticateUser(req: Request, res: Response, next: NextFunction): void {
   const userId = getSessionUserId(req);
@@ -51,6 +15,11 @@ export function authenticateUser(req: Request, res: Response, next: NextFunction
     return;
   }
 
+  if (user.isActive === false) {
+    res.status(403).json({ error: 'This account is inactive. Contact the Headteacher.' });
+    return;
+  }
+
   req.user = user;
   next();
 }
@@ -58,7 +27,7 @@ export function authenticateUser(req: Request, res: Response, next: NextFunction
 export function requireRole(...allowedRoles: UserRole[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const user = req.user;
-    if (!user || !allowedRoles.includes(user.role)) {
+    if (!user || user.isActive === false || !allowedRoles.includes(user.role)) {
       res.status(403).json({ error: 'Forbidden: user role is not permitted for this action.' });
       return;
     }
@@ -74,8 +43,7 @@ export function requirePermission(permission: string) {
       return;
     }
 
-    const allowed = ROLE_PERMISSIONS[user.role] ?? [];
-    if (!allowed.includes(permission)) {
+    if (!hasPermission(user, permission)) {
       res.status(403).json({ error: `Forbidden: missing '${permission}' permission.` });
       return;
     }

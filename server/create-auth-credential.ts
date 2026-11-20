@@ -6,9 +6,18 @@ import {
   provisionInitialPassword
 } from './authCredentials';
 
+function requireSecureTerminal(): void {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error('Run this command in an interactive terminal so the password can be entered without echo.');
+  }
+}
+
 function requireElevatedWindowsAdministrator(): void {
   if (process.platform !== 'win32') {
-    throw new Error('Account provisioning is restricted to an elevated Windows Administrator terminal.');
+    // On Zorin/Linux, database privileges come from schoolcare_user in .env,
+    // not from an elevated OS account. Keep the interactive/no-echo requirement.
+    requireSecureTerminal();
+    return;
   }
 
   const command = [
@@ -80,7 +89,7 @@ async function main(): Promise<void> {
   await ensureCredentialTable();
   const accounts = await listProvisionableAccounts();
   if (accounts.length === 0) {
-    throw new Error('No active accounts were found in MySQL table user_profiles. No accounts were changed.');
+    throw new Error('No active accounts were found in the MariaDB table user_profiles. No accounts were changed.');
   }
 
   process.stdout.write('\nExisting active SchoolCare accounts:\n');
@@ -119,7 +128,7 @@ async function main(): Promise<void> {
     if (code === 'ER_DUP_ENTRY') {
       throw new Error('That account was already provisioned. No account or password was changed.');
     }
-    throw new Error('Could not save the password hash to MySQL. Check the XAMPP connection and database permissions.');
+    throw new Error('Could not save the password hash to MariaDB. Check the DB_* settings and database permissions.');
   }
 
   process.stdout.write(`Initial password provisioned for ${account.email}. The password was not displayed or logged.\n`);

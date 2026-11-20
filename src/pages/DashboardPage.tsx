@@ -11,8 +11,10 @@ import {
   Invoice,
   Payment,
   StaffMember,
-  AcademicClass
+  AcademicClass,
+  UserRole
 } from '../types';
+import type { TranslationKey } from '../i18n';
 import {
   Users,
   UserCheck,
@@ -29,13 +31,90 @@ import {
   Send,
   Building,
   GraduationCap,
-  BarChart3
+  BarChart3,
+  UserCog,
+  ShieldCheck,
+  ClipboardList,
+  CalendarCheck
 } from 'lucide-react';
 
 interface DashboardPageProps {
   onNavigate: (tab: string) => void;
   onOpenIncidentModal: (incident?: HealthIncident) => void;
 }
+
+const ROLE_SUMMARY_KEYS: Partial<Record<UserRole, TranslationKey>> = {
+  SUPER_ADMIN: 'headteacherSummary',
+  SCHOOL_ADMIN: 'headteacherSummary',
+  HEAD_TEACHER: 'headteacherSummary',
+  DEPUTY_HEAD: 'teacherSummary',
+  TEACHER: 'teacherSummary',
+  NURSE: 'nurseSummary',
+  ACCOUNTANT: 'accountantSummary',
+  DISCIPLINE_OFFICER: 'disciplineSummary',
+  SCHOOL_IT: 'itSummary',
+  ANIMATEUR: 'animateurSummary'
+};
+
+interface WorkspaceAction {
+  tab: string;
+  labelKey: TranslationKey;
+  icon: typeof UserCog;
+  tone: 'blue' | 'indigo' | 'emerald' | 'amber';
+}
+
+const ROLE_ACTIONS: Partial<Record<UserRole, WorkspaceAction[]>> = {
+  SUPER_ADMIN: [
+    { tab: 'staff-management', labelKey: 'staffManagementAction', icon: UserCog, tone: 'indigo' },
+    { tab: 'permissions', labelKey: 'permissionsAction', icon: ShieldCheck, tone: 'blue' },
+    { tab: 'audit', labelKey: 'auditReviewAction', icon: ClipboardList, tone: 'emerald' }
+  ],
+  SCHOOL_ADMIN: [
+    { tab: 'staff-management', labelKey: 'staffManagementAction', icon: UserCog, tone: 'indigo' },
+    { tab: 'permissions', labelKey: 'permissionsAction', icon: ShieldCheck, tone: 'blue' },
+    { tab: 'audit', labelKey: 'auditReviewAction', icon: ClipboardList, tone: 'emerald' }
+  ],
+  HEAD_TEACHER: [
+    { tab: 'staff-management', labelKey: 'staffManagementAction', icon: UserCog, tone: 'indigo' },
+    { tab: 'permissions', labelKey: 'permissionsAction', icon: ShieldCheck, tone: 'blue' },
+    { tab: 'audit', labelKey: 'auditReviewAction', icon: ClipboardList, tone: 'emerald' }
+  ],
+  DEPUTY_HEAD: [
+    { tab: 'attendance', labelKey: 'viewAttendance', icon: UserCheck, tone: 'blue' },
+    { tab: 'academics', labelKey: 'viewStudents', icon: GraduationCap, tone: 'emerald' }
+  ],
+  TEACHER: [
+    { tab: 'attendance', labelKey: 'viewAttendance', icon: UserCheck, tone: 'blue' },
+    { tab: 'students', labelKey: 'viewStudents', icon: Users, tone: 'emerald' }
+  ],
+  NURSE: [
+    { tab: 'health', labelKey: 'viewHealth', icon: HeartPulse, tone: 'blue' },
+    { tab: 'students', labelKey: 'viewStudents', icon: Users, tone: 'emerald' }
+  ],
+  ACCOUNTANT: [
+    { tab: 'finance', labelKey: 'viewFinance', icon: CreditCard, tone: 'amber' },
+    { tab: 'reports', labelKey: 'viewReports', icon: BarChart3, tone: 'blue' }
+  ],
+  DISCIPLINE_OFFICER: [
+    { tab: 'discipline', labelKey: 'viewDiscipline', icon: ShieldCheck, tone: 'blue' },
+    { tab: 'attendance', labelKey: 'viewAttendance', icon: UserCheck, tone: 'emerald' }
+  ],
+  SCHOOL_IT: [
+    { tab: 'staff', labelKey: 'viewStudents', icon: Users, tone: 'blue' },
+    { tab: 'reports', labelKey: 'viewReports', icon: BarChart3, tone: 'emerald' }
+  ],
+  ANIMATEUR: [
+    { tab: 'events', labelKey: 'viewEvents', icon: CalendarCheck, tone: 'blue' },
+    { tab: 'communication', labelKey: 'sendMessage', icon: MessageSquare, tone: 'emerald' }
+  ]
+};
+
+const TONE_CLASSES: Record<WorkspaceAction['tone'], string> = {
+  blue: 'bg-blue-50 text-blue-800 border-blue-100',
+  indigo: 'bg-indigo-50 text-indigo-800 border-indigo-100',
+  emerald: 'bg-emerald-50 text-emerald-800 border-emerald-100',
+  amber: 'bg-amber-50 text-amber-800 border-amber-100'
+};
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpenIncidentModal }) => {
   const { role, currentUser, school } = useAuth();
@@ -65,41 +144,38 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
   }).format(now);
 
   const loadData = async () => {
-    try {
-      setLoading(true);
-      const [
-        studentsData,
-        classesData,
-        attendanceData,
-        incidentsData,
-        notificationsData,
-        invoicesData,
-        paymentsData,
-        staffData
-      ] = await Promise.all([
-        api.getStudents(),
-        api.getClasses(),
-        api.getAttendance(todayStr),
-        api.getHealthIncidents(),
-        api.getNotifications(),
-        api.getInvoices(),
-        api.getPayments(),
-        api.getStaff()
-      ]);
+    setLoading(true);
+    const results = await Promise.allSettled([
+      api.getStudents(),
+      api.getClasses(),
+      api.getAttendance(todayStr),
+      api.getHealthIncidents(),
+      api.getNotifications(),
+      api.getInvoices(),
+      api.getPayments(),
+      api.getStaff()
+    ]);
 
-      setStudents(studentsData);
-      setClasses(classesData);
-      setAttendance(attendanceData);
-      setIncidents(incidentsData);
-      setNotifications(notificationsData);
-      setInvoices(invoicesData);
-      setPayments(paymentsData);
-      setStaff(staffData);
-    } catch (err) {
-      console.error('Failed to load dashboard data:', err);
-    } finally {
-      setLoading(false);
+    const value = <T,>(index: number): T | null =>
+      results[index].status === 'fulfilled'
+        ? (results[index] as PromiseFulfilledResult<T>).value
+        : null;
+
+    setStudents(value<Student[]>(0) ?? []);
+    setClasses(value<AcademicClass[]>(1) ?? []);
+    setAttendance(value<AttendanceRecord[]>(2) ?? []);
+    setIncidents(value<HealthIncident[]>(3) ?? []);
+    setNotifications(value<NotificationMessage[]>(4) ?? []);
+    setInvoices(value<Invoice[]>(5) ?? []);
+    setPayments(value<Payment[]>(6) ?? []);
+    setStaff(value<StaffMember[]>(7) ?? []);
+
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.error('A dashboard data source was unavailable:', result.reason);
+      }
     }
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -116,6 +192,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
   const totalBilled = invoices.reduce((acc, inv) => acc + inv.totalAmountRwf, 0);
   const totalCollected = invoices.reduce((acc, inv) => acc + inv.paidAmountRwf, 0);
   const totalOutstanding = invoices.reduce((acc, inv) => acc + inv.balanceRwf, 0);
+
+  const summaryKey = role ? ROLE_SUMMARY_KEYS[role] : undefined;
+  const workspaceActions: WorkspaceAction[] = role ? ROLE_ACTIONS[role] ?? [] : [];
+  const canViewStudents = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER','DEPUTY_HEAD','TEACHER','NURSE','ACCOUNTANT','DISCIPLINE_OFFICER','SCHOOL_IT','ANIMATEUR'].includes(role ?? '');
+  const canViewAttendance = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER','DEPUTY_HEAD','TEACHER','DISCIPLINE_OFFICER','ANIMATEUR'].includes(role ?? '');
+  const canViewHealth = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER','NURSE'].includes(role ?? '');
+  const canViewFinance = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER','ACCOUNTANT'].includes(role ?? '');
 
   if (loading) {
     return (
@@ -194,105 +277,146 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
         </div>
       </div>
 
+      {/* Role-specific workspace */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">{t('roleWorkspace')}</h2>
+            <p className="mt-1 max-w-2xl text-xs text-slate-500">
+              {summaryKey ? t(summaryKey) : t('roleWorkspaceSubtitle')}
+            </p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+            {role ? t(`role_${role}` as TranslationKey) : ''}
+          </span>
+        </div>
+        {workspaceActions.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {workspaceActions.map(action => {
+              const Icon = action.icon;
+              return (
+                <button
+                  key={action.tab}
+                  type="button"
+                  onClick={() => onNavigate(action.tab)}
+                  className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-[11px] font-bold transition-colors ${TONE_CLASSES[action.tone]}`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {t(action.labelKey)}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* KPI Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Students */}
-        <button
-          type="button"
-          onClick={() => onNavigate('students')}
-          className="group w-full text-left bg-white p-5 rounded-2xl border border-slate-200 shadow-xs hover:-translate-y-0.5 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 transition-all"
-          aria-label={`View ${students.length} active students`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Students</span>
-            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
-              <Users className="w-5 h-5" />
+        {canViewStudents && (
+          <button
+            type="button"
+            onClick={() => onNavigate('students')}
+            className="group w-full text-left bg-white p-5 rounded-2xl border border-slate-200 shadow-xs hover:-translate-y-0.5 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 transition-all"
+            aria-label={`View ${students.length} active students`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Students</span>
+              <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
+                <Users className="w-5 h-5" />
+              </div>
             </div>
-          </div>
-          <p className="text-3xl font-bold tracking-tight text-slate-900 mt-3">{students.length}</p>
-          <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-500">
-            <span className="text-emerald-600 font-semibold">{classes.length} Classes</span>
-            <span>• TVET SOD, CST & O-Level</span>
-          </div>
-        </button>
+            <p className="text-3xl font-bold tracking-tight text-slate-900 mt-3">{students.length}</p>
+            <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-500">
+              <span className="text-emerald-600 font-semibold">{classes.length} Classes</span>
+              <span>• TVET SOD, CST & O-Level</span>
+            </div>
+          </button>
+        )}
 
         {/* Daily Attendance Rate */}
-        <button
-          type="button"
-          onClick={() => onNavigate('attendance')}
-          className="group w-full text-left bg-white p-5 rounded-2xl border border-slate-200 shadow-xs hover:-translate-y-0.5 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 transition-all"
-          aria-label={attendanceRate === null ? 'Open attendance; no roll call recorded today' : `View today's attendance, ${attendanceRate}% present`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('attendanceRate')}</span>
-            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center group-hover:bg-emerald-100 transition-colors">
-              <UserCheck className="w-5 h-5" />
+        {canViewAttendance && (
+          <button
+            type="button"
+            onClick={() => onNavigate('attendance')}
+            className="group w-full text-left bg-white p-5 rounded-2xl border border-slate-200 shadow-xs hover:-translate-y-0.5 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 transition-all"
+            aria-label={attendanceRate === null ? 'Open attendance; no roll call recorded today' : `View today's attendance, ${attendanceRate}% present`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('attendanceRate')}</span>
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center group-hover:bg-emerald-100 transition-colors">
+                <UserCheck className="w-5 h-5" />
+              </div>
             </div>
-          </div>
-          <p className="text-3xl font-bold tracking-tight text-slate-900 mt-3">{attendanceRate === null ? '—' : `${attendanceRate}%`}</p>
-          <div className="flex items-center gap-2 mt-2 text-xs text-slate-500">
-            {attendance.length > 0 ? (
-              <>
-                <span className="text-emerald-700 font-semibold">{presentCount} Present</span>
-                <span aria-hidden="true">·</span>
-                <span className="text-red-700 font-semibold">{absentCount} Absent</span>
-                <span aria-hidden="true">·</span>
-                <span className="text-amber-700 font-semibold">{lateCount} Late</span>
-              </>
-            ) : (
-              <span>No roll call recorded today</span>
-            )}
-          </div>
-        </button>
+            <p className="text-3xl font-bold tracking-tight text-slate-900 mt-3">{attendanceRate === null ? '—' : `${attendanceRate}%`}</p>
+            <div className="flex items-center gap-2 mt-2 text-xs text-slate-500">
+              {attendance.length > 0 ? (
+                <>
+                  <span className="text-emerald-700 font-semibold">{presentCount} Present</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-red-700 font-semibold">{absentCount} Absent</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-amber-700 font-semibold">{lateCount} Late</span>
+                </>
+              ) : (
+                <span>No roll call recorded today</span>
+              )}
+            </div>
+          </button>
+        )}
 
         {/* Urgent Health Cases */}
-        <button
-          type="button"
-          onClick={() => onNavigate('health')}
-          aria-label={`View health center, ${urgentIncidents.length} urgent cases`}
-          className={`group w-full text-left p-5 rounded-2xl border hover:-translate-y-0.5 transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${
-            urgentIncidents.length > 0
-              ? 'bg-red-50/70 border-red-200 shadow-xs hover:shadow-md'
-              : 'bg-white border-slate-200 shadow-xs hover:shadow-md'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Health Infirmary</span>
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${urgentIncidents.length > 0 ? 'bg-red-100 text-red-700' : 'bg-rose-50 text-rose-700 group-hover:bg-rose-100 transition-colors'}`}>
-              <HeartPulse className="w-5 h-5" />
+        {canViewHealth && (
+          <button
+            type="button"
+            onClick={() => onNavigate('health')}
+            aria-label={`View health center, ${urgentIncidents.length} urgent cases`}
+            className={`group w-full text-left p-5 rounded-2xl border hover:-translate-y-0.5 transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${
+              urgentIncidents.length > 0
+                ? 'bg-red-50/70 border-red-200 shadow-xs hover:shadow-md'
+                : 'bg-white border-slate-200 shadow-xs hover:shadow-md'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Health Infirmary</span>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${urgentIncidents.length > 0 ? 'bg-red-100 text-red-700' : 'bg-rose-50 text-rose-700 group-hover:bg-rose-100 transition-colors'}`}>
+                <HeartPulse className="w-5 h-5" />
+              </div>
             </div>
-          </div>
-          <p className={`text-3xl font-bold tracking-tight mt-3 ${urgentIncidents.length > 0 ? 'text-red-800' : 'text-slate-900'}`}>
-            {urgentIncidents.length} Urgent Case{urgentIncidents.length === 1 ? '' : 's'}
-          </p>
-          <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-500">
-            <span className="text-slate-700 font-semibold">{incidents.length} total recorded</span>
-            <span>• Direct parent tracking</span>
-          </div>
-        </button>
+            <p className={`text-3xl font-bold tracking-tight mt-3 ${urgentIncidents.length > 0 ? 'text-red-800' : 'text-slate-900'}`}>
+              {urgentIncidents.length} Urgent Case{urgentIncidents.length === 1 ? '' : 's'}
+            </p>
+            <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-500">
+              <span className="text-slate-700 font-semibold">{incidents.length} total recorded</span>
+              <span>• Direct parent tracking</span>
+            </div>
+          </button>
+        )}
 
         {/* Fees Collected in RWF */}
-        <button
-          type="button"
-          onClick={() => onNavigate('finance')}
-          className="group w-full text-left bg-white p-5 rounded-2xl border border-slate-200 shadow-xs hover:-translate-y-0.5 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 transition-all"
-          aria-label={`View finance, ${totalCollected.toLocaleString()} Rwandan francs collected`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('totalCollected')}</span>
-            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center group-hover:bg-amber-100 transition-colors">
-              <CreditCard className="w-5 h-5" />
+        {canViewFinance && (
+          <button
+            type="button"
+            onClick={() => onNavigate('finance')}
+            className="group w-full text-left bg-white p-5 rounded-2xl border border-slate-200 shadow-xs hover:-translate-y-0.5 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 transition-all"
+            aria-label={`View finance, ${totalCollected.toLocaleString()} Rwandan francs collected`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('totalCollected')}</span>
+              <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center group-hover:bg-amber-100 transition-colors">
+                <CreditCard className="w-5 h-5" />
+              </div>
             </div>
-          </div>
-          <p className="text-3xl font-bold tracking-tight text-slate-900 mt-3">
-            {totalCollected.toLocaleString()} <span className="text-sm font-bold text-slate-500">{t('currency')}</span>
-          </p>
-          <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-500">
-            <span className="text-amber-700 font-semibold">
-              Bal: {totalOutstanding.toLocaleString()} {t('currency')}
-            </span>
-          </div>
-        </button>
+            <p className="text-3xl font-bold tracking-tight text-slate-900 mt-3">
+              {totalCollected.toLocaleString()} <span className="text-sm font-bold text-slate-500">{t('currency')}</span>
+            </p>
+            <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-500">
+              <span className="text-amber-700 font-semibold">
+                Bal: {totalOutstanding.toLocaleString()} {t('currency')}
+              </span>
+            </div>
+          </button>
+        )}
       </div>
 
       {/* Main Grid: Health Emergencies & Attendance Tasks */}

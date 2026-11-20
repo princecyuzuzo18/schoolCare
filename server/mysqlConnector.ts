@@ -1,6 +1,5 @@
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
-import fs from 'fs';
 import path from 'path';
 
 dotenv.config();
@@ -17,22 +16,36 @@ export interface MysqlStatus {
   mode: 'MYSQL_LIVE' | 'FALLBACK_PERSISTENT_JSON';
 }
 
+function positiveInt(value: string | undefined, fallback: number, min = 1, max = 65535): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
+}
+
+// Connection timeout is exported so authentication timeouts stay in sync with the pool.
+export const DB_CONNECT_TIMEOUT_MS = positiveInt(
+  process.env.DB_CONNECT_TIMEOUT_MS,
+  5000,
+  500,
+  60000
+);
+
 const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: Number(process.env.DB_PORT) || 3306,
-  user: process.env.DB_USERNAME || process.env.DB_USER || 'root',
+  host: process.env.DB_HOST || '127.0.0.1',
+  port: positiveInt(process.env.DB_PORT, 3306),
+  // Legacy aliases are kept so existing installations keep working after the rename.
+  user: process.env.DB_USERNAME || process.env.DB_USER || 'schoolcare_user',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_DATABASE || process.env.DB_NAME || 'schoolcare_db',
-  connectTimeout: 2000,
+  connectTimeout: DB_CONNECT_TIMEOUT_MS,
   waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 10
+  connectionLimit: positiveInt(process.env.DB_CONNECTION_LIMIT, 10, 1, 100),
+  queueLimit: positiveInt(process.env.DB_QUEUE_LIMIT, 10, 0, 1000)
 };
 
 let pool: mysql.Pool | null = null;
 let lastKnownStatus: MysqlStatus = {
   connected: false,
-  engine: 'MySQL / XAMPP InnoDB',
+  engine: 'MariaDB / MySQL (InnoDB)',
   host: dbConfig.host,
   port: dbConfig.port,
   database: dbConfig.database,
@@ -45,11 +58,40 @@ export function getMysqlPool(): mysql.Pool | null {
     try {
       pool = mysql.createPool(dbConfig);
     } catch (err: any) {
-      console.warn('[MySQL] Pool initialization deferred:', err.message);
+      console.warn('[MariaDB] Pool initialization deferred:', err?.message ?? err);
       pool = null;
     }
   }
   return pool;
+}
+
+/** Closes the connection pool on graceful server shutdown. Safe to call repeatedly. */
+export async function closeMysqlPool(): Promise<void> {
+  if (!pool) return;
+  const currentPool = pool;
+  pool = null;
+  try {
+    await currentPool.end();
+  } catch (err: any) {
+    console.warn('[MariaDB] Pool close failed:', err?.message ?? err);
+  }
+}
+
+/** Returns a generic, credential-free message for a driver error. */
+function friendlyError(err: any): string {
+  switch (err?.code) {
+    case 'ECONNREFUSED':
+      return 'MariaDB is not accepting connections. Check that the service is running.';
+    case 'ER_ACCESS_DENIED_ERROR':
+      return 'Database authentication failed. Check DB_USER and DB_PASSWORD in .env.';
+    case 'ER_BAD_DB_ERROR':
+      return 'The configured database does not exist. Run the database setup first.';
+    case 'ETIMEDOUT':
+    case 'PROTOCOL_SEQUENCE_TIMEOUT':
+      return 'MariaDB connection timed out. Check DB_CONNECT_TIMEOUT_MS and server load.';
+    default:
+      return 'MariaDB connection check failed.';
+  }
 }
 
 export async function checkMysqlHealth(): Promise<MysqlStatus> {
@@ -58,27 +100,32 @@ export async function checkMysqlHealth(): Promise<MysqlStatus> {
     if (!currentPool) {
       lastKnownStatus = {
         connected: false,
-        engine: 'MySQL / XAMPP InnoDB',
+        engine: 'MariaDB / MySQL (unavailable)',
         host: dbConfig.host,
         port: dbConfig.port,
         database: dbConfig.database,
         user: dbConfig.user,
         mode: 'FALLBACK_PERSISTENT_JSON',
-        error: 'MySQL pool could not be initialized'
+        error: 'Database pool could not be initialized.'
       };
       return lastKnownStatus;
     }
 
     const connection = await Promise.race([
       currentPool.getConnection(),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('MySQL connection timed out')), 3000))
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('Database connection timed out')),
+          DB_CONNECT_TIMEOUT_MS + 1000
+        )
+      )
     ]);
     try {
       const [rows] = await connection.query('SHOW TABLES');
       const tableCount = Array.isArray(rows) ? rows.length : 0;
       lastKnownStatus = {
         connected: true,
-        engine: 'MySQL / XAMPP (MariaDB/InnoDB)',
+        engine: 'MariaDB / MySQL (InnoDB)',
         host: dbConfig.host,
         port: dbConfig.port,
         database: dbConfig.database,
@@ -93,14 +140,12 @@ export async function checkMysqlHealth(): Promise<MysqlStatus> {
   } catch (err: any) {
     lastKnownStatus = {
       connected: false,
-      engine: 'MySQL / XAMPP (Local Daemon Offline)',
+      engine: 'MariaDB / MySQL (unavailable)',
       host: dbConfig.host,
       port: dbConfig.port,
       database: dbConfig.database,
       user: dbConfig.user,
-      error: err.code === 'ECONNREFUSED'
-        ? 'XAMPP MySQL is not running on localhost:3306 (Fallback storage active)'
-        : err.message,
+      error: friendlyError(err),
       mode: 'FALLBACK_PERSISTENT_JSON'
     };
     return lastKnownStatus;

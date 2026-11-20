@@ -11,11 +11,14 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate, urgentIncidentCount }) => {
-  const { role } = useAuth();
+  const { role, effectivePermissions } = useAuth();
   const { t } = useLanguage();
   const [query, setQuery] = useState('');
 
-  const sections = useMemo(() => getVisibleNavSections(role), [role]);
+  const sections = useMemo(
+    () => getVisibleNavSections(role, effectivePermissions),
+    [role, effectivePermissions]
+  );
 
   const getLabel = (item: NavItem): string => (item.labelKey ? t(item.labelKey) : item.label);
 
