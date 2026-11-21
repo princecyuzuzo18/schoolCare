@@ -47,19 +47,20 @@ const SCHOOL = {
   mapsUrl: 'https://www.google.com/maps/search/?api=1&query=ES+Rubengera+RTB+Karongi+Rwanda'
 };
 
+const LOGIN_URL = '/portal#/login';
+const APPLY_URL = '/portal#/apply';
+const TRACK_URL = '/portal#/track';
+
 const NAV = [
   { href: '/', label: 'Home' },
   { href: '/about', label: 'About Us' },
   { href: '/academics', label: 'Academics' },
   { href: '/news', label: 'News & Events' },
   { href: '/admissions', label: 'Admissions' },
+  { href: APPLY_URL, label: 'Apply' },
   { href: '/gallery', label: 'Gallery' },
   { href: '/contact', label: 'Contact Us' }
 ];
-
-const LOGIN_URL = '/portal#/login';
-const APPLY_URL = '/portal#/apply';
-const TRACK_URL = '/portal#/track';
 
 function siteUrl(): string {
   const configured = (process.env.PUBLIC_SITE_URL || process.env.APP_URL || '').trim();
@@ -117,7 +118,8 @@ function layout(meta: PageMeta, content: string): string {
   const canonical = `${siteUrl()}${meta.path}`;
   const navLinks = NAV.map(item => {
     const active = item.href === meta.path ? ' aria-current="page"' : '';
-    return `<a href="${item.href}"${active}>${escapeHtml(item.label)}</a>`;
+    const className = item.href === APPLY_URL ? ' class="apply-link"' : '';
+    return `<a href="${item.href}"${className}${active}>${escapeHtml(item.label)}</a>`;
   }).join('');
 
   return `<!doctype html>
@@ -169,6 +171,8 @@ function layout(meta: PageMeta, content: string): string {
     .nav{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
     .nav a{font-size:.9rem;font-weight:600;color:var(--navy2);padding:6px 0;border-bottom:2px solid transparent}
     .nav a:hover,.nav a[aria-current="page"]{border-color:var(--blue);color:var(--blue)}
+    .nav a.apply-link{background:var(--blue);color:#fff;border-radius:8px;padding:7px 14px;border-bottom-color:transparent}
+    .nav a.apply-link:hover{background:var(--navy2);color:#fff;border-color:transparent}
     .login-btn{background:var(--blue);color:#fff!important;padding:10px 18px;border-radius:10px;border:0!important;font-weight:700}
     .login-btn:hover{background:var(--navy2)}
     .menu-toggle{display:none;background:none;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:1.2rem;color:var(--navy)}
@@ -181,7 +185,7 @@ function layout(meta: PageMeta, content: string): string {
     .btn-primary{background:#fff;color:var(--navy)}
     .btn-secondary{background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.7)}
     .hero-card{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);border-radius:20px;padding:24px;backdrop-filter:blur(4px)}
-    .hero-card img{border-radius:14px;background:#fff}
+    .hero-card img{width:100%;height:260px;object-fit:cover;border-radius:14px;background:#fff}
     .motto{margin-top:16px;font-style:italic;color:#e0e7ff;font-size:.95rem;text-align:center}
     section{padding:66px 0}
     .section-alt{background:var(--sky)}
@@ -303,7 +307,7 @@ function homePage(res: Response): void {
           </div>
         </div>
         <div class="hero-card">
-          <img src="/school-campus.svg" alt="Illustration of the ES Rubengera RTB school campus" />
+          <img src="/public-assets/es1.webp" alt="ES Rubengera RTB school campus" />
           <p class="motto">“${escapeHtml(SCHOOL.motto)}”</p>
         </div>
       </div>

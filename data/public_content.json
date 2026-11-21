@@ -1,0 +1,181 @@
+{
+  "articles": [
+    {
+      "id": "public-news-welcome",
+      "slug": "welcome-to-es-rubengera-rtb",
+      "title": "Welcome to ES Rubengera RTB",
+      "summary": "Our school community welcomes learners and families to a new term of learning, skills and integrity.",
+      "body": "ES Rubengera RTB is a secondary and technical TVET school serving the Rubengera community in Karongi District, Western Province, Rwanda. Our motto — Ubumenyi, Umurimo, Ubupfura (Knowledge, Skill, Integrity) — guides everything we do.\n\nThis website shares approved school information with families and the wider community. For admissions enquiries, please use the Apply section or contact the school office.",
+      "category": "NEWS",
+      "status": "PUBLISHED",
+      "approved": true,
+      "publishAt": "2026-01-10T08:00:00.000Z",
+      "imageUrl": "/public-assets/es2.webp",
+      "imageAlt": "Students and staff at ES Rubengera RTB",
+      "createdAt": "2026-11-20T08:28:54.538Z",
+      "updatedAt": "2026-11-21T14:05:00.000Z",
+      "publishedAt": "2026-01-10T08:00:00.000Z",
+      "createdBy": "system-public-site"
+    },
+    {
+      "id": "public-news-admissions",
+      "slug": "admissions-applications-are-open",
+      "title": "Admissions applications are open",
+      "summary": "Families can submit an application online and track its progress through the SchoolCare admissions portal.",
+      "body": "Applications for admission to ES Rubengera RTB are handled through our online admissions portal. The portal lets applicants submit details and track the status of their application.\n\nPlease prepare the required documents before starting an application. Contact the school office if you need assistance.",
+      "category": "ANNOUNCEMENT",
+      "status": "PUBLISHED",
+      "approved": true,
+      "publishAt": "2026-02-01T08:00:00.000Z",
+      "imageUrl": "/public-assets/es3.webp",
+      "imageAlt": "ES Rubengera RTB school community",
+      "createdAt": "2026-11-20T08:28:54.538Z",
+      "updatedAt": "2026-11-21T14:05:00.000Z",
+      "publishedAt": "2026-02-01T08:00:00.000Z",
+      "createdBy": "system-public-site"
+    }
+  ],
+  "gallery": [
+    {
+      "id": "public-gallery-es0",
+      "src": "/public-assets/es0.webp",
+      "alt": "Students at ES Rubengera RTB",
+      "caption": "Students at ES Rubengera RTB",
+      "category": "Students",
+      "approved": true,
+      "createdAt": "2026-11-21T14:14:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-es7",
+      "src": "/public-assets/es7.webp",
+      "alt": "Learning at ES Rubengera RTB",
+      "caption": "Learning at ES Rubengera RTB",
+      "category": "School life",
+      "approved": true,
+      "createdAt": "2026-11-21T14:14:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-es8",
+      "src": "/public-assets/es8.webp",
+      "alt": "ES Rubengera RTB school community",
+      "caption": "Our school community",
+      "category": "Community",
+      "approved": true,
+      "createdAt": "2026-11-21T14:14:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-es9",
+      "src": "/public-assets/es9.webp",
+      "alt": "School activities at ES Rubengera RTB",
+      "caption": "Activities at ES Rubengera RTB",
+      "category": "Activities",
+      "approved": true,
+      "createdAt": "2026-11-21T14:14:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-ees",
+      "src": "/public-assets/ees.webp",
+      "alt": "School life at ES Rubengera RTB",
+      "caption": "School life at ES Rubengera RTB",
+      "category": "School life",
+      "approved": true,
+      "createdAt": "2026-11-21T14:14:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-es1",
+      "src": "/public-assets/es1.webp",
+      "alt": "ES Rubengera RTB school campus",
+      "caption": "Our campus in Rubengera, Karongi District",
+      "category": "Campus",
+      "approved": true,
+      "createdAt": "2026-11-21T14:05:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-es2",
+      "src": "/public-assets/es2.webp",
+      "alt": "Students and staff at ES Rubengera RTB",
+      "caption": "Learning together at ES Rubengera RTB",
+      "category": "School life",
+      "approved": true,
+      "createdAt": "2026-11-21T14:05:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-es3",
+      "src": "/public-assets/es3.webp",
+      "alt": "ES Rubengera RTB school community",
+      "caption": "Our school community",
+      "category": "Community",
+      "approved": true,
+      "createdAt": "2026-11-21T14:05:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-es4",
+      "src": "/public-assets/es4.webp",
+      "alt": "Student activities at ES Rubengera RTB",
+      "caption": "Student life at ES Rubengera RTB",
+      "category": "School life",
+      "approved": true,
+      "createdAt": "2026-11-21T14:05:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-es5",
+      "src": "/public-assets/es5.webp",
+      "alt": "School activities at ES Rubengera RTB",
+      "caption": "Activities at our school",
+      "category": "Activities",
+      "approved": true,
+      "createdAt": "2026-11-21T14:05:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-es6",
+      "src": "/public-assets/es6.webp",
+      "alt": "ES Rubengera RTB students",
+      "caption": "Learners at ES Rubengera RTB",
+      "category": "Students",
+      "approved": true,
+      "createdAt": "2026-11-21T14:05:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-ess",
+      "src": "/public-assets/ess.webp",
+      "alt": "ES Rubengera RTB school",
+      "caption": "ES Rubengera RTB",
+      "category": "Campus",
+      "approved": true,
+      "createdAt": "2026-11-21T14:05:00.000Z",
+      "createdBy": "admin"
+    },
+    {
+      "id": "public-gallery-campus",
+      "src": "/school-campus.svg",
+      "alt": "Illustration of the ES Rubengera RTB school campus buildings",
+      "caption": "Our campus in Rubengera, Karongi District",
+      "category": "Campus",
+      "approved": true,
+      "createdAt": "2026-11-20T08:28:54.538Z",
+      "createdBy": "system-public-site"
+    },
+    {
+      "id": "public-gallery-library",
+      "src": "/school-library.svg",
+      "alt": "Illustration of the school library with bookshelves and reading tables",
+      "caption": "The school library and reading space",
+      "category": "Facilities",
+      "approved": true,
+      "createdAt": "2026-11-20T08:28:54.538Z",
+      "createdBy": "system-public-site"
+    }
+  ],
+  "updatedAt": "2026-11-21T14:14:00.000Z"
+}
