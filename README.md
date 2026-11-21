@@ -28,7 +28,9 @@ A comprehensive Secondary School Management & Parent Communication Platform buil
 
 4. **REB & RTB-Standard Academic Management**
    - Class and TVET combinations (Level 4 & 5 Software Development SOD, Building Construction CST, O-Level S3).
-   - CAT continuous assessments (30%) and Terminal Examinations (70%).
+   - Configurable assessment categories and weightings (default: Coursework 30%, Test 20%, Exam 50%), grade boundaries, pass marks and promotion settings.
+   - Teacher draft → submit → authorized review → approval/return workflow with reasons and a full audit trail.
+   - Backend-authoritative totals, percentages, grades, class ranks and term summaries.
    - Conduct and discipline scores (/40 - *Imyitwarire Myiza*).
    - Official printable report cards (*Indangamanota*) with class ranks and head teacher decisions.
 
@@ -47,6 +49,30 @@ A comprehensive Secondary School Management & Parent Communication Platform buil
 8. **Authenticated Role-Based Access**
    - School accounts use their assigned role: Super Admin, School Admin, Head Teacher, Deputy Head, Teacher, Nurse, Accountant, Parent, or Student.
    - API requests use server-managed sessions and enforce role permissions.
+
+---
+
+## 🎓 Academic results and report cards
+
+- **Academic Management** (`/portal#/academic-admin`): headteacher/deputy setup of academic years, terms, classes, subjects, teacher and class-teacher assignments, assessment categories, grading scales and policy settings; review queue with return/approve/reopen, non-submitters and class performance.
+- **Teacher marks entry** (`/portal#/teacher-academics`): only assigned class/subject pairs; dynamic marks table with admission numbers, full names, configurable assessment columns, totals, grades and remarks, plus absences, draft saving, submission and history.
+- **Report Cards & Printing** (`/portal#/report-printing`): year/term/class/student/status filters, search, preview, individual/class/multiple/whole-school PDF generation, browser print/print all, publish/unpublish and distribution tracking. PDFs are landscape A4, one student per page, and are rendered only from approved server-side data.
+- **Portals**: students and verified parents see only published report cards for their own or linked children, with view, download and print actions; portal users cannot edit marks or reports.
+- **Permissions**: `marks.write`, `marks.review`, `reports.generate`, `reports.publish` and `reports.distribute` are enforced on the server. Teachers cannot approve their own submissions and cannot generate school-wide official reports. Every mark, approval, correction, generation, publication and distribution change is audited.
+- **Notifications**: assignment, deadline, returned, approved and published events are queued in-app; external SMS/WhatsApp/email channels are used only when explicitly configured.
+- **Data safety**: the JSON runtime store is mirrored by additive MariaDB tables in `mysql/migrations/005_academic_marks_report_cards.sql`. Existing records are never dropped or reset.
+
+---
+
+## ✅ Verification
+
+```bash
+npm run lint            # TypeScript check
+npm test                # includes 57 academic workflow/security checks
+npm run test:academics  # academic workflow only
+npm run test:db         # database schema and migration history
+npm run build           # production client bundle
+```
 
 ---
 

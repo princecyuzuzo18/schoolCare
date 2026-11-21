@@ -16,12 +16,14 @@ import {
   Eye,
   CheckCircle2,
   X,
-  Sparkles
+  Sparkles,
+  Archive,
+  RotateCcw
 } from 'lucide-react';
 
 export const StudentsPage: React.FC = () => {
   const { t } = useLanguage();
-  const { school } = useAuth();
+  const { school, hasPermission } = useAuth();
 
   const [students, setStudents] = useState<Student[]>([]);
   const [classes, setClasses] = useState<AcademicClass[]>([]);
@@ -30,6 +32,7 @@ export const StudentsPage: React.FC = () => {
   const [selectedLevel, setSelectedLevel] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState('');
 
   // Student ID card modal
   const [activeCardStudent, setActiveCardStudent] = useState<Student | null>(null);
@@ -66,6 +69,32 @@ export const StudentsPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [selectedClassId, search]);
+
+  const handleArchive = async (student: Student) => {
+    const reason = window.prompt(t('archiveReasonPrompt'));
+    if (!reason || !reason.trim()) return;
+    if (!window.confirm(t('confirmArchiveStudent'))) return;
+    try {
+      setNotice('');
+      await api.archiveStudent(student.id, reason.trim());
+      setNotice(t('studentArchivedNotice'));
+      await loadData();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : t('actionFailed'));
+    }
+  };
+
+  const handleRestore = async (student: Student) => {
+    if (!window.confirm(t('confirmRestoreStudent'))) return;
+    try {
+      setNotice('');
+      await api.restoreStudent(student.id);
+      setNotice(t('studentRestoredNotice'));
+      await loadData();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : t('actionFailed'));
+    }
+  };
 
   const getClassLevel = (classItem: AcademicClass | undefined) => classItem?.grade || '';
   const visibleStudents = students.filter(student => {
@@ -183,6 +212,12 @@ export const StudentsPage: React.FC = () => {
         </div>
       </div>
 
+      {notice && (
+        <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-semibold text-blue-800">
+          {notice}
+        </div>
+      )}
+
       {/* Filter and Search Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="relative w-full sm:w-80">
@@ -292,9 +327,36 @@ export const StudentsPage: React.FC = () => {
                     <p className="text-[10px] text-slate-500 mt-0.5 truncate max-w-xs">{s.allergies}</p>
                   </td>
                   <td className="py-3 px-4">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                      {s.enrollmentStatus}
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      s.archivedAt
+                        ? 'bg-slate-200 text-slate-700'
+                        : 'bg-emerald-100 text-emerald-800'
+                    }`}>
+                      {s.archivedAt ? t('archivedStatus') : s.enrollmentStatus}
                     </span>
+                    {hasPermission('students.write') && (
+                      <div className="mt-1.5">
+                        {s.archivedAt ? (
+                          <button
+                            onClick={() => handleRestore(s)}
+                            title={t('restore')}
+                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            {t('restore')}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleArchive(s)}
+                            title={t('archiveAccount')}
+                            className="inline-flex items-center gap-1 rounded-lg bg-red-50 px-2 py-1 text-[10px] font-bold text-red-700 hover:bg-red-100"
+                          >
+                            <Archive className="w-3 h-3" />
+                            {t('archivedStatus')}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td className="py-3 px-4 text-right">
                     <button

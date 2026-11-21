@@ -151,6 +151,21 @@ export async function provisionInitialPassword(userId: string, password: string)
   );
 }
 
+/**
+ * Replace an account's password hash in place. Used by the Headteacher's
+ * secure access reset so the previous credential stops working immediately.
+ * An upsert keeps this safe for accounts whose credential row is missing.
+ */
+export async function replacePassword(userId: string, password: string): Promise<void> {
+  const pool = requireMysqlPool();
+  const passwordHash = await hashPassword(password);
+  await pool.execute(
+    `INSERT INTO user_auth_credentials (user_id, password_hash) VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)`,
+    [userId, passwordHash]
+  );
+}
+
 export interface InvitedAccountProfile {
   id: string;
   schoolId: string;

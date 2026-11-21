@@ -19,6 +19,7 @@ import {
   StaffAccount,
   StaffInvitation,
   PermissionGrantRecord,
+  PermissionGroup,
   TimetableEntry,
   HomeworkAssignment,
   SchoolEvent,
@@ -32,7 +33,19 @@ import {
   AdmissionStatusHistory,
   AdmissionVerification,
   ApplicationStatus,
-  ApplicationType
+  ApplicationType,
+  AcademicYear,
+  AcademicTerm,
+  ClassSubjectAssignment,
+  ClassTeacherAssignment,
+  AssessmentCategory,
+  GradingScale,
+  MarkEntry,
+  MarkSubmission,
+  ReportCardSubjectRow,
+  ReportDistribution,
+  AcademicSettings,
+  AcademicCollectionKey
 } from '../src/types';
 import {
   initialSchool,
@@ -53,7 +66,14 @@ import {
   initialHomework,
   initialEvents,
   initialReportCards,
-  initialAuditLogs
+  initialAuditLogs,
+  initialAcademicYears,
+  initialTerms,
+  initialAssessmentCategories,
+  initialGradingScales,
+  initialAcademicSettings,
+  initialClassSubjectAssignments,
+  initialClassTeacherAssignments
 } from './seedData';
 import { getProfessionalTitle, isStaffRole } from '../src/roleCatalog';
 
@@ -75,6 +95,7 @@ interface DatabaseSchema {
   staffAccounts: StaffAccount[];
   staffInvitations: StaffInvitation[];
   permissionGrants: PermissionGrantRecord[];
+  permissionGroups: PermissionGroup[];
   timetable: TimetableEntry[];
   homework: HomeworkAssignment[];
   events: SchoolEvent[];
@@ -85,6 +106,16 @@ interface DatabaseSchema {
   admissionSlipUploads: AdmissionSlipUpload[];
   admissionSettings: AdmissionSettings;
   modules: Record<string, Array<Record<string, unknown>>>;
+  academicYears: AcademicYear[];
+  terms: AcademicTerm[];
+  classSubjectAssignments: ClassSubjectAssignment[];
+  classTeacherAssignments: ClassTeacherAssignment[];
+  assessmentCategories: AssessmentCategory[];
+  gradingScales: GradingScale[];
+  marks: MarkEntry[];
+  markSubmissions: MarkSubmission[];
+  reportDistributions: ReportDistribution[];
+  academicSettings: AcademicSettings[];
 }
 
 const ADMISSION_STATUS_ORDER: ApplicationStatus[] = [
@@ -138,6 +169,7 @@ class DatabaseStore {
       staffAccounts: [],
       staffInvitations: [],
       permissionGrants: [],
+      permissionGroups: [],
       timetable: [...initialTimetable],
       homework: [...initialHomework],
       events: [...initialEvents],
@@ -147,7 +179,17 @@ class DatabaseStore {
       admissionVerifications: [],
       admissionSlipUploads: [],
       admissionSettings: { resultSlipRequired: true },
-      modules: {}
+      modules: {},
+      academicYears: initialAcademicYears.map(item => ({ ...item })),
+      terms: initialTerms.map(item => ({ ...item })),
+      classSubjectAssignments: initialClassSubjectAssignments.map(item => ({ ...item })),
+      classTeacherAssignments: initialClassTeacherAssignments.map(item => ({ ...item })),
+      assessmentCategories: initialAssessmentCategories.map(item => ({ ...item })),
+      gradingScales: initialGradingScales.map(item => ({ ...item })),
+      marks: [],
+      markSubmissions: [],
+      reportDistributions: [],
+      academicSettings: initialAcademicSettings.map(item => ({ ...item }))
     };
   }
 
@@ -177,6 +219,10 @@ class DatabaseStore {
     }
     if (!Array.isArray(data.permissionGrants)) {
       data.permissionGrants = [];
+      changed = true;
+    }
+    if (!Array.isArray(data.permissionGroups)) {
+      data.permissionGroups = [];
       changed = true;
     }
 
@@ -262,6 +308,45 @@ class DatabaseStore {
     return changed;
   }
 
+  /**
+   * Additive normalization for the academic management module. Missing
+   * collections are created; seed configuration is only inserted when the
+   * school has no academic settings yet. Existing records are never changed.
+   */
+  private normalizeAcademicData(data: DatabaseSchema): boolean {
+    let changed = false;
+    const collectionKeys: AcademicCollectionKey[] = [
+      'academicYears',
+      'terms',
+      'classSubjectAssignments',
+      'classTeacherAssignments',
+      'assessmentCategories',
+      'gradingScales',
+      'marks',
+      'markSubmissions',
+      'reportDistributions',
+      'academicSettings'
+    ];
+    for (const key of collectionKeys) {
+      if (!Array.isArray((data as unknown as Record<string, unknown>)[key])) {
+        (data as unknown as Record<string, unknown>)[key] = [];
+        changed = true;
+      }
+    }
+
+    if (data.academicSettings.length === 0) {
+      data.academicYears.push(...initialAcademicYears.map(item => ({ ...item })));
+      data.terms.push(...initialTerms.map(item => ({ ...item })));
+      data.classSubjectAssignments.push(...initialClassSubjectAssignments.map(item => ({ ...item, teacherIds: [...item.teacherIds] })));
+      data.classTeacherAssignments.push(...initialClassTeacherAssignments.map(item => ({ ...item })));
+      data.assessmentCategories.push(...initialAssessmentCategories.map(item => ({ ...item })));
+      data.gradingScales.push(...initialGradingScales.map(item => ({ ...item, gradeBoundaries: item.gradeBoundaries.map(b => ({ ...b })) })));
+      data.academicSettings.push(...initialAcademicSettings.map(item => ({ ...item })));
+      changed = true;
+    }
+    return changed;
+  }
+
   private loadOrSeed(): DatabaseSchema {
     try {
       if (!fs.existsSync(DATA_DIR)) {
@@ -310,6 +395,7 @@ class DatabaseStore {
             needsSave = true;
           }
           needsSave = this.normalizeStaffData(parsed) || needsSave;
+          needsSave = this.normalizeAcademicData(parsed) || needsSave;
           if (needsSave) {
             this.saveData(parsed);
           }
@@ -322,6 +408,7 @@ class DatabaseStore {
 
     const defaultData = this.getDefaultData();
     this.normalizeStaffData(defaultData);
+    this.normalizeAcademicData(defaultData);
     this.saveData(defaultData);
     return defaultData;
   }
@@ -452,6 +539,15 @@ class DatabaseStore {
     return user;
   }
 
+  /** Advance the credential epoch so sessions issued before this time are invalid. */
+  public setCredentialsResetAt(userId: string, epoch: string): UserProfile | undefined {
+    const user = this.data.users.find(item => item.id === userId);
+    if (!user) return undefined;
+    user.credentialsResetAt = epoch;
+    this.saveData();
+    return user;
+  }
+
   public setDelegatedPermissions(userId: string, permissions: string[]): UserProfile | undefined {
     const user = this.data.users.find(item => item.id === userId);
     if (!user) return undefined;
@@ -459,6 +555,19 @@ class DatabaseStore {
     const staffAccount = this.data.staffAccounts.find(account => account.userId === userId);
     if (staffAccount) {
       staffAccount.delegatedPermissions = [...permissions];
+      staffAccount.lastModifiedAt = new Date().toISOString();
+    }
+    this.saveData();
+    return user;
+  }
+
+  public setDelegatedRoleScope(userId: string, roles: UserRole[]): UserProfile | undefined {
+    const user = this.data.users.find(item => item.id === userId);
+    if (!user) return undefined;
+    user.delegatedRoleScope = [...roles];
+    const staffAccount = this.data.staffAccounts.find(account => account.userId === userId);
+    if (staffAccount) {
+      staffAccount.delegatedRoleScope = [...roles];
       staffAccount.lastModifiedAt = new Date().toISOString();
     }
     this.saveData();
@@ -535,6 +644,32 @@ class DatabaseStore {
     return record;
   }
 
+  public getPermissionGroups(schoolId?: string, includeArchived = false): PermissionGroup[] {
+    return this.data.permissionGroups.filter(
+      group =>
+        (!schoolId || group.schoolId === schoolId) &&
+        (includeArchived || !group.archivedAt)
+    );
+  }
+
+  public getPermissionGroupById(id: string): PermissionGroup | undefined {
+    return this.data.permissionGroups.find(group => group.id === id);
+  }
+
+  public createPermissionGroup(group: PermissionGroup): PermissionGroup {
+    this.data.permissionGroups.push(group);
+    this.saveData();
+    return group;
+  }
+
+  public updatePermissionGroup(id: string, updates: Partial<PermissionGroup>): PermissionGroup | undefined {
+    const group = this.data.permissionGroups.find(item => item.id === id);
+    if (!group) return undefined;
+    Object.assign(group, updates);
+    this.saveData();
+    return group;
+  }
+
   public updatePermissionGrant(id: string, updates: Partial<PermissionGrantRecord>): PermissionGrantRecord | undefined {
     const record = this.data.permissionGrants.find(item => item.id === id);
     if (!record) return undefined;
@@ -544,8 +679,10 @@ class DatabaseStore {
   }
 
   // --- Students ---
-  public getStudents(schoolId: string, classId?: string, search?: string): Student[] {
-    let list = this.data.students.filter(s => s.schoolId === schoolId);
+  public getStudents(schoolId: string, classId?: string, search?: string, includeArchived = false): Student[] {
+    let list = this.data.students.filter(
+      s => s.schoolId === schoolId && (includeArchived || !s.archivedAt)
+    );
     if (classId && classId !== 'all') {
       list = list.filter(s => s.classId === classId);
     }
@@ -580,8 +717,22 @@ class DatabaseStore {
   }
 
   // --- Guardians & Links ---
-  public getGuardians(schoolId: string): Guardian[] {
-    return this.data.guardians.filter(g => g.schoolId === schoolId);
+  public getGuardians(schoolId: string, includeArchived = false): Guardian[] {
+    return this.data.guardians.filter(
+      g => g.schoolId === schoolId && (includeArchived || !g.archivedAt)
+    );
+  }
+
+  public getGuardianById(id: string): Guardian | undefined {
+    return this.data.guardians.find(g => g.id === id);
+  }
+
+  public updateGuardian(id: string, updates: Partial<Guardian>): Guardian | undefined {
+    const idx = this.data.guardians.findIndex(g => g.id === id);
+    if (idx === -1) return undefined;
+    this.data.guardians[idx] = { ...this.data.guardians[idx], ...updates };
+    this.saveData();
+    return this.data.guardians[idx];
   }
 
   public getGuardiansForStudent(studentId: string): { guardian: Guardian; link: StudentGuardianLink }[] {
@@ -656,6 +807,18 @@ class DatabaseStore {
 
   public getSubjects(schoolId: string): Subject[] {
     return this.data.subjects.filter(s => s.schoolId === schoolId);
+  }
+
+  public addClass(record: AcademicClass): AcademicClass {
+    this.data.classes.push(record);
+    this.saveData();
+    return record;
+  }
+
+  public addSubject(record: Subject): Subject {
+    this.data.subjects.push(record);
+    this.saveData();
+    return record;
   }
 
   // --- Attendance ---
@@ -828,11 +991,82 @@ class DatabaseStore {
     return list;
   }
 
+  // --- Academic management storage (additive, school-isolated) ---
+  /** Returns a defensive shallow copy so callers cannot mutate the store by accident. */
+  public getAcademicCollection<T>(key: AcademicCollectionKey, schoolId?: string): T[] {
+    const list = (this.data as unknown as Record<string, unknown>)[key];
+    if (!Array.isArray(list)) return [];
+    const records = list as T[];
+    if (!schoolId) return records.slice();
+    return records.filter(record => (record as { schoolId?: string }).schoolId === schoolId).slice();
+  }
+
+  public saveAcademicCollection<T>(key: AcademicCollectionKey, records: T[]): T[] {
+    (this.data as unknown as Record<string, unknown>)[key] = records;
+    this.saveData();
+    return records;
+  }
+
+  public addAcademicRecord<T extends { id: string; schoolId: string }>(key: AcademicCollectionKey, record: T): T {
+    const records = this.getAcademicCollection<T>(key);
+    records.unshift(record);
+    this.saveAcademicCollection(key, records);
+    return record;
+  }
+
+  public updateAcademicRecord<T extends { id: string; schoolId: string }>(
+    key: AcademicCollectionKey,
+    id: string,
+    schoolId: string,
+    updates: Partial<T>
+  ): T | null {
+    const records = this.getAcademicCollection<T>(key);
+    const index = records.findIndex(item => item.id === id && item.schoolId === schoolId);
+    if (index === -1) return null;
+    records[index] = { ...records[index], ...updates, id, schoolId };
+    this.saveAcademicCollection(key, records);
+    return records[index];
+  }
+
   // --- Report Cards ---
-  public getReportCards(schoolId: string, studentId?: string): ReportCard[] {
+  public getReportCards(
+    schoolId: string,
+    studentId?: string,
+    filters?: { academicYear?: string; term?: string; publishedOnly?: boolean; approvedOnly?: boolean }
+  ): ReportCard[] {
     let list = this.data.reportCards.filter(r => r.schoolId === schoolId);
     if (studentId) list = list.filter(r => r.studentId === studentId);
+    if (filters?.academicYear) list = list.filter(r => r.academicYear === filters.academicYear);
+    if (filters?.term) list = list.filter(r => r.term === filters.term);
+    if (filters?.approvedOnly) list = list.filter(r => r.isApproved);
+    if (filters?.publishedOnly) list = list.filter(r => Boolean(r.publishedAt));
     return list;
+  }
+
+  public upsertReportCard(card: ReportCard): ReportCard {
+    const index = this.data.reportCards.findIndex(
+      item => item.schoolId === card.schoolId && item.studentId === card.studentId &&
+        item.academicYear === card.academicYear && item.term === card.term
+    );
+    if (index === -1) {
+      this.data.reportCards.unshift(card);
+    } else {
+      this.data.reportCards[index] = { ...this.data.reportCards[index], ...card, id: this.data.reportCards[index].id };
+    }
+    this.saveData();
+    return index === -1 ? card : this.data.reportCards[index];
+  }
+
+  public getReportCardById(schoolId: string, id: string): ReportCard | undefined {
+    return this.data.reportCards.find(card => card.schoolId === schoolId && card.id === id);
+  }
+
+  public updateReportCard(schoolId: string, id: string, updates: Partial<ReportCard>): ReportCard | null {
+    const index = this.data.reportCards.findIndex(card => card.schoolId === schoolId && card.id === id);
+    if (index === -1) return null;
+    this.data.reportCards[index] = { ...this.data.reportCards[index], ...updates, id, schoolId };
+    this.saveData();
+    return this.data.reportCards[index];
   }
 
   // --- Events ---

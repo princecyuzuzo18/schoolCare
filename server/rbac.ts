@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { db } from './database';
 import type { UserProfile, UserRole } from '../src/types';
 import { hasPermission, ROLE_PERMISSIONS } from './permissions';
-import { getSessionUserId } from './sessions';
+import { getSessionCredentialEpoch, getSessionUserId } from './sessions';
 
 export { ROLE_PERMISSIONS };
 
@@ -17,6 +17,13 @@ export function authenticateUser(req: Request, res: Response, next: NextFunction
 
   if (user.isActive === false) {
     res.status(403).json({ error: 'This account is inactive. Contact the Headteacher.' });
+    return;
+  }
+
+  // A secure access reset changes the account's credential epoch. Any session
+  // issued before that reset must re-authenticate, even if its cookie is valid.
+  if (getSessionCredentialEpoch(req) !== user.credentialsResetAt) {
+    res.status(401).json({ error: 'Access was reset. Please sign in again.' });
     return;
   }
 

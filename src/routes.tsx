@@ -10,7 +10,9 @@ import { AttendancePage } from './pages/AttendancePage';
 import { CommunicationPage } from './pages/CommunicationPage';
 import { StudentsPage } from './pages/StudentsPage';
 import { GuardiansPage } from './pages/GuardiansPage';
-import { AcademicsPage } from './pages/AcademicsPage';
+import { TeacherAcademicsPage } from './pages/TeacherAcademicsPage';
+import { AcademicAdminPage } from './pages/AcademicAdminPage';
+import { ReportPrintingPage } from './pages/ReportPrintingPage';
 import { FinancePage } from './pages/FinancePage';
 import { StaffPage } from './pages/StaffPage';
 import { TimetablePage } from './pages/TimetablePage';
@@ -87,8 +89,18 @@ export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
   },
   academics: {
     id: 'academics',
-    title: 'Academics & Marks',
-    render: () => <AcademicsPage />
+    title: 'My Academic Work',
+    render: () => <TeacherAcademicsPage />
+  },
+  'academic-admin': {
+    id: 'academic-admin',
+    title: 'Academic Administration',
+    render: () => <AcademicAdminPage />
+  },
+  'report-printing': {
+    id: 'report-printing',
+    title: 'Report Cards & Printing',
+    render: () => <ReportPrintingPage />
   },
   finance: {
     id: 'finance',
@@ -209,23 +221,6 @@ export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
           { key: 'notes', label: 'Notes', type: 'textarea' }
         ]}
         moduleKey="teaching"
-      />
-    )
-  },
-  'report-cards': {
-    id: 'report-cards',
-    title: 'Report Cards',
-    render: () => (
-      <ModuleCrud
-        title="Report Cards and Analytics"
-        description="Report card records"
-        fields={[
-          { key: 'student', label: 'Student' },
-          { key: 'term', label: 'Term' },
-          { key: 'average', label: 'Average', type: 'number' },
-          { key: 'remarks', label: 'Remarks' }
-        ]}
-        moduleKey="report-cards"
       />
     )
   },

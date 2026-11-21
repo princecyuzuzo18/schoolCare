@@ -31,6 +31,9 @@ import {
   ResultSlipVerificationEvent,
   ResultSlipVerificationStatus,
   PermissionsResponse,
+  PermissionGrantRecord,
+  PermissionGroup,
+  AuthSessionResponse,
   StaffAccountView,
   StaffInvitationResponse,
   StaffInvitation,
@@ -42,7 +45,20 @@ import {
   PublicContentArticle,
   PublicContentArticleInput,
   PublicContentGalleryImage,
-  LanguageCode
+  LanguageCode,
+  AcademicYear,
+  AcademicTerm,
+  ClassSubjectAssignment,
+  AssessmentCategory,
+  GradingScale,
+  MarkEntry,
+  MarkSubmission,
+  AcademicSettings,
+  ReportDistribution,
+  StudentResult,
+  CalculationResult,
+  AcademicSubjectResult,
+  MissingAcademicRequirement
 } from '../types';
 
 const API_BASE = '/api';
@@ -52,6 +68,47 @@ export class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+export interface MarksEntryView {
+  year: AcademicYear;
+  term: AcademicTerm;
+  classInfo?: AcademicClass;
+  subject?: Subject;
+  categories: AssessmentCategory[];
+  students: Array<Student & { result?: StudentResult }>;
+  marks: MarkEntry[];
+  submission: MarkSubmission | null;
+  missing: MissingAcademicRequirement[];
+  canEdit: boolean;
+  isComplete: boolean;
+}
+
+export interface AcademicDashboardView {
+  totals: {
+    assignments: number;
+    myAssignments: number;
+    draft: number;
+    submitted: number;
+    approved: number;
+    returned: number;
+    publishedReports: number;
+    incompleteReports: number;
+  };
+  submissions: Array<MarkSubmission & { subjectName?: string; className?: string; teacherName?: string }>;
+  notSubmitted: Array<MarkSubmission & { subjectName?: string; className?: string; teacherName?: string }>;
+  classAverages: Array<{ classId: string; className: string; average: number }>;
+  year?: AcademicYear;
+  term?: AcademicTerm;
+}
+
+export interface ReportPrintData {
+  school?: School;
+  academicYear?: AcademicYear;
+  term?: AcademicTerm;
+  settings: AcademicSettings;
+  cards: Array<ReportCard & { attendance?: { present: number; total: number }; distribution?: string }>;
+  total: number;
 }
 
 export interface ResultSlipExtraction {
@@ -83,7 +140,7 @@ class ApiService {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Network response was not ok' }));
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
       if (
         res.status === 401 &&
         !['/auth/login', '/auth/me', '/auth/password-reset/request', '/staff/invitations/activate'].includes(endpoint) &&
@@ -94,7 +151,19 @@ class ApiService {
       throw new ApiError(err.error || `HTTP ${res.status}`, res.status);
     }
 
-    return res.json();
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const preview = (await res.text()).slice(0, 120).replace(/\s+/g, ' ').trim();
+      throw new ApiError(
+        `Expected JSON from ${endpoint} but received ${contentType || 'an unknown content type'}${preview ? `: ${preview}` : ''}`,
+        res.status
+      );
+    }
+    try {
+      return await res.json() as T;
+    } catch {
+      throw new ApiError(`Invalid JSON response from ${endpoint}`, res.status);
+    }
   }
 
   private async requestForm<T>(endpoint: string, formData: FormData): Promise<T> {
@@ -104,8 +173,12 @@ class ApiService {
       credentials: 'same-origin'
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Network response was not ok' }));
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
       throw new ApiError(err.error || `HTTP ${res.status}`, res.status);
+    }
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new ApiError(`Expected JSON from the upload endpoint but received ${contentType || 'an unknown content type'}.`, res.status);
     }
     return res.json();
   }
@@ -125,15 +198,15 @@ class ApiService {
   }
 
   // --- Auth ---
-  public async login(email: string, password: string): Promise<{ user: UserProfile }> {
-    return this.request<{ user: UserProfile }>('/auth/login', {
+  public async login(email: string, password: string): Promise<AuthSessionResponse> {
+    return this.request<AuthSessionResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password })
     });
   }
 
-  public async getMe(): Promise<{ user: UserProfile | null }> {
-    return this.request<{ user: UserProfile | null }>('/auth/me');
+  public async getMe(): Promise<AuthSessionResponse> {
+    return this.request<AuthSessionResponse>('/auth/me');
   }
 
   public async logout(): Promise<void> {
@@ -361,8 +434,104 @@ class ApiService {
     });
   }
 
-  public async archiveStaffAccount(userId: string): Promise<{ user: UserProfile; item: StaffDirectoryItem }> {
-    return this.request(`/staff/accounts/${encodeURIComponent(userId)}/archive`, { method: 'POST' });
+  public async archiveStaffAccount(
+    userId: string,
+    reason?: string
+  ): Promise<{ user: UserProfile; item: StaffDirectoryItem }> {
+    return this.request(`/staff/accounts/${encodeURIComponent(userId)}/archive`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  public async restoreStaffAccount(
+    userId: string
+  ): Promise<{ user: UserProfile; item: StaffDirectoryItem }> {
+    return this.request(`/staff/accounts/${encodeURIComponent(userId)}/restore`, { method: 'POST' });
+  }
+
+  public async resetStaffAccess(userId: string): Promise<{
+    temporaryPassword: string;
+    credentialsResetAt: string;
+    user: UserProfile;
+  }> {
+    return this.request(`/staff/accounts/${encodeURIComponent(userId)}/reset-access`, { method: 'POST' });
+  }
+
+  public async getPermissionGrants(userId: string): Promise<PermissionGrantRecord[]> {
+    return this.request<PermissionGrantRecord[]>(`/staff/accounts/${encodeURIComponent(userId)}/permission-grants`);
+  }
+
+  public async getPermissionGroups(): Promise<PermissionGroup[]> {
+    return this.request<PermissionGroup[]>('/permission-groups');
+  }
+
+  public async createPermissionGroup(input: {
+    name: string;
+    description?: string;
+    permissions: string[];
+    roleScope?: UserRole[];
+  }): Promise<PermissionGroup> {
+    return this.request<PermissionGroup>('/permission-groups', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  public async updatePermissionGroup(
+    id: string,
+    input: { name: string; description?: string; permissions: string[]; roleScope?: UserRole[] }
+  ): Promise<PermissionGroup> {
+    return this.request<PermissionGroup>(`/permission-groups/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input)
+    });
+  }
+
+  public async assignPermissionGroup(id: string, userId: string): Promise<{
+    user: UserProfile;
+    account: StaffAccountView | null;
+  }> {
+    return this.request(`/permission-groups/${encodeURIComponent(id)}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ userId })
+    });
+  }
+
+  public async archivePermissionGroup(id: string): Promise<{ success: boolean }> {
+    return this.request(`/permission-groups/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  public async revokeStaffPermission(
+    userId: string,
+    permission: string
+  ): Promise<{ user: UserProfile; account: StaffAccountView | null }> {
+    return this.request(`/staff/accounts/${encodeURIComponent(userId)}/permissions/revoke-one`, {
+      method: 'POST',
+      body: JSON.stringify({ permission })
+    });
+  }
+
+  public async archiveStudent(id: string, reason: string): Promise<Student> {
+    return this.request<Student>(`/students/${encodeURIComponent(id)}/archive`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  public async restoreStudent(id: string): Promise<Student> {
+    return this.request<Student>(`/students/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+  }
+
+  public async archiveGuardian(id: string, reason: string): Promise<Guardian> {
+    return this.request<Guardian>(`/guardians/${encodeURIComponent(id)}/archive`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  public async restoreGuardian(id: string): Promise<Guardian> {
+    return this.request<Guardian>(`/guardians/${encodeURIComponent(id)}/restore`, { method: 'POST' });
   }
 
   public async getDelegatedAdministrators(): Promise<StaffAccountView[]> {
@@ -616,14 +785,177 @@ class ApiService {
     return this.request<AcademicClass[]>('/academics/classes');
   }
 
+  public createClass(payload: Partial<AcademicClass>): Promise<AcademicClass> {
+    return this.request<AcademicClass>('/academics/classes', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  public getAcademicTeachers(): Promise<UserProfile[]> {
+    return this.request<UserProfile[]>('/academics/teachers');
+  }
+
   public async getSubjects(): Promise<Subject[]> {
     return this.request<Subject[]>('/academics/subjects');
+  }
+
+  public createSubject(payload: Partial<Subject>): Promise<Subject> {
+    return this.request<Subject>('/academics/subjects', { method: 'POST', body: JSON.stringify(payload) });
   }
 
   public async getReportCards(studentId?: string): Promise<ReportCard[]> {
     const params = new URLSearchParams();
     if (studentId) params.append('studentId', studentId);
     return this.request<ReportCard[]>(`/academics/report-cards?${params.toString()}`);
+  }
+
+  // --- Academic structure & configuration ---
+  public getAcademicYears(): Promise<AcademicYear[]> {
+    return this.request<AcademicYear[]>('/academics/years');
+  }
+  public createAcademicYear(payload: Partial<AcademicYear>): Promise<AcademicYear> {
+    return this.request<AcademicYear>('/academics/years', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public updateAcademicYear(id: string, payload: Partial<AcademicYear>): Promise<AcademicYear> {
+    return this.request<AcademicYear>(`/academics/years/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+  public getTerms(yearId?: string): Promise<AcademicTerm[]> {
+    const params = new URLSearchParams();
+    if (yearId) params.append('yearId', yearId);
+    return this.request<AcademicTerm[]>(`/academics/terms?${params.toString()}`);
+  }
+  public createTerm(payload: Partial<AcademicTerm>): Promise<AcademicTerm> {
+    return this.request<AcademicTerm>('/academics/terms', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public updateTerm(id: string, payload: Partial<AcademicTerm>): Promise<AcademicTerm> {
+    return this.request<AcademicTerm>(`/academics/terms/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+  public getAssignments(filters: { yearId?: string; termId?: string; classId?: string; subjectId?: string } = {}): Promise<ClassSubjectAssignment[]> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.append(key, value); });
+    return this.request<ClassSubjectAssignment[]>(`/academics/assignments?${params.toString()}`);
+  }
+  public assignTeacher(payload: Partial<ClassSubjectAssignment>): Promise<ClassSubjectAssignment> {
+    return this.request<ClassSubjectAssignment>('/academics/assignments', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public getClassTeacherAssignments(yearId?: string): Promise<Array<{ id: string; schoolId: string; academicYearId: string; classId: string; teacherId: string }>> {
+    const params = new URLSearchParams();
+    if (yearId) params.append('yearId', yearId);
+    return this.request(`/academics/class-teachers?${params.toString()}`);
+  }
+  public assignClassTeacher(payload: { academicYearId: string; classId: string; teacherId: string }): Promise<unknown> {
+    return this.request('/academics/class-teachers', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public getAssessmentCategories(): Promise<AssessmentCategory[]> {
+    return this.request<AssessmentCategory[]>('/academics/assessment-categories');
+  }
+  public createAssessmentCategory(payload: Partial<AssessmentCategory>): Promise<AssessmentCategory> {
+    return this.request<AssessmentCategory>('/academics/assessment-categories', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public updateAssessmentCategory(id: string, payload: Partial<AssessmentCategory>): Promise<AssessmentCategory> {
+    return this.request<AssessmentCategory>(`/academics/assessment-categories/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+  public getGradingScales(): Promise<GradingScale[]> {
+    return this.request<GradingScale[]>('/academics/grading-scales');
+  }
+  public createGradingScale(payload: Partial<GradingScale>): Promise<GradingScale> {
+    return this.request<GradingScale>('/academics/grading-scales', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public updateGradingScale(id: string, payload: Partial<GradingScale>): Promise<GradingScale> {
+    return this.request<GradingScale>(`/academics/grading-scales/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+  public getAcademicSettings(): Promise<AcademicSettings & { activeScale?: GradingScale }> {
+    return this.request('/academics/settings');
+  }
+  public updateAcademicSettings(payload: Partial<AcademicSettings>): Promise<AcademicSettings> {
+    return this.request<AcademicSettings>('/academics/settings', { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+
+  // --- Teacher marks workflow ---
+  public getMyAssignments(filters: { yearId?: string; termId?: string } = {}): Promise<{
+    year?: AcademicYear;
+    term?: AcademicTerm;
+    assignments: Array<ClassSubjectAssignment & { subjectName: string; subjectCode: string; className: string; status: string }>;
+    classTeacherOf: string[];
+  }> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.append(key, value); });
+    return this.request(`/academics/my-assignments?${params.toString()}`);
+  }
+  public getMarksEntry(filters: { yearId: string; termId: string; classId: string; subjectId: string }): Promise<MarksEntryView> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.append(key, value); });
+    return this.request<MarksEntryView>(`/academics/marks-entry?${params.toString()}`);
+  }
+  public saveMarks(payload: {
+    yearId: string; termId: string; classId: string; subjectId: string;
+    marks: Array<{ studentId: string; categoryId: string; score: number | null; attendanceStatus?: string; remark?: string }>;
+    action: 'DRAFT' | 'SUBMIT';
+  }): Promise<{ saved: number; submission: MarkSubmission }> {
+    return this.request('/academics/marks/save', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public getSubmissions(filters: { status?: string; yearId?: string; termId?: string } = {}): Promise<Array<MarkSubmission & { subjectName: string; className: string; teacherName: string }>> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.append(key, value); });
+    return this.request(`/academics/submissions?${params.toString()}`);
+  }
+  public submitMarks(id: string): Promise<MarkSubmission> {
+    return this.request(`/academics/submissions/${id}/submit`, { method: 'POST', body: '{}' });
+  }
+  public returnMarks(id: string, reason: string): Promise<MarkSubmission> {
+    return this.request(`/academics/submissions/${id}/return`, { method: 'POST', body: JSON.stringify({ reason }) });
+  }
+  public approveMarks(id: string, notes = ''): Promise<{ submission: MarkSubmission; generatedReportCards: number }> {
+    return this.request(`/academics/submissions/${id}/approve`, { method: 'POST', body: JSON.stringify({ notes }) });
+  }
+  public reopenMarks(id: string, reason: string): Promise<{ submission: MarkSubmission; unpublishedReportCards: number }> {
+    return this.request(`/academics/submissions/${id}/reopen`, { method: 'POST', body: JSON.stringify({ reason }) });
+  }
+  public getAcademicResults(filters: { yearId?: string; termId?: string; classId: string; subjectId?: string }): Promise<CalculationResult> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.append(key, value); });
+    return this.request<CalculationResult>(`/academics/results?${params.toString()}`);
+  }
+  public getAcademicDashboard(filters: { yearId?: string; termId?: string } = {}): Promise<AcademicDashboardView> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.append(key, value); });
+    return this.request<AcademicDashboardView>(`/academics/dashboard?${params.toString()}`);
+  }
+
+  // --- Report cards, printing and distribution ---
+  public generateReportCards(payload: { yearId: string; termId: string; classIds?: string[] | string; studentIds?: string[] }): Promise<{
+    generated: number; cards: ReportCard[]; missingByClass: Array<{ classId: string; items: MissingAcademicRequirement[] }>;
+  }> {
+    return this.request('/academics/reports/generate', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public getReportCardDetail(id: string): Promise<{ card: ReportCard; school?: School; settings: AcademicSettings; distribution: string; attendance: { present: number; total: number } }> {
+    return this.request(`/academics/reports/${id}`);
+  }
+  public getReportPrintData(filters: { yearId?: string; termId?: string; classId?: string; studentId?: string } = {}): Promise<ReportPrintData> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.append(key, value); });
+    return this.request<ReportPrintData>(`/academics/reports/print-data?${params.toString()}`);
+  }
+  public publishReportCard(id: string): Promise<ReportCard> {
+    return this.request(`/academics/reports/${id}/publish`, { method: 'POST', body: '{}' });
+  }
+  public publishReportCards(ids: string[]): Promise<{ published: number }> {
+    return this.request('/academics/reports/publish-batch', { method: 'POST', body: JSON.stringify({ ids }) });
+  }
+  public unpublishReportCard(id: string, reason: string): Promise<ReportCard> {
+    return this.request(`/academics/reports/${id}/unpublish`, { method: 'POST', body: JSON.stringify({ reason }) });
+  }
+  public getDistributions(filters: { status?: string; classId?: string } = {}): Promise<ReportDistribution[]> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.append(key, value); });
+    return this.request<ReportDistribution[]>(`/academics/distributions?${params.toString()}`);
+  }
+  public markReportPrinted(id: string): Promise<ReportDistribution> {
+    return this.request(`/academics/distributions/${id}/printed`, { method: 'POST', body: '{}' });
+  }
+  public issueReport(id: string, issuedToName: string, relationship: string, notes = ''): Promise<ReportDistribution> {
+    return this.request(`/academics/distributions/${id}/issue`, { method: 'POST', body: JSON.stringify({ issuedToName, relationship, notes }) });
+  }
+  public confirmReportCollection(id: string, collectedByName: string): Promise<ReportDistribution> {
+    return this.request(`/academics/distributions/${id}/collect`, { method: 'POST', body: JSON.stringify({ collectedByName }) });
   }
 
   // --- Staff, Timetable, Homework, Events, Audit ---

@@ -260,7 +260,8 @@ export function updateStaffProfile(
 export function archiveStaffAccount(
   schoolId: string,
   userId: string,
-  actorId: string
+  actorId: string,
+  reason = 'Archived by school administrator'
 ): { user: UserProfile; item: StaffDirectoryItem } | undefined {
   const account = db.getStaffAccountByUserId(userId);
   const user = db.getUserById(userId);
@@ -271,11 +272,62 @@ export function archiveStaffAccount(
     status: 'ARCHIVED',
     archivedAt,
     archivedBy: actorId,
+    archiveReason: reason,
+    archivedFromStatus: account.status === 'ARCHIVED' ? 'ACTIVE' : account.status,
     lastModifiedBy: actorId
   });
   db.setUserActive(userId, false);
   const member = findStaffMember(account, schoolId);
-  if (member) db.updateStaffMember(member.id, { status: 'ARCHIVED' });
+  if (member) {
+    db.updateStaffMember(member.id, {
+      status: 'ARCHIVED',
+      archivedAt,
+      archivedBy: actorId,
+      archiveReason: reason
+    });
+  }
+
+  const updatedUser = db.getUserById(userId);
+  const item = getStaffProfile(schoolId, userId);
+  if (!updatedUser || !item) return undefined;
+  return { user: updatedUser, item };
+}
+
+/**
+ * Restore an archived staff account without recreating it. Delegated
+ * permissions stay revoked until the Headteacher explicitly grants them again.
+ */
+export function restoreStaffAccount(
+  schoolId: string,
+  userId: string,
+  actorId: string
+): { user: UserProfile; item: StaffDirectoryItem } | undefined {
+  const account = db.getStaffAccountByUserId(userId);
+  const user = db.getUserById(userId);
+  if (!account || !user || account.schoolId !== schoolId || user.schoolId !== schoolId) return undefined;
+  if (account.status !== 'ARCHIVED') return undefined;
+
+  const restoredStatus = account.archivedFromStatus === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE';
+  db.updateStaffAccount(account.id, {
+    status: restoredStatus,
+    archivedAt: undefined,
+    archivedBy: undefined,
+    archiveReason: undefined,
+    archivedFromStatus: undefined,
+    lastModifiedBy: actorId
+  });
+  db.setDelegatedPermissions(userId, []);
+  db.setDelegatedRoleScope(userId, []);
+  db.setUserActive(userId, restoredStatus === 'ACTIVE');
+  const member = findStaffMember(account, schoolId);
+  if (member) {
+    db.updateStaffMember(member.id, {
+      status: restoredStatus === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE',
+      archivedAt: undefined,
+      archivedBy: undefined,
+      archiveReason: undefined
+    });
+  }
 
   const updatedUser = db.getUserById(userId);
   const item = getStaffProfile(schoolId, userId);

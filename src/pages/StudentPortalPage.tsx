@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { api } from '../services/api';
+import { PortalReportCards } from '../components/PortalReportCards';
 import {
   Student,
   ReportCard,
@@ -10,14 +11,11 @@ import {
   HomeworkAssignment
 } from '../types';
 import {
-  GraduationCap,
   Calendar,
   BookOpen,
   UserCheck,
   CheckCircle2,
   Clock,
-  Download,
-  Printer,
   Sparkles
 } from 'lucide-react';
 
@@ -76,7 +74,7 @@ export const StudentPortalPage: React.FC = () => {
     );
   }
 
-  const reportCard = reportCards[0];
+  const latestReportCard = reportCards[0];
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
@@ -113,15 +111,19 @@ export const StudentPortalPage: React.FC = () => {
 
         <div className="relative z-10 grid grid-cols-2 gap-3 sm:flex sm:items-center">
           <div className="bg-white/10 px-4 py-3 rounded-xl text-center border border-white/15">
-            <span className="text-[10px] uppercase font-bold text-blue-200">Term 1 Rank</span>
+            <span className="text-[10px] uppercase font-bold text-blue-200">
+              {latestReportCard ? `${latestReportCard.term} Rank` : 'Rank'}
+            </span>
             <p className="text-lg font-black text-amber-300">
-              #{reportCard?.overallRank || 3} of {reportCard?.totalStudentsInClass || 38}
+              {latestReportCard?.overallRank
+                ? `#${latestReportCard.overallRank} of ${latestReportCard.totalStudentsInClass || '-'}`
+                : '-'}
             </p>
           </div>
           <div className="bg-white/10 px-4 py-3 rounded-xl text-center border border-white/15">
             <span className="text-[10px] uppercase font-bold text-blue-200">Average</span>
             <p className="text-lg font-black text-emerald-400">
-              {reportCard?.overallAverage || 84.6}%
+              {latestReportCard ? `${latestReportCard.overallAverage}%` : '-'}
             </p>
           </div>
         </div>
@@ -201,56 +203,18 @@ export const StudentPortalPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Academic Report Card Breakdown */}
-      {reportCard && (
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <GraduationCap className="w-5 h-5 text-blue-600" />
-                <span>My Official Report Card (Indangamanota)</span>
-              </h3>
-              <p className="text-xs text-slate-500">Academic Year 2025-2026 • Term 1</p>
-            </div>
-            <button
-              onClick={() => window.print()}
-              className="px-3.5 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-xs flex items-center gap-1.5 transition"
-            >
-              <Printer className="w-4 h-4" />
-              <span>Print Bulletin</span>
-            </button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-[10px]">
-                <tr>
-                  <th className="py-2.5 px-3">Subject</th>
-                  <th className="py-2.5 px-3">Code</th>
-                  <th className="py-2.5 px-3">CAT (/30)</th>
-                  <th className="py-2.5 px-3">Exam (/70)</th>
-                  <th className="py-2.5 px-3">Total (%)</th>
-                  <th className="py-2.5 px-3">Grade</th>
-                  <th className="py-2.5 px-3">Teacher Comment</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {reportCard.subjects.map((sub, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-semibold text-slate-800">{sub.subjectName}</td>
-                    <td className="py-2.5 px-3 font-mono text-slate-500">{sub.subjectCode}</td>
-                    <td className="py-2.5 px-3 font-mono">{sub.catScore}</td>
-                    <td className="py-2.5 px-3 font-mono">{sub.examScore}</td>
-                    <td className="py-2.5 px-3 font-bold text-blue-700">{sub.totalPercent}%</td>
-                    <td className="py-2.5 px-3 font-black text-emerald-600">{sub.grade}</td>
-                    <td className="py-2.5 px-3 text-slate-600">{sub.teacherComment}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      {/* Published Academic Report Card History */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+        <div className="pb-3 border-b border-slate-100">
+          <h3 className="text-sm font-bold text-slate-900">My Official Report Cards (Indangamanota)</h3>
+          <p className="text-xs text-slate-500">Published reports released by the school</p>
         </div>
-      )}
+        <PortalReportCards
+          cards={reportCards}
+          school={school}
+          emptyMessage="No published report cards are available yet."
+        />
+      </div>
     </div>
   );
 };

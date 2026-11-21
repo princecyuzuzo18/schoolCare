@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { api } from '../services/api';
+import { PortalReportCards } from '../components/PortalReportCards';
 import {
   Student,
   HealthIncident,
@@ -16,16 +17,13 @@ import {
   UserSquare2,
   HeartPulse,
   UserCheck,
-  GraduationCap,
   CreditCard,
   AlertTriangle,
   CheckCircle2,
   PhoneCall,
   Clock,
   ArrowRight,
-  Printer,
   Sparkles,
-  Download,
   Calendar,
   Send
 } from 'lucide-react';
@@ -148,7 +146,6 @@ export const ParentPortalPage: React.FC = () => {
   const selectedChild = children.find(c => c.id === selectedChildId) || children[0];
   const urgentCase = incidents.find(i => !i.resolved && (i.priority === 'URGENT' || i.priority === 'EMERGENCY'));
   const activeInvoice = invoices[0];
-  const reportCard = reportCards[0];
 
   if (loading) {
     return (
@@ -318,64 +315,15 @@ export const ParentPortalPage: React.FC = () => {
 
         {/* Academic Card & Report Card (Indangamanota) */}
         <div className="lg:col-span-8 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <GraduationCap className="w-5 h-5 text-blue-600" />
-                <span>Academic Performance (Indangamanota)</span>
-              </h3>
-              <p className="text-xs text-slate-500">Term 1 Official REB/RTB Certified Results</p>
-            </div>
-
-            {reportCard && (
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1 rounded-xl text-xs font-black bg-emerald-100 text-emerald-800">
-                  Avg: {reportCard.overallAverage}% (Rank {reportCard.overallRank}/{reportCard.totalStudentsInClass})
-                </span>
-              </div>
-            )}
+          <div className="pb-3 border-b border-slate-100">
+            <h3 className="text-sm font-bold text-slate-900">Academic Performance (Indangamanota)</h3>
+            <p className="text-xs text-slate-500">Published reports for {selectedChild.firstName}</p>
           </div>
-
-          {reportCard ? (
-            <div className="space-y-3">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-[10px]">
-                    <tr>
-                      <th className="py-2 px-3">Subject</th>
-                      <th className="py-2 px-3">CAT (/30)</th>
-                      <th className="py-2 px-3">Exam (/70)</th>
-                      <th className="py-2 px-3">Total (%)</th>
-                      <th className="py-2 px-3">Grade</th>
-                      <th className="py-2 px-3">Teacher Comment</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {reportCard.subjects.map((sub, i) => (
-                      <tr key={i} className="hover:bg-slate-50">
-                        <td className="py-2.5 px-3 font-semibold text-slate-800">{sub.subjectName}</td>
-                        <td className="py-2.5 px-3 font-mono">{sub.catScore}</td>
-                        <td className="py-2.5 px-3 font-mono">{sub.examScore}</td>
-                        <td className="py-2.5 px-3 font-bold text-blue-700">{sub.totalPercent}%</td>
-                        <td className="py-2.5 px-3 font-black text-emerald-600">{sub.grade}</td>
-                        <td className="py-2.5 px-3 text-slate-500 text-[11px] max-w-xs truncate">
-                          {sub.teacherComment}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-200 text-xs">
-                <p className="font-bold text-blue-900">Head Teacher Decision:</p>
-                <p className="text-slate-700 mt-0.5">{reportCard.headTeacherRemarks}</p>
-                <p className="text-[11px] text-blue-800 font-medium mt-1">Conduct: {reportCard.conductScore}</p>
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-slate-500">Term 2 marks are currently being compiled by instructors.</p>
-          )}
+          <PortalReportCards
+            cards={reportCards}
+            school={school}
+            emptyMessage="No published report cards are available for this child yet."
+          />
         </div>
       </div>
 

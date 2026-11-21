@@ -106,6 +106,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate, urgentIn
                 )}
                 <div className="hidden xl:block text-left">
                   <p className="text-xs font-semibold leading-tight text-white">{currentUser?.fullName}</p>
+                  <p className="text-[10px] text-blue-200">{school?.name ?? t('schoolName')}</p>
                   <p className="text-[10px] text-blue-300">{currentUser?.phone}</p>
                 </div>
                 {currentUser && (

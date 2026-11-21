@@ -1,6 +1,7 @@
 import { NAV_ITEMS, getQuickNavItems, getVisibleNavSections } from '../src/navigation';
 import { APP_ROUTES } from '../src/routes';
 import { ROLE_ALLOWED_TABS, ROLE_DASHBOARD_MAP, isTabAllowedForRole } from '../src/rbac';
+import { ROLE_DASHBOARD_TABS, getRoleDashboardTab } from '../src/roleDashboards';
 import { translations } from '../src/i18n/translations';
 import type { UserRole } from '../src/types';
 
@@ -67,11 +68,25 @@ check(
   missingTranslations.join(', ')
 );
 
+check(
+  'Dashboard map is shared with the server-authoritative mapping',
+  JSON.stringify(ROLE_DASHBOARD_MAP) === JSON.stringify(ROLE_DASHBOARD_TABS)
+);
+
 for (const role of ROLES) {
   const dashboard = ROLE_DASHBOARD_MAP[role];
   check(
     `${role} default page is routable`,
     Boolean(dashboard) && Boolean(APP_ROUTES[dashboard]),
+    dashboard
+  );
+  check(
+    `${role} default page matches the shared dashboard map`,
+    getRoleDashboardTab(role) === dashboard
+  );
+  check(
+    `${role} default page is allowed by RBAC`,
+    isTabAllowedForRole(role, dashboard),
     dashboard
   );
 

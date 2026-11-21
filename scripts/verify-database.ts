@@ -65,7 +65,11 @@ async function main(): Promise<void> {
            'staff_accounts','staff_invitations','permission_grants',
            'students','user_auth_credentials','admission_applications',
            'account_signup_requests','account_signup_students',
-           'account_student_links','account_guardian_links'
+           'account_student_links','account_guardian_links',
+           'academic_years','terms','class_subject_assignments',
+           'class_teacher_assignments','assessment_categories','grading_scales',
+           'academic_settings','student_marks','mark_submissions',
+           'report_cards','report_card_subjects','report_distributions'
          )`
     );
     const tableNames = new Set(tableRows.map(row => String(row.tableName)));
@@ -75,7 +79,11 @@ async function main(): Promise<void> {
         'staff_accounts','staff_invitations','permission_grants','students',
         'user_auth_credentials','admission_applications',
         'account_signup_requests','account_signup_students',
-        'account_student_links','account_guardian_links'
+        'account_student_links','account_guardian_links',
+        'academic_years','terms','class_subject_assignments',
+        'class_teacher_assignments','assessment_categories','grading_scales',
+        'academic_settings','student_marks','mark_submissions',
+        'report_cards','report_card_subjects','report_distributions'
       ]
         .every(name => tableNames.has(name)),
       Array.from(tableNames).sort().join(', ')
@@ -103,6 +111,11 @@ async function main(): Promise<void> {
       "SELECT version FROM schema_migrations WHERE version = '004_parent_student_signup'"
     );
     check('Parent/student sign-up migration is recorded', signupMigrationRows.length === 1);
+
+    const [academicMigrationRows] = await connection.query<RowDataPacket[]>(
+      "SELECT version FROM schema_migrations WHERE version = '005_academic_marks_report_cards'"
+    );
+    check('Academic marks/report card migration is recorded', academicMigrationRows.length === 1);
 
     const [signupColumns] = await connection.query<RowDataPacket[]>(
       `SELECT COLUMN_NAME AS columnName FROM information_schema.COLUMNS

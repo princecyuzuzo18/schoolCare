@@ -1,3 +1,9 @@
+/**
+ * Deprecated legacy prototype. This page is intentionally not routed: it uses
+ * placeholder marks and local handlers that would violate the backend-authoritative
+ * academic workflow. Use TeacherAcademicsPage, AcademicAdminPage and
+ * ReportPrintingPage instead.
+ */
 import React, { useEffect, useState } from 'react';
 import { ReportCard, AcademicClass, Subject, Student } from '../types';
 import { api } from '../services/api';

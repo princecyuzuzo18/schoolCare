@@ -45,6 +45,8 @@ export interface UserProfile {
   avatarUrl: string;
   preferredLanguage: LanguageCode;
   isActive?: boolean;
+  /** Sessions issued before this timestamp are rejected after a credential reset. */
+  credentialsResetAt?: string;
   delegatedPermissions?: string[];
   /** Roles this account may create/edit when staff management was delegated. */
   delegatedRoleScope?: UserRole[];
@@ -76,6 +78,11 @@ export interface Student {
   photoUrl: string;
   nationalId?: string;
   previousSchool?: string;
+  /** Soft-delete metadata. Archived learners keep their full academic history. */
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
+  archivedFromStatus?: Student['enrollmentStatus'];
 }
 
 export interface Guardian {
@@ -94,6 +101,10 @@ export interface Guardian {
   isVerified: boolean;
   canPickup: boolean;
   emergencyPriority: number; // 1 = Primary, 2 = Secondary
+  /** Soft-delete metadata. Links and historical records are never cascaded away. */
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
 }
 
 export interface StudentGuardianLink {
@@ -282,6 +293,28 @@ export interface StudentMark {
   comment?: string;
 }
 
+export interface ReportCardSubjectRow {
+  subjectName: string;
+  subjectCode: string;
+  catScore: number;
+  catMax: number;
+  examScore: number;
+  examMax: number;
+  totalPercent: number;
+  grade: string;
+  rankInClass: number;
+  teacherComment: string;
+  // Configurable assessment breakdown. catScore/catMax remain the canonical
+  // coursework values so existing seeded report cards keep working.
+  courseworkScore?: number;
+  courseworkMax?: number;
+  testScore?: number;
+  testMax?: number;
+  totalMarks?: number;
+  percentage?: number;
+  teacherName?: string;
+}
+
 export interface ReportCard {
   id: string;
   schoolId: string;
@@ -292,19 +325,10 @@ export interface ReportCard {
   combination: string;
   academicYear: string;
   term: string;
-  subjects: {
-    subjectName: string;
-    subjectCode: string;
-    catScore: number;
-    catMax: number;
-    examScore: number;
-    examMax: number;
-    totalPercent: number;
-    grade: string;
-    rankInClass: number;
-    teacherComment: string;
-  }[];
+  classId?: string;
+  subjects: ReportCardSubjectRow[];
   overallAverage: number;
+  overallGrade?: string;
   overallRank: number;
   totalStudentsInClass: number;
   attendanceDaysPresent: number;
@@ -314,6 +338,20 @@ export interface ReportCard {
   headTeacherRemarks: string;
   isApproved: boolean;
   publishedAt?: string;
+  publishedBy?: string;
+  generatedAt?: string;
+  generatedBy?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  issueDate?: string;
+  classTeacherName?: string;
+  headTeacherName?: string;
+  conductRemarks?: string;
+  strengths?: string;
+  areasForImprovement?: string;
+  promotionDecision?: string;
+  sourceSubmissionIds?: string[];
+  status?: 'DRAFT' | 'APPROVED' | 'PUBLISHED';
 }
 
 export interface FeeStructure {
@@ -379,6 +417,9 @@ export interface StaffMember {
   photoUrl?: string;
   responsibilities?: string[];
   employmentStartDate?: string;
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
 }
 
 export type StaffAccountStatus = 'ACTIVE' | 'INVITED' | 'SUSPENDED' | 'ARCHIVED';
@@ -405,6 +446,8 @@ export interface StaffAccount {
   acceptedAt?: string;
   archivedAt?: string;
   archivedBy?: string;
+  archiveReason?: string;
+  archivedFromStatus?: StaffAccountStatus;
   lastModifiedBy?: string;
   lastModifiedAt?: string;
 }
@@ -449,6 +492,24 @@ export interface PermissionGrantRecord {
   grantedAt: string;
   revokedAt?: string;
   revokedBy?: string;
+}
+
+/** Reusable permission template owned by one school. Assigning a group copies
+ * its permissions through the normal delegation checks; it is never a hidden
+ * source of authority. */
+export interface PermissionGroup {
+  id: string;
+  schoolId: string;
+  name: string;
+  description?: string;
+  permissions: string[];
+  roleScope?: UserRole[];
+  createdBy: string;
+  createdAt: string;
+  updatedBy?: string;
+  updatedAt?: string;
+  archivedAt?: string;
+  archivedBy?: string;
 }
 
 export interface StaffSummary {
@@ -510,6 +571,13 @@ export interface PermissionsResponse {
   delegatableRoleScope: UserRole[];
   rolePermissions: Record<UserRole, string[]>;
   catalog: PermissionDefinition[];
+}
+
+/** Server-authoritative session view used by login and session restore. */
+export interface AuthSessionResponse {
+  user: UserProfile | null;
+  defaultDashboard: string;
+  dashboardUrl: string;
 }
 
 export interface StaffAccountView extends StaffAccount {
@@ -894,4 +962,271 @@ export interface AdmissionNotificationStatus {
   sent: boolean;
   detail?: string;
 }
+
+// ============================================================
+// ACADEMIC MANAGEMENT (marks, results, approval, report cards)
+// These types are additive. Existing academic records are untouched.
+// ============================================================
+
+export interface AcademicYear {
+  id: string;
+  schoolId: string;
+  name: string;
+  startDate?: string;
+  endDate?: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface AcademicTerm {
+  id: string;
+  schoolId: string;
+  academicYearId: string;
+  name: string;
+  startDate?: string;
+  endDate?: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface ClassSubjectAssignment {
+  id: string;
+  schoolId: string;
+  academicYearId: string;
+  termId: string;
+  classId: string;
+  subjectId: string;
+  teacherIds: string[];
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface ClassTeacherAssignment {
+  id: string;
+  schoolId: string;
+  academicYearId: string;
+  classId: string;
+  teacherId: string;
+  createdAt: string;
+}
+
+export interface AssessmentCategory {
+  id: string;
+  schoolId: string;
+  code: string;
+  name: string;
+  maxMarks: number;
+  weightPercentage: number;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface GradeBoundary {
+  grade: string;
+  minPercentage: number;
+  maxPercentage: number;
+  description: string;
+  descriptionRw?: string;
+}
+
+export interface GradingScale {
+  id: string;
+  schoolId: string;
+  name: string;
+  passMark: number;
+  gradeBoundaries: GradeBoundary[];
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface AcademicSettings {
+  schoolId: string;
+  academicYearId?: string;
+  termId?: string;
+  gradingScaleId?: string;
+  enableRanking: boolean;
+  enablePromotionDecision: boolean;
+  promotionPassAverage?: number;
+  commentsRequiredBeforeApproval?: boolean;
+  submissionDeadlineDays?: number;
+  allowSelfApproval?: boolean;
+  updatedAt?: string;
+}
+
+export type MarkAttendanceStatus = 'PRESENT' | 'ABSENT' | 'EXCUSED';
+
+export interface MarkEntry {
+  id: string;
+  schoolId: string;
+  academicYearId: string;
+  termId: string;
+  classId: string;
+  subjectId: string;
+  studentId: string;
+  categoryId: string;
+  score: number | null;
+  attendanceStatus: MarkAttendanceStatus;
+  remark?: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export type MarkSubmissionStatus = 'DRAFT' | 'SUBMITTED' | 'UNDER_REVIEW' | 'APPROVED' | 'RETURNED';
+
+export interface AcademicWorkflowEvent {
+  action: string;
+  by: string;
+  byName: string;
+  role: string;
+  at: string;
+  note?: string;
+}
+
+export interface MarkSubmission {
+  id: string;
+  schoolId: string;
+  academicYearId: string;
+  termId: string;
+  classId: string;
+  subjectId: string;
+  teacherId: string;
+  status: MarkSubmissionStatus;
+  submittedAt?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewedByName?: string;
+  reviewNotes?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  returnedAt?: string;
+  correctionReason?: string;
+  history: AcademicWorkflowEvent[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AcademicSubjectResult {
+  subjectId: string;
+  subjectName: string;
+  subjectCode: string;
+  teacherName: string;
+  categories: Array<{
+    categoryId: string;
+    code: string;
+    name: string;
+    score: number | null;
+    maxMarks: number;
+    weightPercentage: number;
+    attendanceStatus: MarkAttendanceStatus;
+  }>;
+  courseworkScore: number;
+  courseworkMax: number;
+  testScore: number;
+  testMax: number;
+  examScore: number;
+  examMax: number;
+  totalMarks: number;
+  percentage: number;
+  grade: string;
+  gradeDescription: string;
+  remark: string;
+  rankInClass: number;
+  isComplete: boolean;
+}
+
+export interface StudentResult {
+  studentId: string;
+  studentName: string;
+  admissionNumber: string;
+  classId: string;
+  subjects: AcademicSubjectResult[];
+  totalMarks: number;
+  average: number;
+  grade: string;
+  gradeDescription: string;
+  rank: number;
+  isComplete: boolean;
+}
+
+export interface CalculationResult {
+  students: StudentResult[];
+  missing: MissingAcademicRequirement[];
+  classAverage: number;
+  subjectPerformance: Array<{
+    subjectId: string;
+    subjectName: string;
+    average: number;
+    highest: number;
+    lowest: number;
+    passRate: number;
+    studentCount: number;
+  }>;
+  categories: AssessmentCategory[];
+  scale?: GradingScale;
+}
+
+export interface MissingAcademicRequirement {
+  studentId: string;
+  studentName: string;
+  subjectId: string;
+  subjectName: string;
+  categoryId?: string;
+  categoryName?: string;
+  reason: string;
+}
+
+export interface SubjectPerformanceSummary {
+  subjectId: string;
+  subjectName: string;
+  average: number;
+  highest: number;
+  lowest: number;
+  passRate: number;
+  studentCount: number;
+}
+
+export interface AcademicProgressPoint {
+  label: string;
+  average: number;
+}
+
+export type ReportDistributionStatus = 'NOT_GENERATED' | 'GENERATED' | 'PRINTED' | 'ISSUED' | 'COLLECTED';
+
+export interface ReportDistribution {
+  id: string;
+  schoolId: string;
+  reportCardId: string;
+  studentId: string;
+  studentName: string;
+  className: string;
+  academicYear: string;
+  term: string;
+  status: ReportDistributionStatus;
+  generatedAt?: string;
+  printedAt?: string;
+  issuedAt?: string;
+  issuedToName?: string;
+  issuedToRelationship?: string;
+  collectedAt?: string;
+  collectedByName?: string;
+  staffId: string;
+  staffName: string;
+  notes?: string;
+  history: AcademicWorkflowEvent[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AcademicCollectionKey =
+  | 'academicYears'
+  | 'terms'
+  | 'classSubjectAssignments'
+  | 'classTeacherAssignments'
+  | 'assessmentCategories'
+  | 'gradingScales'
+  | 'marks'
+  | 'markSubmissions'
+  | 'reportDistributions'
+  | 'academicSettings';
 

@@ -97,11 +97,27 @@ export const NAV_ITEMS: readonly NavItem[] = [
   },
   {
     id: 'academics',
-    label: 'Academics & Marks',
-    labelKey: 'navAcademics',
+    label: 'My Academic Work',
+    labelKey: 'navTeacherAcademics',
     icon: BookOpen,
     section: 'academics',
-    description: 'Classes, subjects and assessments'
+    description: 'Assigned classes, marks entry and submission history'
+  },
+  {
+    id: 'academic-admin',
+    label: 'Academic Administration',
+    labelKey: 'navAcademicAdmin',
+    icon: ClipboardList,
+    section: 'academics',
+    description: 'Years, terms, assignments, grading and marks approval'
+  },
+  {
+    id: 'report-printing',
+    label: 'Report Cards & Printing',
+    labelKey: 'navReportPrinting',
+    icon: FileText,
+    section: 'academics',
+    description: 'Generate, print, download and distribute official report cards'
   },
   {
     id: 'timetable',
@@ -131,14 +147,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
     icon: BookOpen,
     section: 'academics',
     description: 'Teaching resources and lesson notes'
-  },
-  {
-    id: 'report-cards',
-    label: 'Report Cards',
-    labelKey: 'navReportCards',
-    icon: FileText,
-    section: 'academics',
-    description: 'Term report cards and analytics'
   },
   {
     id: 'students',
@@ -386,9 +394,9 @@ export function getNavItem(id: string): NavItem | undefined {
 const QUICK_NAV_PREFERENCES: Record<UserRole, string[]> = {
   SUPER_ADMIN: ['dashboard', 'health', 'attendance', 'finance'],
   SCHOOL_ADMIN: ['dashboard', 'health', 'attendance', 'finance'],
-  HEAD_TEACHER: ['dashboard', 'attendance', 'students', 'staff-management'],
-  DEPUTY_HEAD: ['dashboard', 'attendance', 'timetable', 'reports'],
-  TEACHER: ['dashboard', 'attendance', 'timetable', 'reports'],
+  HEAD_TEACHER: ['dashboard', 'academic-admin', 'report-printing', 'staff-management'],
+  DEPUTY_HEAD: ['dashboard', 'report-printing', 'reports', 'attendance'],
+  TEACHER: ['dashboard', 'academics', 'attendance', 'timetable'],
   NURSE: ['dashboard', 'health', 'events', 'reports'],
   ACCOUNTANT: ['dashboard', 'finance', 'inventory', 'reports'],
   DISCIPLINE_OFFICER: ['dashboard', 'discipline', 'attendance', 'students'],

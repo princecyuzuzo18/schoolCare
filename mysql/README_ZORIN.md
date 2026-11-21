@@ -115,10 +115,10 @@ npm run db:init
 ```
 
 This imports the **existing** file `mysql/schoolcare_db.sql` and then applies the
-three migrations in `mysql/migrations/`. It creates the school, roles, user
-profiles, classes, students, guardians, attendance, health, finance tables,
-audit log, admission tables, and staff governance tables, together with the
-sample data from that file.
+migrations in `mysql/migrations/`. It creates the school, roles, user profiles,
+classes, students, guardians, attendance, health, finance tables, audit log,
+admission tables, staff governance tables, and the academic marks/report-card
+tables, together with the sample data from that file.
 
 **Important safety rule:** the SQL dump contains `DROP TABLE IF EXISTS`
 statements for its core tables. That is why the script first counts the tables in
@@ -140,7 +140,11 @@ files are additive: they never drop a table, drop a column or delete a row.
 
 `003_staff_governance.sql` adds the three staff roles, changes only the two
 approved legacy account role values, and creates `staff_accounts`,
-`staff_invitations` and `permission_grants`.
+`staff_invitations` and `permission_grants`. `004_parent_student_signup.sql`
+adds parent/student sign-up tables. `005_academic_marks_report_cards.sql` adds
+the academic configuration, marks, submissions, report cards and distribution
+tables used by Academic Management and Report Cards & Printing; it is additive
+and never drops tables, columns or existing rows.
 
 Useful read-only commands:
 

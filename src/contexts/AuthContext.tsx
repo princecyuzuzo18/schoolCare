@@ -3,10 +3,14 @@ import { UserProfile, UserRole, School, PermissionsResponse } from '../types';
 import { api } from '../services/api';
 import { getRoleDashboard } from '../rbac';
 
+export const REDIRECT_TARGET_KEY = 'schoolcare_redirect_target';
+
 interface AuthContextType {
   currentUser: UserProfile | null;
   role: UserRole | null;
   school: School | null;
+  defaultDashboard: string;
+  dashboardUrl: string;
   isLoading: boolean;
   sessionExpired: boolean;
   login: (email: string, password: string) => Promise<UserProfile>;
@@ -29,6 +33,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [school, setSchool] = useState<School | null>(null);
+  const [defaultDashboard, setDefaultDashboard] = useState<string>(() => getRoleDashboard(null));
+  const [dashboardUrl, setDashboardUrl] = useState<string>('/portal#/landing');
   const [availableUsers, setAvailableUsers] = useState<UserProfile[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [sessionExpired, setSessionExpired] = useState(false);
@@ -47,14 +53,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const initAuth = async () => {
     try {
       setIsLoading(true);
-      const [schoolData, authResult] = await Promise.all([api.getSchool(), api.getMe()]);
-      setSchool(schoolData);
-      setCurrentUser(authResult.user);
-      if (authResult.user) {
+      // An anonymous visitor gets 401 from /auth/me; that must not prevent the
+      // public school details from loading.
+      const [schoolResult, authResult] = await Promise.allSettled([api.getSchool(), api.getMe()]);
+      if (schoolResult.status === 'fulfilled') {
+        setSchool(schoolResult.value);
+      }
+      if (authResult.status === 'fulfilled' && authResult.value.user) {
+        const session = authResult.value;
+        setCurrentUser(session.user);
+        setDefaultDashboard(session.defaultDashboard || getRoleDashboard(session.user?.role));
+        setDashboardUrl(session.dashboardUrl || `/portal#/${getRoleDashboard(session.user?.role)}`);
         setAvailableUsers([]);
         await loadPermissions();
       } else {
+        setCurrentUser(null);
         setPermissions(null);
+        setDefaultDashboard(getRoleDashboard(null));
+        setDashboardUrl('/portal#/landing');
       }
     } catch (err) {
       console.error('Failed to initialize auth:', err);
@@ -70,6 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const handleSessionExpired = () => {
       setCurrentUser(null);
+      sessionStorage.removeItem(REDIRECT_TARGET_KEY);
       setSessionExpired(true);
     };
     window.addEventListener('schoolcare:session-expired', handleSessionExpired);
@@ -77,15 +94,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (email: string, password: string): Promise<UserProfile> => {
-    const { user } = await api.login(email, password);
+    const session = await api.login(email, password);
+    const { user } = session;
+    if (!user) {
+      throw new Error('The server did not return an authenticated account.');
+    }
+    const authorizedDashboard = session.defaultDashboard || getRoleDashboard(user.role);
     setCurrentUser(user);
+    setDefaultDashboard(authorizedDashboard);
+    setDashboardUrl(session.dashboardUrl || `/portal#/${authorizedDashboard}`);
     await loadPermissions();
     setSessionExpired(false);
     if (typeof window !== 'undefined') {
-      const existingTarget = window.sessionStorage.getItem('schoolcare_redirect_target');
-      if (!existingTarget) {
-        window.sessionStorage.setItem('schoolcare_redirect_target', getRoleDashboard(user.role));
-      }
+      // A successful login always wins over any stale or deep-link target.
+      window.sessionStorage.setItem(REDIRECT_TARGET_KEY, authorizedDashboard);
     }
     return user;
   };
@@ -96,7 +118,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setCurrentUser(null);
       setPermissions(null);
-      sessionStorage.removeItem('schoolcare_redirect_target');
+      setDefaultDashboard(getRoleDashboard(null));
+      setDashboardUrl('/portal#/landing');
+      sessionStorage.removeItem(REDIRECT_TARGET_KEY);
       setSessionExpired(false);
     }
   };
@@ -119,6 +143,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentUser,
         role,
         school,
+        defaultDashboard,
+        dashboardUrl,
         isLoading,
         sessionExpired,
         login,

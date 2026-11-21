@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AuthProvider, REDIRECT_TARGET_KEY, useAuth } from './contexts/AuthContext';
 import { LanguageProvider, useLanguage } from './i18n/LanguageContext';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -16,10 +16,10 @@ import { AccountSignupPage } from './pages/AccountSignupPage';
 
 import { api } from './services/api';
 import { HealthIncident, Student, Guardian } from './types';
-import { getRoleDashboard, isTabAllowedForRole, resolveRequestedTab } from './rbac';
+import { isTabAllowedForRole, resolveRequestedTab } from './rbac';
 import { getNavItem, getQuickNavItems } from './navigation';
 import { getRoute } from './routes';
-import { Menu, X } from 'lucide-react';
+import { AlertTriangle, Menu, X } from 'lucide-react';
 
 function readHashTab(): string | null {
   if (typeof window === 'undefined') return null;
@@ -28,10 +28,11 @@ function readHashTab(): string | null {
 }
 
 const MainApp: React.FC = () => {
-  const { role, currentUser, isLoading, effectivePermissions } = useAuth();
+  const { role, currentUser, isLoading, effectivePermissions, defaultDashboard } = useAuth();
   const { t } = useLanguage();
 
   const [currentTab, setCurrentTab] = useState<string>('landing');
+  const [accessDeniedTab, setAccessDeniedTab] = useState<string | null>(null);
   const [incidents, setIncidents] = useState<HealthIncident[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [guardians, setGuardians] = useState<Guardian[]>([]);
@@ -70,7 +71,8 @@ const MainApp: React.FC = () => {
   }, [role, currentUser]);
 
   const handleNavigate = useCallback((tab: string) => {
-    const nextTab = resolveRequestedTab(role, tab, getRoleDashboard(role), effectivePermissions);
+    const nextTab = resolveRequestedTab(role, tab, defaultDashboard, effectivePermissions);
+    setAccessDeniedTab(null);
     setCurrentTab(nextTab);
     setMobileMenuOpen(false);
     const nextHash = `#/${nextTab}`;
@@ -78,7 +80,7 @@ const MainApp: React.FC = () => {
       window.location.hash = nextHash;
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [role, effectivePermissions]);
+  }, [role, defaultDashboard, effectivePermissions]);
 
   useEffect(() => {
     const syncRoute = () => {
@@ -87,7 +89,7 @@ const MainApp: React.FC = () => {
       if (!currentUser) {
         const publicTabs = new Set(['login', 'apply', 'track']);
         if (requested && !publicTabs.has(requested)) {
-          sessionStorage.setItem('schoolcare_redirect_target', requested);
+          sessionStorage.setItem(REDIRECT_TARGET_KEY, requested);
           history.replaceState(null, '', '#/login');
           window.dispatchEvent(new Event('hashchange'));
         }
@@ -95,14 +97,19 @@ const MainApp: React.FC = () => {
         return;
       }
 
-      const fallback = getRoleDashboard(role);
-      const storedRedirect = sessionStorage.getItem('schoolcare_redirect_target');
+      const fallback = defaultDashboard;
+      const storedRedirect = sessionStorage.getItem(REDIRECT_TARGET_KEY);
       const target = !requested || requested === 'login'
         ? (storedRedirect && isTabAllowedForRole(role, storedRedirect, effectivePermissions) ? storedRedirect : fallback)
         : requested;
 
-      sessionStorage.removeItem('schoolcare_redirect_target');
+      sessionStorage.removeItem(REDIRECT_TARGET_KEY);
       const nextTab = resolveRequestedTab(role, target, fallback, effectivePermissions);
+
+      const requestedPrivateTab = requested && requested !== 'login' && requested !== 'landing';
+      setAccessDeniedTab(
+        requestedPrivateTab && !isTabAllowedForRole(role, requested, effectivePermissions) ? requested : null
+      );
       setCurrentTab(nextTab);
 
       const nextHash = `#/${nextTab}`;
@@ -118,7 +125,7 @@ const MainApp: React.FC = () => {
       window.removeEventListener('hashchange', syncRoute);
       window.removeEventListener('popstate', syncRoute);
     };
-  }, [currentUser, role, effectivePermissions]);
+  }, [currentUser, role, defaultDashboard, effectivePermissions]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -203,7 +210,7 @@ const MainApp: React.FC = () => {
   };
 
   const renderRoute = (tab: string) => {
-    const route = getRoute(tab) ?? getRoute('dashboard');
+    const route = getRoute(tab) ?? getRoute(defaultDashboard) ?? getRoute('dashboard');
     return route ? route.render(routeContext) : null;
   };
 
@@ -245,6 +252,29 @@ const MainApp: React.FC = () => {
         onOpenIncident={handleOpenIncident}
         onAcknowledge={handleAcknowledge}
       />
+
+      {/* Unauthorized dashboard/page access */}
+      {accessDeniedTab && (
+        <div
+          role="alert"
+          className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 shadow-sm"
+        >
+          <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold">{t('accessDeniedTitle')}</p>
+            <p className="text-xs leading-5">
+              {t('accessDeniedBody')} ({getNavItem(accessDeniedTab)?.label ?? accessDeniedTab})
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAccessDeniedTab(null)}
+            className="rounded-lg border border-amber-300 px-3 py-1 text-xs font-bold text-amber-900 hover:bg-amber-100"
+          >
+            {t('accessDeniedDismiss')}
+          </button>
+        </div>
+      )}
 
       {/* Mobile Top Controls Toggle */}
       <div className="md:hidden bg-white px-4 py-2.5 border-b border-slate-200 flex items-center justify-between shadow-sm">
@@ -332,7 +362,7 @@ const MainApp: React.FC = () => {
             className="app-main min-w-0 flex-1 overflow-x-hidden min-h-[calc(100vh-4rem)] pb-20 md:pb-8 outline-none"
           >
             {renderRoute(
-              isTabAllowedForRole(role, currentTab, effectivePermissions) ? currentTab : 'dashboard'
+              isTabAllowedForRole(role, currentTab, effectivePermissions) ? currentTab : defaultDashboard
             )}
           </main>
         </div>

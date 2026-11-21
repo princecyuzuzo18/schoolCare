@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Guardian, Student } from '../types';
 import { api } from '../services/api';
 import { useLanguage } from '../i18n/LanguageContext';
+import { useAuth } from '../contexts/AuthContext';
 import {
   UserSquare2,
   Plus,
@@ -11,16 +12,20 @@ import {
   CheckCircle2,
   ShieldCheck,
   MapPin,
-  X
+  X,
+  Archive,
+  RotateCcw
 } from 'lucide-react';
 
 export const GuardiansPage: React.FC = () => {
   const { t } = useLanguage();
+  const { hasPermission } = useAuth();
 
   const [guardians, setGuardians] = useState<Guardian[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState('');
 
   // Add modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -52,6 +57,32 @@ export const GuardiansPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, []);
+
+  const handleArchive = async (guardian: Guardian) => {
+    const reason = window.prompt(t('archiveReasonPrompt'));
+    if (!reason || !reason.trim()) return;
+    if (!window.confirm(t('confirmArchiveGuardian'))) return;
+    try {
+      setNotice('');
+      await api.archiveGuardian(guardian.id, reason.trim());
+      setNotice(t('guardianArchivedNotice'));
+      await loadData();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : t('actionFailed'));
+    }
+  };
+
+  const handleRestore = async (guardian: Guardian) => {
+    if (!window.confirm(t('confirmRestoreGuardian'))) return;
+    try {
+      setNotice('');
+      await api.restoreGuardian(guardian.id);
+      setNotice(t('guardianRestoredNotice'));
+      await loadData();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : t('actionFailed'));
+    }
+  };
 
   const handleCreateGuardian = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,6 +148,12 @@ export const GuardiansPage: React.FC = () => {
         </button>
       </div>
 
+      {notice && (
+        <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-semibold text-blue-800">
+          {notice}
+        </div>
+      )}
+
       {/* Search */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-3">
         <div className="relative w-full max-w-sm">
@@ -167,6 +204,12 @@ export const GuardiansPage: React.FC = () => {
               </div>
             </div>
 
+            {grd.archivedAt && (
+              <div className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-[10px] font-bold text-slate-700">
+                {t('archivedStatus')}
+              </div>
+            )}
+
             <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
               <span className="font-semibold text-slate-500">
                 Channel: <strong className="text-blue-700">{grd.preferredChannel}</strong>
@@ -177,6 +220,28 @@ export const GuardiansPage: React.FC = () => {
                 {grd.canPickup ? 'Gate Pickup Allowed' : 'No Pickup'}
               </span>
             </div>
+
+            {hasPermission('guardians.write') && (
+              <div className="flex justify-end">
+                {grd.archivedAt ? (
+                  <button
+                    onClick={() => handleRestore(grd)}
+                    className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    {t('restore')}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleArchive(grd)}
+                    className="inline-flex items-center gap-1 rounded-lg bg-red-50 px-2.5 py-1.5 text-[10px] font-bold text-red-700 hover:bg-red-100"
+                  >
+                    <Archive className="w-3 h-3" />
+                    {t('archivedStatus')}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>

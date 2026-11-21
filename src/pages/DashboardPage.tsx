@@ -12,6 +12,7 @@ import {
   Payment,
   StaffMember,
   AcademicClass,
+  AuditLogEntry,
   UserRole
 } from '../types';
 import type { TranslationKey } from '../i18n';
@@ -35,8 +36,23 @@ import {
   UserCog,
   ShieldCheck,
   ClipboardList,
-  CalendarCheck
+  CalendarCheck,
+  UserPlus,
+  UserSquare2,
+  KeyRound,
+  Settings,
+  ClipboardCheck
 } from 'lucide-react';
+
+const CONTROL_CENTER_ACTIONS: WorkspaceAction[] = [
+  { tab: 'students', labelKey: 'quickAddStudent', icon: UserPlus, tone: 'blue' },
+  { tab: 'staff-management', labelKey: 'quickAddStaff', icon: UserCog, tone: 'indigo' },
+  { tab: 'guardians', labelKey: 'quickAddParent', icon: UserSquare2, tone: 'emerald' },
+  { tab: 'permissions', labelKey: 'quickManagePermissions', icon: KeyRound, tone: 'blue' },
+  { tab: 'academic-admin', labelKey: 'quickManageClasses', icon: ClipboardCheck, tone: 'indigo' },
+  { tab: 'reports', labelKey: 'quickViewReports', icon: BarChart3, tone: 'amber' },
+  { tab: 'settings', labelKey: 'quickSchoolSettings', icon: Settings, tone: 'emerald' }
+];
 
 interface DashboardPageProps {
   onNavigate: (tab: string) => void;
@@ -128,6 +144,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   const now = new Date();
@@ -153,7 +170,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
       api.getNotifications(),
       api.getInvoices(),
       api.getPayments(),
-      api.getStaff()
+      api.getStaff(),
+      api.getAuditLogs()
     ]);
 
     const value = <T,>(index: number): T | null =>
@@ -169,6 +187,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
     setInvoices(value<Invoice[]>(5) ?? []);
     setPayments(value<Payment[]>(6) ?? []);
     setStaff(value<StaffMember[]>(7) ?? []);
+    setAuditLogs(value<AuditLogEntry[]>(8) ?? []);
 
     for (const result of results) {
       if (result.status === 'rejected') {
@@ -199,6 +218,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
   const canViewAttendance = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER','DEPUTY_HEAD','TEACHER','DISCIPLINE_OFFICER','ANIMATEUR'].includes(role ?? '');
   const canViewHealth = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER','NURSE'].includes(role ?? '');
   const canViewFinance = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER','ACCOUNTANT'].includes(role ?? '');
+  const isSchoolAdministrator = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER'].includes(role ?? '');
 
   if (loading) {
     return (
@@ -309,6 +329,37 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
           </div>
         )}
       </section>
+
+      {/* School Super Administrator control center */}
+      {isSchoolAdministrator && (
+        <section className="rounded-2xl border border-blue-200 bg-blue-50/60 p-5 shadow-xs">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-bold text-blue-900">{t('controlCenter')}</h2>
+              <p className="mt-1 text-xs text-blue-800/80">{t('controlCenterSubtitle')}</p>
+            </div>
+            <span className="rounded-full bg-blue-700 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
+              {t(`role_${role}` as TranslationKey)}
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+            {CONTROL_CENTER_ACTIONS.map(action => {
+              const Icon = action.icon;
+              return (
+                <button
+                  key={action.tab}
+                  type="button"
+                  onClick={() => onNavigate(action.tab)}
+                  className={`inline-flex flex-col items-center justify-center gap-2 rounded-xl border px-3 py-3 text-center text-[11px] font-bold transition-colors ${TONE_CLASSES[action.tone]} hover:brightness-95`}
+                >
+                  <Icon className="h-5 w-5" />
+                  {t(action.labelKey)}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* KPI Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -627,6 +678,44 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
               ))}
             </div>
           </div>
+
+          {/* Recent administrative activity (Headteacher only) */}
+          {isSchoolAdministrator && (
+            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <ClipboardList className="w-5 h-5 text-indigo-600" />
+                  <h3 className="text-sm font-bold text-slate-900">{t('recentAdminActivity')}</h3>
+                </div>
+                <button
+                  onClick={() => onNavigate('audit')}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                >
+                  <span>{t('view')}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="space-y-3">
+                {auditLogs.slice(0, 5).map(entry => (
+                  <div key={entry.id} className="flex items-start gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                    <div className="mt-0.5 rounded-lg bg-indigo-100 p-1.5 text-indigo-700">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-bold text-slate-800">{entry.action.replaceAll('_', ' ')}</p>
+                      <p className="mt-0.5 line-clamp-2 text-[10px] text-slate-600">{entry.details}</p>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        {entry.userName} · {new Date(entry.timestamp).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+                {auditLogs.length === 0 && (
+                  <p className="text-xs text-slate-500">{t('noRecentActivity')}</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

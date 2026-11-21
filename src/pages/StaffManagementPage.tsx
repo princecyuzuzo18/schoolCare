@@ -282,6 +282,38 @@ export const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ onNavi
     }
   };
 
+  const handleRestore = async (item: StaffDirectoryItem) => {
+    if (!window.confirm(t('confirmRestore'))) return;
+    setSaving(true);
+    setError('');
+    try {
+      await api.restoreStaffAccount(item.userId);
+      setSuccess(t('restoredNotice'));
+      setProfile(null);
+      setProfileForm(null);
+      await Promise.all([load(), refreshPermissions()]);
+    } catch (err) {
+      setError(errorMessage(err, t('staffLoadError')));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleResetAccess = async (item: StaffDirectoryItem) => {
+    if (!window.confirm(t('confirmResetAccess'))) return;
+    setSaving(true);
+    setError('');
+    try {
+      const result = await api.resetStaffAccess(item.userId);
+      setSuccess(`${t('accessResetNotice')} ${result.temporaryPassword}`);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err, t('staffLoadError')));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const openProfile = async (item: StaffDirectoryItem) => {
     setSaving(true);
     setError('');
@@ -905,10 +937,25 @@ export const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ onNavi
                 </button>
               )}
               {canArchive && profile.userId !== currentUser?.id && !isProtectedRole(profile.role) && (
-                <button type="button" disabled={saving} onClick={() => handleArchive(profile)} className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-bold text-red-700">
-                  <Archive className="w-3.5 h-3.5" />
-                  {t('archiveAccount')}
-                </button>
+                <>
+                  {profile.accountStatus === 'ARCHIVED' ? (
+                    <button type="button" disabled={saving} onClick={() => handleRestore(profile)} className="inline-flex items-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700">
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      {t('restore')}
+                    </button>
+                  ) : (
+                    <>
+                      <button type="button" disabled={saving} onClick={() => handleArchive(profile)} className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-bold text-red-700">
+                        <Archive className="w-3.5 h-3.5" />
+                        {t('archiveAccount')}
+                      </button>
+                      <button type="button" disabled={saving} onClick={() => handleResetAccess(profile)} className="inline-flex items-center gap-1 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-800">
+                        <KeyRound className="w-3.5 h-3.5" />
+                        {t('resetAccess')}
+                      </button>
+                    </>
+                  )}
+                </>
               )}
             </div>
           </div>

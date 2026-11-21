@@ -17,7 +17,12 @@ import {
   HomeworkAssignment,
   SchoolEvent,
   ReportCard,
-  AuditLogEntry
+  AuditLogEntry,
+  AcademicYear,
+  AcademicTerm,
+  AssessmentCategory,
+  GradingScale,
+  AcademicSettings
 } from '../src/types';
 
 export const initialSchool: School = {
@@ -1238,5 +1243,162 @@ export const initialAuditLogs: AuditLogEntry[] = [
     details: 'Recorded daily attendance for Level 4 SOD A. 36 Present, 1 Absent, 1 Late.',
     ipAddress: '197.243.18.44',
     timestamp: '2026-11-05T08:30:00Z'
+  }
+];
+
+// --- Academic management seed (additive; existing records are unchanged) ---
+
+export const initialAcademicYears: AcademicYear[] = [
+  {
+    id: 'ay-2025-2026',
+    schoolId: 'school-es-rubengera-01',
+    name: '2025 - 2026',
+    startDate: '2025-09-01',
+    endDate: '2026-08-31',
+    isActive: true,
+    createdAt: '2025-09-01T00:00:00Z'
+  }
+];
+
+export const initialTerms: AcademicTerm[] = [
+  {
+    id: 'term-2025-2026-1',
+    schoolId: 'school-es-rubengera-01',
+    academicYearId: 'ay-2025-2026',
+    name: 'Term 1',
+    isActive: false,
+    createdAt: '2025-09-01T00:00:00Z'
+  },
+  {
+    id: 'term-2025-2026-2',
+    schoolId: 'school-es-rubengera-01',
+    academicYearId: 'ay-2025-2026',
+    name: 'Term 2',
+    isActive: true,
+    createdAt: '2026-01-05T00:00:00Z'
+  },
+  {
+    id: 'term-2025-2026-3',
+    schoolId: 'school-es-rubengera-01',
+    academicYearId: 'ay-2025-2026',
+    name: 'Term 3',
+    isActive: false,
+    createdAt: '2026-05-04T00:00:00Z'
+  }
+];
+
+export const initialAssessmentCategories: AssessmentCategory[] = [
+  {
+    id: 'ac-coursework',
+    schoolId: 'school-es-rubengera-01',
+    code: 'COURSEWORK',
+    name: 'Coursework / Continuous Assessment',
+    maxMarks: 30,
+    weightPercentage: 30,
+    sortOrder: 1,
+    isActive: true,
+    createdAt: '2025-09-01T00:00:00Z'
+  },
+  {
+    id: 'ac-test',
+    schoolId: 'school-es-rubengera-01',
+    code: 'TEST',
+    name: 'Test',
+    maxMarks: 20,
+    weightPercentage: 20,
+    sortOrder: 2,
+    isActive: true,
+    createdAt: '2025-09-01T00:00:00Z'
+  },
+  {
+    id: 'ac-exam',
+    schoolId: 'school-es-rubengera-01',
+    code: 'EXAM',
+    name: 'Examination',
+    maxMarks: 50,
+    weightPercentage: 50,
+    sortOrder: 3,
+    isActive: true,
+    createdAt: '2025-09-01T00:00:00Z'
+  }
+];
+
+export const initialGradingScales: GradingScale[] = [
+  {
+    id: 'gs-reb-rtb-default',
+    schoolId: 'school-es-rubengera-01',
+    name: 'REB / RTB Default Scale',
+    passMark: 50,
+    isActive: true,
+    createdAt: '2025-09-01T00:00:00Z',
+    gradeBoundaries: [
+      { grade: 'A', minPercentage: 80, maxPercentage: 100, description: 'Excellent', descriptionRw: 'Indashyikirwa' },
+      { grade: 'B', minPercentage: 70, maxPercentage: 79.99, description: 'Very Good', descriptionRw: 'Nziza cyane' },
+      { grade: 'C', minPercentage: 60, maxPercentage: 69.99, description: 'Good', descriptionRw: 'Nziza' },
+      { grade: 'D', minPercentage: 50, maxPercentage: 59.99, description: 'Satisfactory', descriptionRw: 'Iruhuje' },
+      { grade: 'F', minPercentage: 0, maxPercentage: 49.99, description: 'Fail', descriptionRw: 'Ntibitsinze' }
+    ]
+  }
+];
+
+export const initialAcademicSettings: AcademicSettings[] = [
+  {
+    schoolId: 'school-es-rubengera-01',
+    academicYearId: 'ay-2025-2026',
+    termId: 'term-2025-2026-2',
+    gradingScaleId: 'gs-reb-rtb-default',
+    enableRanking: true,
+    enablePromotionDecision: false,
+    promotionPassAverage: 50,
+    commentsRequiredBeforeApproval: false,
+    submissionDeadlineDays: 14,
+    updatedAt: '2026-01-05T00:00:00Z'
+  }
+];
+
+export const initialClassSubjectAssignments = [
+  {
+    id: 'csa-l4-sod-web',
+    schoolId: 'school-es-rubengera-01',
+    academicYearId: 'ay-2025-2026',
+    termId: 'term-2025-2026-2',
+    classId: 'class-l4-sod-a',
+    subjectId: 'subj-web-dev',
+    teacherIds: ['user-teacher'],
+    isActive: true,
+    createdAt: '2026-01-05T00:00:00Z'
+  },
+  {
+    id: 'csa-l4-sod-db',
+    schoolId: 'school-es-rubengera-01',
+    academicYearId: 'ay-2025-2026',
+    termId: 'term-2025-2026-2',
+    classId: 'class-l4-sod-a',
+    subjectId: 'subj-db-design',
+    teacherIds: ['user-teacher'],
+    isActive: true,
+    createdAt: '2026-01-05T00:00:00Z'
+  },
+  {
+    id: 'csa-l4-sod-math',
+    schoolId: 'school-es-rubengera-01',
+    academicYearId: 'ay-2025-2026',
+    termId: 'term-2025-2026-2',
+    classId: 'class-l4-sod-a',
+    subjectId: 'subj-math',
+    teacherIds: ['user-teacher'],
+    isActive: true,
+    createdAt: '2026-01-05T00:00:00Z'
+  }
+];
+
+export const initialClassTeacherAssignments = [
+  {
+    id: 'cta-l4-sod-a',
+    schoolId: 'school-es-rubengera-01',
+    academicYearId: 'ay-2025-2026',
+    classId: 'class-l4-sod-a',
+    teacherId: 'user-teacher',
+    createdAt: '2026-01-05T00:00:00Z'
   }
 ];

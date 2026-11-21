@@ -10,10 +10,13 @@ import type { RowDataPacket } from 'mysql2';
 import { db } from './server/database';
 import { authenticateUser, requireAnyPermission, requirePermission, requireRole } from './server/rbac';
 import { checkMysqlHealth, closeMysqlPool, getExportSqlPath, getMysqlPool } from './server/mysqlConnector';
-import { getPasswordHash, verifyPassword } from './server/authCredentials';
-import { createSession, destroySession } from './server/sessions';
+import { getPasswordHash, replacePassword, verifyPassword } from './server/authCredentials';
+import { createSession, destroySession, invalidateUserSessions } from './server/sessions';
+import { buildAuthSessionView } from './server/authSession';
 import { ASSIGNABLE_STAFF_ROLES, getProfessionalTitle } from './src/roleCatalog';
 import { registerPublicSite } from './server/publicSite';
+import { registerAcademicRoutes } from './server/academics';
+import { registerReportPrintingRoutes } from './server/reportPrinting';
 import {
   DELEGATABLE_PERMISSIONS,
   PERMISSION_CATALOG,
@@ -24,10 +27,12 @@ import {
   assertCanArchiveStaff,
   assertCanAssignStaffRole,
   assertCanCreateStaffRole,
+  assertCanDefinePermissionGroup,
   assertCanEditStaff,
   assertCanGrantPermissions,
   assertCanManageInvitations,
   assertCanManageStaff,
+  assertCanResetStaffAccess,
   assertCanRevokePermissions,
   assertCanSuspendStaff,
   assertCanViewStaff,
@@ -46,6 +51,7 @@ import {
   getStaffDirectory,
   getStaffProfile,
   getStaffSummary,
+  restoreStaffAccount,
   updateStaffProfile
 } from './server/staffAdministration';
 import {
@@ -108,6 +114,7 @@ import {
   NotificationChannel,
   NotificationMessage,
   Payment,
+  PermissionGroup,
   PortalDashboardView,
   ResultSlipVerificationStatus,
   UserProfile,
@@ -424,12 +431,27 @@ function authorizeApiRequest(req: Request, res: Response, next: () => void): voi
     ['/reports', 'reports:read']
   ];
 
+  if (requestPath.startsWith('/academics') && method !== 'GET') {
+    // The granular academic powers are checked again inside each route. This
+    // gate only makes sure the account has at least one of them.
+    requireAnyPermission(
+      'academics.write',
+      'marks.write',
+      'marks.review',
+      'reports.generate',
+      'reports.publish',
+      'reports.distribute'
+    )(req, res, next);
+    return;
+  }
   if (requestPath === '/staff') {
     requirePermission(method === 'GET' ? 'staff.read' : 'staff.write')(req, res, next);
     return;
   }
   if (requestPath.startsWith('/schools') && method !== 'GET') {
-    requiresAdmin(req, res, next);
+    // Headteachers may edit their own school's settings; by-ID access is
+    // enforced in the route handler with assertSchoolRecordAccess.
+    requirePermission('school.write')(req, res, next);
     return;
   }
   if (requestPath.startsWith('/mysql')) {
@@ -460,7 +482,6 @@ registerPublicSite(app);
 app.use('/api', (req, res, next) => {
   const isPublicSchoolRead = req.method === 'GET' && /^\/schools(?:\/[^/]+)?$/.test(req.path);
   const isLogin = req.method === 'POST' && req.path === '/auth/login';
-  const isSessionCheck = req.method === 'GET' && req.path === '/auth/me';
   const isPasswordResetRequest = req.method === 'POST' && req.path === '/auth/password-reset/request';
   const isStaffActivation = req.method === 'POST' && req.path === '/staff/invitations/activate';
   const isPublicAccountSignup = req.path.startsWith('/public/accounts/');
@@ -468,7 +489,6 @@ app.use('/api', (req, res, next) => {
   if (
     isPublicSchoolRead ||
     isLogin ||
-    isSessionCheck ||
     isPasswordResetRequest ||
     isStaffActivation ||
     isPublicAccountSignup ||
@@ -491,6 +511,24 @@ function getActor(req: Request) {
   return req.user;
 }
 
+/**
+ * Resolve the school a request is allowed to read/write.
+ *
+ * School-level users are always scoped to the school stored on their account;
+ * a browser-supplied `schoolId` is ignored. Only the platform Super Admin may
+ * explicitly target another school.
+ */
+function getScopedSchoolId(req: Request): string {
+  const actor = getActor(req);
+  if (actor.role === 'SUPER_ADMIN') {
+    const fromQuery = req.query.schoolId;
+    const fromBody = typeof req.body?.schoolId === 'string' ? req.body.schoolId : undefined;
+    const requested = fromQuery ?? fromBody;
+    if (typeof requested === 'string' && requested.trim()) return requested.trim();
+  }
+  return actor.schoolId;
+}
+
 /** Student IDs a parent/student account is allowed to see. Staff return null (unrestricted). */
 function portalStudentIds(actor?: UserProfile | null): string[] | null {
   if (!actor) return null;
@@ -509,6 +547,33 @@ function assertPortalStudentAccess(actor: UserProfile, studentId: string): void 
 function scopeStudentsForActor<T extends { id: string }>(actor: UserProfile | undefined, students: T[]): T[] {
   const allowed = portalStudentIds(actor);
   return allowed ? students.filter(student => allowed.includes(student.id)) : students;
+}
+
+/**
+ * Reject any by-ID record that belongs to a different school. The platform
+ * Super Admin is the only actor allowed to work across schools.
+ */
+function assertSchoolRecordAccess(req: Request, recordSchoolId: string | undefined, entity = 'Record'): void {
+  const actor = getActor(req);
+  if (actor.role === 'SUPER_ADMIN') return;
+  if (!recordSchoolId || recordSchoolId !== actor.schoolId) {
+    throw new PermissionError(`${entity} is not available in your school.`);
+  }
+}
+
+/** Verify that a client-supplied student ID really belongs to the actor's school. */
+function assertStudentInSchool(req: Request, studentId: string): void {
+  if (!studentId) throw new PermissionError('A student from your school is required.');
+  const student = db.getStudentById(studentId);
+  assertSchoolRecordAccess(req, student?.schoolId, 'Student');
+}
+
+function respondWithSchoolAccessError(res: Response, error: unknown, context: string) {
+  if (error instanceof PermissionError) {
+    return res.status(403).json({ error: error.message });
+  }
+  console.error(`[School isolation] ${context}:`, error);
+  return res.status(500).json({ error: 'Unable to verify school access.' });
 }
 
 function respondWithPortalError(res: Response, error: unknown) {
@@ -579,11 +644,11 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     req.ip
   );
 
-  return res.json({ user });
+  return res.json(buildAuthSessionView(user));
 });
 
 app.get('/api/auth/me', (req: Request, res: Response) => {
-  return res.json({ user: req.user ?? null });
+  return res.json(buildAuthSessionView(getActor(req)));
 });
 
 app.post('/api/auth/logout', (req: Request, res: Response) => {
@@ -759,7 +824,9 @@ app.get('/api/portal/dashboard', requireRole('PARENT', 'STUDENT'), (req: Request
       attendance: db.getAttendance(actor.schoolId).filter(item => studentIds.has(item.studentId)),
       invoices: db.getInvoices(actor.schoolId).filter(item => studentIds.has(item.studentId)),
       payments: db.getPayments(actor.schoolId).filter(item => studentIds.has(item.studentId)),
-      reportCards: db.getReportCards(actor.schoolId).filter(item => studentIds.has(item.studentId)),
+      // Portals only receive reports that leadership has explicitly published.
+      reportCards: db.getReportCards(actor.schoolId, undefined, { publishedOnly: true })
+        .filter(item => studentIds.has(item.studentId)),
       timetable: dedupeById(timetable),
       homework: dedupeById(homework)
     };
@@ -864,7 +931,7 @@ app.post('/api/portal/payments', requireRole('PARENT'), (req: Request, res: Resp
 });
 
 app.get('/api/users', requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   return res.json(db.getUsers(schoolId));
 });
 
@@ -922,7 +989,7 @@ app.get('/api/staff/accounts', requirePermission('staff.read'), (req: Request, r
   try {
     const actor = getActor(req);
     assertCanViewStaff(actor);
-    const schoolId = actor.role === 'SUPER_ADMIN' ? (req.query.schoolId as string) || actor.schoolId : actor.schoolId;
+    const schoolId = getScopedSchoolId(req);
     return res.json(db.getStaffAccounts(schoolId).map(staffAccountView));
   } catch (error) {
     return respondWithStaffError(res, error);
@@ -933,7 +1000,7 @@ app.get('/api/staff/summary', requirePermission('staff.read'), (req: Request, re
   try {
     const actor = getActor(req);
     assertCanViewStaff(actor);
-    const schoolId = actor.role === 'SUPER_ADMIN' ? (req.query.schoolId as string) || actor.schoolId : actor.schoolId;
+    const schoolId = getScopedSchoolId(req);
     return res.json(getStaffSummary(schoolId));
   } catch (error) {
     return respondWithStaffError(res, error);
@@ -944,7 +1011,7 @@ app.get('/api/staff/directory', requirePermission('staff.read'), (req: Request, 
   try {
     const actor = getActor(req);
     assertCanViewStaff(actor);
-    const schoolId = actor.role === 'SUPER_ADMIN' ? (req.query.schoolId as string) || actor.schoolId : actor.schoolId;
+    const schoolId = getScopedSchoolId(req);
     return res.json(
       getStaffDirectory(schoolId, {
         search: req.query.search as string,
@@ -969,6 +1036,266 @@ app.get('/api/staff/delegated-administrators', requirePermission('permissions.vi
         .filter(account => account.status !== 'ARCHIVED' && (account.delegatedPermissions || []).length > 0)
         .map(staffAccountView)
     );
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
+app.get(
+  '/api/staff/accounts/:userId/permission-grants',
+  requirePermission('permissions.view'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const target = db.getUserById(req.params.userId);
+      if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+      assertSchoolRecordAccess(req, target.schoolId, 'Staff account');
+      const grants = db
+        .getPermissionGrants(getScopedSchoolId(req))
+        .filter(record => record.userId === target.id)
+        .sort((a, b) => new Date(b.grantedAt).getTime() - new Date(a.grantedAt).getTime());
+      return res.json(grants);
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/staff/accounts/:userId/permissions/revoke-one',
+  requirePermission('permissions.revoke'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const target = db.getUserById(req.params.userId);
+      if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+      assertCanRevokePermissions(actor, target);
+      const permission = typeof req.body?.permission === 'string'
+        ? canonicalPermission(req.body.permission)
+        : '';
+      if (!permission) return res.status(400).json({ error: 'A permission is required.' });
+      const previous = (target.delegatedPermissions || []).map(canonicalPermission);
+      if (!previous.includes(permission)) {
+        return res.status(400).json({ error: 'This permission is not delegated to that account.' });
+      }
+      const permissions = previous.filter(item => item !== permission);
+      db.setDelegatedPermissions(target.id, permissions);
+
+      const staffCreationPermissions = ['staff.create', 'staff.assign_roles', 'invitations.manage'];
+      if (!permissions.some(item => staffCreationPermissions.includes(item))) {
+        const user = db.getUserById(target.id);
+        if (user) user.delegatedRoleScope = [];
+        const account = db.getStaffAccountByUserId(target.id);
+        if (account) account.delegatedRoleScope = [];
+        db.persist();
+      }
+
+      db.createPermissionGrant({
+        id: `grant-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+        schoolId: actor.schoolId,
+        userId: target.id,
+        previousPermissions: previous,
+        permissions,
+        previousRoleScope: target.delegatedRoleScope || [],
+        roleScope: db.getUserById(target.id)?.delegatedRoleScope || [],
+        grantedBy: actor.id,
+        grantedAt: new Date().toISOString(),
+        revokedAt: new Date().toISOString(),
+        revokedBy: actor.id
+      });
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STAFF_PERMISSION_REVOKED',
+        'STAFF_ACCOUNT',
+        target.id,
+        `Revoked one delegated permission: ${permission}`,
+        req.ip
+      );
+      const account = db.getStaffAccountByUserId(target.id);
+      return res.json({ user: db.getUserById(target.id), account: account ? staffAccountView(account) : null });
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.get('/api/permission-groups', requirePermission('permissions.view'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    return res.json(db.getPermissionGroups(getScopedSchoolId(req)));
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
+app.post('/api/permission-groups', requirePermission('permissions.delegate'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (name.length < 2 || name.length > 80) {
+      return res.status(400).json({ error: 'Group name must be between 2 and 80 characters.' });
+    }
+    const rawPermissions = Array.isArray(req.body?.permissions) ? req.body.permissions : [];
+    if (!rawPermissions.every((permission: unknown) => typeof permission === 'string')) {
+      return res.status(400).json({ error: 'Permissions must be a list of permission names.' });
+    }
+    if (rawPermissions.length === 0) {
+      return res.status(400).json({ error: 'Select at least one permission for the group.' });
+    }
+    const roleScope = Array.isArray(req.body?.roleScope)
+      ? (req.body.roleScope.filter((role: unknown) =>
+          typeof role === 'string' && ASSIGNABLE_STAFF_ROLES.includes(role as UserRole)
+        ) as UserRole[])
+      : undefined;
+    const permissions = assertCanDefinePermissionGroup(actor, rawPermissions as string[], roleScope);
+    const group: PermissionGroup = {
+      id: `perm-group-${crypto.randomUUID()}`,
+      schoolId: actor.schoolId,
+      name,
+      description: typeof req.body?.description === 'string' ? req.body.description.trim().slice(0, 500) : undefined,
+      permissions,
+      roleScope,
+      createdBy: actor.id,
+      createdAt: new Date().toISOString()
+    };
+    db.createPermissionGroup(group);
+    db.logAudit(
+      actor.schoolId,
+      actor.id,
+      actor.fullName,
+      actor.role,
+      'PERMISSION_GROUP_CREATED',
+      'PERMISSION_GROUP',
+      group.id,
+      `Created permission group "${group.name}" with ${permissions.length} permissions.`,
+      req.ip
+    );
+    return res.status(201).json(group);
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
+app.put('/api/permission-groups/:id', requirePermission('permissions.delegate'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    const group = db.getPermissionGroupById(req.params.id);
+    if (!group || group.schoolId !== actor.schoolId || group.archivedAt) {
+      return res.status(404).json({ error: 'Permission group not found.' });
+    }
+    const rawPermissions = Array.isArray(req.body?.permissions) ? req.body.permissions : [];
+    if (!rawPermissions.every((permission: unknown) => typeof permission === 'string')) {
+      return res.status(400).json({ error: 'Permissions must be a list of permission names.' });
+    }
+    if (rawPermissions.length === 0) {
+      return res.status(400).json({ error: 'Select at least one permission for the group.' });
+    }
+    const roleScope = Array.isArray(req.body?.roleScope)
+      ? (req.body.roleScope.filter((role: unknown) =>
+          typeof role === 'string' && ASSIGNABLE_STAFF_ROLES.includes(role as UserRole)
+        ) as UserRole[])
+      : undefined;
+    const permissions = assertCanDefinePermissionGroup(actor, rawPermissions as string[], roleScope);
+    const updated = db.updatePermissionGroup(group.id, {
+      name: typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 80) : group.name,
+      description: typeof req.body?.description === 'string' ? req.body.description.trim().slice(0, 500) : group.description,
+      permissions,
+      roleScope,
+      updatedBy: actor.id,
+      updatedAt: new Date().toISOString()
+    });
+    db.logAudit(
+      actor.schoolId,
+      actor.id,
+      actor.fullName,
+      actor.role,
+      'PERMISSION_GROUP_UPDATED',
+      'PERMISSION_GROUP',
+      group.id,
+      `Updated permission group "${group.name}".`,
+      req.ip
+    );
+    return res.json(updated);
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
+app.post('/api/permission-groups/:id/assign', requirePermission('permissions.delegate'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    const group = db.getPermissionGroupById(req.params.id);
+    if (!group || group.schoolId !== actor.schoolId || group.archivedAt) {
+      return res.status(404).json({ error: 'Permission group not found.' });
+    }
+    const target = db.getUserById(String(req.body?.userId || ''));
+    if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+    assertCanGrantPermissions(actor, target, group.permissions, group.roleScope);
+
+    const previousPermissions = (target.delegatedPermissions || []).map(canonicalPermission);
+    db.setDelegatedPermissions(target.id, group.permissions);
+    if (group.roleScope || (target.delegatedRoleScope || []).length > 0) {
+      const user = db.getUserById(target.id);
+      if (user) user.delegatedRoleScope = group.roleScope || [];
+      const account = db.getStaffAccountByUserId(target.id);
+      if (account) account.delegatedRoleScope = group.roleScope || [];
+      db.persist();
+    }
+    db.createPermissionGrant({
+      id: `grant-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+      schoolId: actor.schoolId,
+      userId: target.id,
+      previousPermissions,
+      permissions: group.permissions,
+      previousRoleScope: target.delegatedRoleScope || [],
+      roleScope: group.roleScope || [],
+      grantedBy: actor.id,
+      grantedAt: new Date().toISOString()
+    });
+    db.logAudit(
+      actor.schoolId,
+      actor.id,
+      actor.fullName,
+      actor.role,
+      'PERMISSION_GROUP_ASSIGNED',
+      'STAFF_ACCOUNT',
+      target.id,
+      `Applied permission group "${group.name}" to ${target.fullName}.`,
+      req.ip
+    );
+    const account = db.getStaffAccountByUserId(target.id);
+    return res.json({ user: db.getUserById(target.id), account: account ? staffAccountView(account) : null });
+  } catch (error) {
+    return respondWithStaffError(res, error);
+  }
+});
+
+app.delete('/api/permission-groups/:id', requirePermission('permissions.delegate'), (req: Request, res: Response) => {
+  try {
+    const actor = getActor(req);
+    const group = db.getPermissionGroupById(req.params.id);
+    if (!group || group.schoolId !== actor.schoolId || group.archivedAt) {
+      return res.status(404).json({ error: 'Permission group not found.' });
+    }
+    db.updatePermissionGroup(group.id, {
+      archivedAt: new Date().toISOString(),
+      archivedBy: actor.id
+    });
+    db.logAudit(
+      actor.schoolId,
+      actor.id,
+      actor.fullName,
+      actor.role,
+      'PERMISSION_GROUP_ARCHIVED',
+      'PERMISSION_GROUP',
+      group.id,
+      `Archived permission group "${group.name}"; existing staff grants are unchanged.`,
+      req.ip
+    );
+    return res.json({ success: true });
   } catch (error) {
     return respondWithStaffError(res, error);
   }
@@ -1270,7 +1597,8 @@ app.post(
       const target = db.getUserById(req.params.userId);
       if (!target) return res.status(404).json({ error: 'Staff account not found.' });
       assertCanArchiveStaff(actor, target);
-      const archived = archiveStaffAccount(actor.schoolId, target.id, actor.id);
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : undefined;
+      const archived = archiveStaffAccount(actor.schoolId, target.id, actor.id, reason || undefined);
       if (!archived) return res.status(404).json({ error: 'Staff account not found.' });
       db.logAudit(
         actor.schoolId,
@@ -1287,6 +1615,86 @@ app.post(
     } catch (error) {
       return respondWithStaffError(res, error);
     }
+  }
+);
+
+app.post(
+  '/api/staff/accounts/:userId/restore',
+  requirePermission('staff.archive'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const target = db.getUserById(req.params.userId);
+      if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+      assertCanArchiveStaff(actor, target);
+      const restored = restoreStaffAccount(actor.schoolId, target.id, actor.id);
+      if (!restored) {
+        return res.status(400).json({ error: 'Only an archived staff account can be restored.' });
+      }
+      db.logAudit(
+        actor.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STAFF_ACCOUNT_RESTORED',
+        'STAFF_ACCOUNT',
+        target.id,
+        `Restored staff record for ${restored.item.fullName}; delegated access must be re-granted`,
+        req.ip
+      );
+      return res.json(restored);
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/staff/accounts/:userId/reset-access',
+  requirePermission('staff.write'),
+  async (req: Request, res: Response) => {
+    const actor = getActor(req);
+    const target = db.getUserById(req.params.userId);
+    if (!target) return res.status(404).json({ error: 'Staff account not found.' });
+
+    try {
+      assertCanResetStaffAccess(actor, target);
+    } catch (error) {
+      return respondWithStaffError(res, error);
+    }
+
+    // Generate a strong one-time password. It is returned exactly once and
+    // never written to the audit log or any other persisted record.
+    const temporaryPassword = `Sc-${crypto.randomBytes(15).toString('base64url')}`;
+    try {
+      await replacePassword(target.id, temporaryPassword);
+    } catch (error) {
+      console.error('[Staff] Password replacement failed:', error);
+      return res.status(503).json({
+        error: 'The MariaDB service is unavailable. The access reset was not applied; try again.'
+      });
+    }
+
+    const credentialsResetAt = new Date().toISOString();
+    db.setCredentialsResetAt(target.id, credentialsResetAt);
+    invalidateUserSessions(target.id);
+    db.logAudit(
+      actor.schoolId,
+      actor.id,
+      actor.fullName,
+      actor.role,
+      'STAFF_ACCESS_RESET',
+      'STAFF_ACCOUNT',
+      target.id,
+      `Reset access for ${target.fullName}: all sessions revoked and password replaced. The temporary password was shown once to the administrator.`,
+      req.ip
+    );
+
+    return res.json({
+      temporaryPassword,
+      credentialsResetAt,
+      user: db.getUserById(target.id)
+    });
   }
 );
 
@@ -1558,7 +1966,13 @@ app.get('/api/schools/:id', (req: Request, res: Response) => {
   return res.json(school);
 });
 
-app.patch('/api/schools/:id', (req: Request, res: Response) => {
+app.patch('/api/schools/:id', requirePermission('school.write'), (req: Request, res: Response) => {
+  try {
+    assertSchoolRecordAccess(req, req.params.id, 'School');
+  } catch (error) {
+    return respondWithSchoolAccessError(res, error, 'school settings update');
+  }
+
   const updated = db.updateSchool(req.params.id, req.body);
   if (!updated) return res.status(404).json({ error: 'School not found' });
   const actor = getActor(req);
@@ -1579,7 +1993,7 @@ app.patch('/api/schools/:id', (req: Request, res: Response) => {
 // --- Students ---
 app.get('/api/students', requirePermission('students:read'), async (req: Request, res: Response) => {
   try {
-    const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+    const schoolId = getScopedSchoolId(req);
     const classId = req.query.classId as string | undefined;
     const search = req.query.search as string | undefined;
     const actor = req.user;
@@ -1662,6 +2076,12 @@ app.get('/api/students/:id', requirePermission('students:read'), (req: Request, 
   const student = db.getStudentById(req.params.id);
   if (!student) return res.status(404).json({ error: 'Student not found' });
 
+  try {
+    assertSchoolRecordAccess(req, student.schoolId, 'Student');
+  } catch (error) {
+    return respondWithSchoolAccessError(res, error, 'student detail');
+  }
+
   const actor = req.user;
   try {
     if (actor) assertPortalStudentAccess(actor, student.id);
@@ -1688,7 +2108,7 @@ app.post('/api/students', requirePermission('students:write'), async (req: Reque
     }
 
     if (!mysqlPool || !mysqlStatus.connected) {
-      const schoolId = body.schoolId || 'school-es-rubengera-01';
+      const schoolId = getScopedSchoolId(req);
       const classId = body.classId || 'class-l4-sod-a';
       const fallbackClass = db.getClasses(schoolId).find(cls => cls.id === classId) ?? db.getClasses(schoolId)[0];
       const newStudent = {
@@ -1728,7 +2148,7 @@ app.post('/api/students', requirePermission('students:write'), async (req: Reque
       return res.status(201).json(created);
     }
 
-    const schoolId = body.schoolId || 'school-es-rubengera-01';
+    const schoolId = getScopedSchoolId(req);
     const classId = body.classId || 'class-l4-sod-a';
 
     const [classRows] = await mysqlPool.execute(
@@ -1815,6 +2235,8 @@ app.patch('/api/students/:id', requirePermission('students:write'), async (req: 
     const studentId = req.params.id;
     const body = req.body;
 
+    assertStudentInSchool(req, studentId);
+
     if (!mysqlPool || !mysqlStatus.connected) {
       const existing = db.getStudentById(studentId);
       if (!existing) {
@@ -1859,8 +2281,8 @@ app.patch('/api/students/:id', requirePermission('students:write'), async (req: 
     }
 
     const [existingRows] = await mysqlPool.execute(
-      'SELECT * FROM students WHERE id = ?',
-      [studentId]
+      'SELECT * FROM students WHERE id = ? AND school_id = ?',
+      [studentId, getScopedSchoolId(req)]
     );
 
     const existing = (existingRows as any[])[0];
@@ -1934,17 +2356,17 @@ app.patch('/api/students/:id', requirePermission('students:write'), async (req: 
     }
 
     if (updates.length > 0) {
-      values.push(studentId);
+      values.push(getScopedSchoolId(req), studentId);
 
       await mysqlPool.execute(
-        `UPDATE students SET ${updates.join(', ')} WHERE id = ?`,
+        `UPDATE students SET ${updates.join(', ')} WHERE school_id = ? AND id = ?`,
         values
       );
     }
 
     const [updatedRows] = await mysqlPool.execute(
-      'SELECT * FROM students WHERE id = ?',
-      [studentId]
+      'SELECT * FROM students WHERE id = ? AND school_id = ?',
+      [studentId, getScopedSchoolId(req)]
     );
 
     const row = (updatedRows as any[])[0];
@@ -1989,6 +2411,9 @@ app.patch('/api/students/:id', requirePermission('students:write'), async (req: 
     return res.json(updated);
 
   } catch (error: any) {
+    if (error instanceof PermissionError) {
+      return res.status(403).json({ error: error.message });
+    }
     console.error('[MySQL] Student update failed:', error);
 
     return res.status(500).json({
@@ -1996,9 +2421,83 @@ app.patch('/api/students/:id', requirePermission('students:write'), async (req: 
     });
   }
 });
+app.post(
+  '/api/students/:id/archive',
+  requirePermission('students:write'),
+  (req: Request, res: Response) => {
+    try {
+      assertStudentInSchool(req, req.params.id);
+      const actor = getActor(req);
+      const student = db.getStudentById(req.params.id);
+      if (!student) return res.status(404).json({ error: 'Student not found' });
+      if (student.archivedAt) return res.status(400).json({ error: 'Student is already archived.' });
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : '';
+      if (!reason) return res.status(400).json({ error: 'A reason is required to archive a learner.' });
+      const archived = db.updateStudent(student.id, {
+        archivedAt: new Date().toISOString(),
+        archivedBy: actor.id,
+        archiveReason: reason,
+        archivedFromStatus: student.enrollmentStatus
+      });
+      const user = db.getUserByStudentId(student.id);
+      if (user) db.setUserActive(user.id, false);
+      db.logAudit(
+        student.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STUDENT_ARCHIVED',
+        'STUDENT',
+        student.id,
+        `Archived learner ${student.firstName} ${student.lastName}. Reason: ${reason}. Academic and financial history preserved.`,
+        req.ip
+      );
+      return res.json(archived);
+    } catch (error) {
+      return respondWithSchoolAccessError(res, error, 'student archive');
+    }
+  }
+);
+
+app.post(
+  '/api/students/:id/restore',
+  requirePermission('students:write'),
+  (req: Request, res: Response) => {
+    try {
+      assertStudentInSchool(req, req.params.id);
+      const actor = getActor(req);
+      const student = db.getStudentById(req.params.id);
+      if (!student) return res.status(404).json({ error: 'Student not found' });
+      if (!student.archivedAt) return res.status(400).json({ error: 'Student is not archived.' });
+      const restored = db.updateStudent(student.id, {
+        archivedAt: undefined,
+        archivedBy: undefined,
+        archiveReason: undefined,
+        archivedFromStatus: undefined
+      });
+      const user = db.getUserByStudentId(student.id);
+      if (user) db.setUserActive(user.id, true);
+      db.logAudit(
+        student.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'STUDENT_RESTORED',
+        'STUDENT',
+        student.id,
+        `Restored learner ${student.firstName} ${student.lastName} without deleting historical records.`,
+        req.ip
+      );
+      return res.json(restored);
+    } catch (error) {
+      return respondWithSchoolAccessError(res, error, 'student restore');
+    }
+  }
+);
+
 // --- Guardians & Links ---
 app.get('/api/guardians', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   const guardians = db.getGuardians(schoolId);
   const allowed = portalStudentIds(req.user);
   if (!allowed) return res.json(guardians);
@@ -2012,9 +2511,14 @@ app.get('/api/guardians', (req: Request, res: Response) => {
 app.post('/api/guardians', (req: Request, res: Response) => {
   const actor = getActor(req);
   const body = req.body;
+  try {
+    if (body.studentId) assertStudentInSchool(req, String(body.studentId));
+  } catch (error) {
+    return respondWithSchoolAccessError(res, error, 'guardian link');
+  }
   const newGuardian = {
     id: `grd-${Date.now()}`,
-    schoolId: body.schoolId || 'school-es-rubengera-01',
+    schoolId: getScopedSchoolId(req),
     fullName: body.fullName,
     relationship: body.relationship || 'GUARDIAN',
     phone: body.phone,
@@ -2047,9 +2551,10 @@ app.post('/api/guardians', (req: Request, res: Response) => {
 
 app.get('/api/guardians/student/:studentId', (req: Request, res: Response) => {
   try {
+    assertStudentInSchool(req, req.params.studentId);
     if (req.user) assertPortalStudentAccess(req.user, req.params.studentId);
   } catch (error) {
-    return respondWithPortalError(res, error);
+    return respondWithSchoolAccessError(res, error, 'guardian list');
   }
   return res.json(db.getGuardiansForStudent(req.params.studentId));
 });
@@ -2072,9 +2577,89 @@ app.get('/api/guardians/my-children/:guardianId', requireRole('PARENT'), (req: R
   return res.json(children);
 });
 
+app.post(
+  '/api/guardians/:id/archive',
+  requirePermission('guardians:write'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const guardian = db.getGuardianById(req.params.id);
+      if (!guardian) return res.status(404).json({ error: 'Parent/guardian not found' });
+      try {
+        assertSchoolRecordAccess(req, guardian.schoolId, 'Parent/guardian');
+      } catch (error) {
+        return respondWithSchoolAccessError(res, error, 'guardian archive');
+      }
+      if (guardian.archivedAt) return res.status(400).json({ error: 'Parent/guardian is already archived.' });
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : '';
+      if (!reason) return res.status(400).json({ error: 'A reason is required to archive a parent record.' });
+      const archived = db.updateGuardian(guardian.id, {
+        archivedAt: new Date().toISOString(),
+        archivedBy: actor.id,
+        archiveReason: reason
+      });
+      const user = db.getUserByGuardianId(guardian.id);
+      if (user) db.setUserActive(user.id, false);
+      db.logAudit(
+        guardian.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'GUARDIAN_ARCHIVED',
+        'GUARDIAN',
+        guardian.id,
+        `Archived parent/guardian ${guardian.fullName}. Reason: ${reason}. Links and history preserved.`,
+        req.ip
+      );
+      return res.json(archived);
+    } catch (error) {
+      return respondWithSchoolAccessError(res, error, 'guardian archive');
+    }
+  }
+);
+
+app.post(
+  '/api/guardians/:id/restore',
+  requirePermission('guardians:write'),
+  (req: Request, res: Response) => {
+    try {
+      const actor = getActor(req);
+      const guardian = db.getGuardianById(req.params.id);
+      if (!guardian) return res.status(404).json({ error: 'Parent/guardian not found' });
+      try {
+        assertSchoolRecordAccess(req, guardian.schoolId, 'Parent/guardian');
+      } catch (error) {
+        return respondWithSchoolAccessError(res, error, 'guardian restore');
+      }
+      if (!guardian.archivedAt) return res.status(400).json({ error: 'Parent/guardian is not archived.' });
+      const restored = db.updateGuardian(guardian.id, {
+        archivedAt: undefined,
+        archivedBy: undefined,
+        archiveReason: undefined
+      });
+      const user = db.getUserByGuardianId(guardian.id);
+      if (user) db.setUserActive(user.id, true);
+      db.logAudit(
+        guardian.schoolId,
+        actor.id,
+        actor.fullName,
+        actor.role,
+        'GUARDIAN_RESTORED',
+        'GUARDIAN',
+        guardian.id,
+        `Restored parent/guardian ${guardian.fullName} without deleting historical records.`,
+        req.ip
+      );
+      return res.json(restored);
+    } catch (error) {
+      return respondWithSchoolAccessError(res, error, 'guardian restore');
+    }
+  }
+);
+
 // --- Attendance ---
 app.get('/api/attendance', requirePermission('attendance:read'), (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   const date = req.query.date as string | undefined;
   const classId = req.query.classId as string | undefined;
   const records = db.getAttendance(schoolId, date, classId);
@@ -2089,10 +2674,22 @@ app.post('/api/attendance/batch', requirePermission('attendance:write'), (req: R
     return res.status(400).json({ error: 'records array required' });
   }
 
-  const saved = db.saveAttendanceBatch(records);
+  const schoolId = getScopedSchoolId(req);
+  try {
+    for (const record of records) {
+      assertStudentInSchool(req, String(record.studentId || ''));
+    }
+  } catch (error) {
+    return respondWithSchoolAccessError(res, error, 'attendance batch');
+  }
+
+  // Never persist a school supplied by the browser; every record belongs to
+  // the authenticated actor's school.
+  const scopedRecords = records.map(record => ({ ...record, schoolId }));
+  const saved = db.saveAttendanceBatch(scopedRecords);
 
   if (req.body.notifyAbsences) {
-    const absentRecords = records.filter(r => r.status === 'ABSENT');
+    const absentRecords = scopedRecords.filter(r => r.status === 'ABSENT');
     for (const rec of absentRecords) {
       const guardians = db.getGuardiansForStudent(rec.studentId);
       for (const item of guardians) {
@@ -2119,14 +2716,14 @@ app.post('/api/attendance/batch', requirePermission('attendance:write'), (req: R
   }
 
   db.logAudit(
-    records[0]?.schoolId || 'school-es-rubengera-01',
+    schoolId,
     actor.id,
     actor.fullName,
     actor.role,
     'RECORD_ATTENDANCE',
     'ATTENDANCE',
-    `batch-${records.length}`,
-    `Recorded attendance for ${records.length} students.`,
+    `batch-${scopedRecords.length}`,
+    `Recorded attendance for ${scopedRecords.length} students.`,
     req.ip
   );
 
@@ -2161,7 +2758,7 @@ app.post('/api/attendance/:id/explain', (req: Request, res: Response) => {
 
 // --- Health & Emergency Incidents ---
 app.get('/api/health-incidents', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   const incidents = db.getHealthIncidents(schoolId);
   const allowed = portalStudentIds(req.user);
   return res.json(allowed ? incidents.filter(incident => allowed.includes(incident.studentId)) : incidents);
@@ -2171,6 +2768,7 @@ app.get('/api/health-incidents/:id', (req: Request, res: Response) => {
   const incident = db.getHealthIncidentById(req.params.id);
   if (!incident) return res.status(404).json({ error: 'Incident not found' });
   try {
+    assertSchoolRecordAccess(req, incident.schoolId, 'Health incident');
     if (req.user) assertPortalStudentAccess(req.user, incident.studentId);
   } catch (error) {
     return respondWithPortalError(res, error);
@@ -2181,11 +2779,16 @@ app.get('/api/health-incidents/:id', (req: Request, res: Response) => {
 app.post('/api/health-incidents', (req: Request, res: Response) => {
   const actor = getActor(req);
   const body = req.body;
+  try {
+    assertStudentInSchool(req, String(body.studentId || ''));
+  } catch (error) {
+    return respondWithSchoolAccessError(res, error, 'health incident');
+  }
   const refNum = `EMG-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`;
 
   const newIncident: HealthIncident = {
     id: `inc-${Date.now()}`,
-    schoolId: body.schoolId || 'school-es-rubengera-01',
+    schoolId: getScopedSchoolId(req),
     referenceNumber: refNum,
     studentId: body.studentId,
     studentName: body.studentName,
@@ -2261,9 +2864,10 @@ app.post('/api/health-incidents/:id/action', (req: Request, res: Response) => {
   const existing = db.getHealthIncidentById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Incident not found' });
   try {
+    assertSchoolRecordAccess(req, existing.schoolId, 'Health incident');
     assertPortalStudentAccess(actor, existing.studentId);
   } catch (error) {
-    return respondWithPortalError(res, error);
+    return respondWithSchoolAccessError(res, error, 'health incident action');
   }
   const { action } = req.body;
   const updated = db.addIncidentAction(req.params.id, action, actor.fullName);
@@ -2276,9 +2880,10 @@ app.post('/api/health-incidents/:id/acknowledge', (req: Request, res: Response) 
   const existing = db.getHealthIncidentById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Incident not found' });
   try {
+    assertSchoolRecordAccess(req, existing.schoolId, 'Health incident');
     assertPortalStudentAccess(actor, existing.studentId);
   } catch (error) {
-    return respondWithPortalError(res, error);
+    return respondWithSchoolAccessError(res, error, 'health incident acknowledgement');
   }
   const { notes } = req.body;
   const updated = db.acknowledgeIncident(req.params.id, notes);
@@ -2299,7 +2904,7 @@ app.post('/api/health-incidents/:id/acknowledge', (req: Request, res: Response) 
 
 // --- Notifications Hub ---
 app.get('/api/notifications', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   return res.json(db.getNotifications(schoolId));
 });
 
@@ -2347,7 +2952,7 @@ app.post('/api/notifications/send', (req: Request, res: Response) => {
 
   const newMsg: NotificationMessage = {
     id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-    schoolId: body.schoolId || 'school-es-rubengera-01',
+    schoolId: getScopedSchoolId(req),
     recipientId,
     recipientName,
     recipientPhone,
@@ -2379,6 +2984,15 @@ app.post('/api/notifications/send', (req: Request, res: Response) => {
 });
 
 app.post('/api/notifications/:id/acknowledge', (req: Request, res: Response) => {
+  const notification = db
+    .getNotifications(getScopedSchoolId(req))
+    .find(item => item.id === req.params.id);
+  if (!notification) return res.status(404).json({ error: 'Notification not found' });
+  try {
+    assertSchoolRecordAccess(req, notification.schoolId, 'Notification');
+  } catch (error) {
+    return respondWithSchoolAccessError(res, error, 'notification acknowledgement');
+  }
   const updated = db.updateNotificationStatus(req.params.id, 'ACKNOWLEDGED');
   if (!updated) return res.status(404).json({ error: 'Notification not found' });
   return res.json(updated);
@@ -2386,12 +3000,12 @@ app.post('/api/notifications/:id/acknowledge', (req: Request, res: Response) => 
 
 // --- Finance ---
 app.get('/api/finance/fee-structures', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   return res.json(db.getFeeStructures(schoolId));
 });
 
 app.get('/api/finance/invoices', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   const studentId = req.query.studentId as string | undefined;
   const allowed = portalStudentIds(req.user);
   if (studentId && allowed && !allowed.includes(studentId)) {
@@ -2402,7 +3016,7 @@ app.get('/api/finance/invoices', (req: Request, res: Response) => {
 });
 
 app.get('/api/finance/payments', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   const studentId = req.query.studentId as string | undefined;
   const allowed = portalStudentIds(req.user);
   if (studentId && allowed && !allowed.includes(studentId)) {
@@ -2416,15 +3030,22 @@ app.post('/api/finance/payments', (req: Request, res: Response) => {
   const actor = getActor(req);
   const body = req.body;
   try {
+    assertStudentInSchool(req, String(body.studentId || ''));
     assertPortalStudentAccess(actor, String(body.studentId || ''));
   } catch (error) {
-    return respondWithPortalError(res, error);
+    return respondWithSchoolAccessError(res, error, 'payment student');
+  }
+  if (body.invoiceId) {
+    const invoice = db.getInvoices(getScopedSchoolId(req)).find(item => item.id === body.invoiceId);
+    if (!invoice) {
+      return res.status(403).json({ error: 'Invoice is not available in your school.' });
+    }
   }
   const receiptNo = `REC-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
 
   const newPayment: Payment = {
     id: `pay-${Date.now()}`,
-    schoolId: body.schoolId || 'school-es-rubengera-01',
+    schoolId: getScopedSchoolId(req),
     invoiceId: body.invoiceId,
     receiptNumber: receiptNo,
     studentId: body.studentId,
@@ -2455,47 +3076,51 @@ app.post('/api/finance/payments', (req: Request, res: Response) => {
 
 // --- Academics & Report Cards ---
 app.get('/api/academics/classes', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   return res.json(db.getClasses(schoolId));
 });
 
 app.get('/api/academics/subjects', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   return res.json(db.getSubjects(schoolId));
 });
 
 app.get('/api/academics/report-cards', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   const studentId = req.query.studentId as string | undefined;
   const allowed = portalStudentIds(req.user);
   if (studentId && allowed && !allowed.includes(studentId)) {
     return res.status(403).json({ error: 'You can only access records linked to your own account.' });
   }
-  const cards = db.getReportCards(schoolId, studentId);
+  // Students and parents may only see report cards that have been published.
+  const cards = db.getReportCards(schoolId, studentId, allowed ? { publishedOnly: true } : undefined);
   return res.json(allowed ? cards.filter(card => allowed.includes(card.studentId)) : cards);
 });
 
+registerAcademicRoutes(app);
+registerReportPrintingRoutes(app);
+
 // --- Staff, Timetable, Homework, Events, Audit ---
 app.get('/api/staff', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   return res.json(db.getStaff(schoolId));
 });
 
 app.get('/api/timetable', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   const classId = req.query.classId as string | undefined;
   return res.json(db.getTimetable(schoolId, classId));
 });
 
 app.get('/api/homework', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   const classId = req.query.classId as string | undefined;
   return res.json(db.getHomework(schoolId, classId));
 });
 
 // --- Executive Reports & Analytics Engine ---
 app.get('/api/reports/analytics', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   const term = (req.query.term as string) || 'Term 1';
 
   const students = db.getStudents(schoolId);
@@ -2679,7 +3304,7 @@ app.delete('/api/modules/:moduleKey/:id', requireModuleAccess('write'), (req: Re
 
 // --- Events CRUD ---
 app.get('/api/events', (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   return res.json(db.getEvents(schoolId));
 });
 
@@ -2688,7 +3313,7 @@ app.post('/api/events', (req: Request, res: Response) => {
   const body = req.body;
   const newEvent = {
     id: `evt-${Date.now()}`,
-    schoolId: body.schoolId || 'school-es-rubengera-01',
+    schoolId: getScopedSchoolId(req),
     titleEn: body.titleEn || 'School Event',
     titleRw: body.titleRw || 'Gahunda y’Ishuri',
     descriptionEn: body.descriptionEn || '',
@@ -2715,7 +3340,7 @@ app.post('/api/events', (req: Request, res: Response) => {
 });
 
 app.get('/api/audit-logs', requirePermission('audit.review'), (req: Request, res: Response) => {
-  const schoolId = (req.query.schoolId as string) || 'school-es-rubengera-01';
+  const schoolId = getScopedSchoolId(req);
   return res.json(db.getAuditLogs(schoolId));
 });
 
@@ -3410,6 +4035,12 @@ app.get('/api/mysql/export', (_req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/sql');
   res.setHeader('Content-Disposition', 'attachment; filename="schoolcare_db.sql"');
   return res.sendFile(sqlPath);
+});
+
+// Unknown API paths must return JSON, never the SPA HTML shell. Otherwise the
+// browser reports a confusing "Unexpected token '<'" while parsing JSON.
+app.use('/api', (req: Request, res: Response) => {
+  res.status(404).json({ error: `Unknown API endpoint: ${req.method} ${req.originalUrl}` });
 });
 
 // ==========================================
