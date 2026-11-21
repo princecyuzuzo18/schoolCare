@@ -6,7 +6,7 @@ This document covers the public website added to SchoolCare for **ES RUBENGERA R
 
 | Surface | URL | Authentication |
 |---|---|---|
-| Public school website | `/`, `/about`, `/academics`, `/news`, `/events`, `/admissions`, `/gallery`, `/contact` | None |
+| Public school website | `/`, `/about`, `/academics`, `/news`, `/events`, `/apply`, `/gallery`, `/contact` | None |
 | Sitemap / robots | `/sitemap.xml`, `/robots.txt` | None |
 | Public content APIs | `/api/public/site`, `/api/public/news`, `/api/public/events`, `/api/public/gallery` | None; approved content only |
 | Private SchoolCare portal | `/portal#/login`, `/portal#/dashboard`, etc. | Existing session login |
@@ -42,7 +42,7 @@ Add these to `.env` (never commit `.env`):
 # Public canonical origin — set this to your real HTTPS domain before going live.
 PUBLIC_SITE_URL="https://school.example.rw"
 
-# Existing application URL used by admissions links.
+# Existing application form URL used by the public Apply page.
 APP_URL="https://school.example.rw"
 
 NODE_ENV="production"
@@ -196,7 +196,7 @@ Google indexing is not immediate; these steps prepare the site and request index
 1. Go to <https://search.google.com/search-console> and add the property `https://school.example.rw`.
 2. Verify ownership using the DNS TXT record method (recommended), or add the uniquely named HTML verification file that Google gives you to `public/`, rebuild and confirm `https://school.example.rw/google<verification-code>.html` returns HTTP 200.
 3. Open **Sitemaps**, enter `sitemap.xml`, and submit.
-4. Use **URL Inspection** on the homepage, then click **Request indexing**. Repeat for key pages such as `/admissions` and `/contact`.
+4. Use **URL Inspection** on the homepage, then click **Request indexing**. Repeat for key pages such as `/apply` and `/contact`.
 5. Check **Pages** after a few days for crawl errors and confirm canonical URLs are correct.
 6. Ensure the site is reachable over HTTPS, returns HTTP 200, and is not blocked by `robots.txt` (it currently allows all).
 
@@ -208,4 +208,4 @@ Google indexing is not immediate; these steps prepare the site and request index
 - A process manager/service unit for the Node application.
 - Off-server backup storage for `data/`, including `data/public_content.json` and `data/public-uploads/`.
 - Real, authorized school photographs added through the admin upload flow (the current gallery uses illustrative SVGs).
-- Review of all public copy by school leadership before going live, especially leadership and admissions wording.
+- Review of all public copy by school leadership before going live, especially leadership and application wording.

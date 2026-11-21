@@ -50,7 +50,6 @@ const NAV_LINKS = [
   { id: 'about', label: 'About Us' },
   { id: 'features', label: 'Features' },
   { id: 'services', label: 'Our Services' },
-  { id: 'admissions', label: 'Admissions' },
   { id: 'contact', label: 'Contact Us' }
 ] as const;
 
@@ -158,7 +157,7 @@ const POLICY_CONTENT: Record<PolicyKey, { title: string; paragraphs: string[] }>
     title: 'Privacy Policy',
     paragraphs: [
       'SchoolCare is designed to keep school information organized, access-controlled, and available only to authorized roles.',
-      'The public Apply Here admissions form collects only the details needed to assess an application and contact the applicant or guardian. These details are restricted to authorized school staff and are never sold or published. Deployments should publish the school’s approved data-protection notice before collecting student, parent, or staff data.',
+      'The public Apply Here application form collects only the details needed to assess an application and contact the applicant or guardian. These details are restricted to authorized school staff and are never sold or published. Deployments should publish the school’s approved data-protection notice before collecting student, parent, or staff data.',
       'For questions about how your school handles information, contact the school directly using the details in the footer.'
     ]
   },
@@ -773,39 +772,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, publicMode
                   <p className="mx-auto mt-2 max-w-[15rem] text-sm leading-6 text-[#6B7874]">{description}</p>
                 </article>
               ))}
-            </div>
-          </div>
-        </section>
-
-        <section id="admissions" aria-labelledby="admissions-heading" className="bg-white pb-20 lg:pb-28">
-          <div className="marketing-shell">
-            <div className="relative overflow-hidden rounded-[2.2rem] border border-[var(--schoolcare-border)] bg-white/70 px-6 py-10 sm:px-10 lg:flex lg:items-center lg:justify-between lg:gap-10 lg:py-12">
-              <div className="absolute -right-16 -top-24 h-56 w-56 rounded-full bg-[#D6A84F]/12 blur-2xl" aria-hidden="true" />
-              <div className="relative max-w-2xl">
-                <span className="marketing-eyebrow">Admissions</span>
-                <h2 id="admissions-heading" className="mt-3 text-2xl font-bold tracking-tight text-[#064E3B] sm:text-3xl">
-                  A smoother start for every new learner.
-                </h2>
-                <p className="mt-3 text-sm leading-7 text-[#61706B]">
-                  Completed Senior 3, or ready to transfer from another school? Apply online in a few simple steps — no account needed.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => handleNavigate('track')}
-                  className="mt-3 inline-flex items-center gap-2 text-sm font-bold text-[#1D4ED8] hover:underline"
-                >
-                  {admissionsCopy.trackApplication}
-                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleNavigate('apply')}
-                className="inline-flex items-center gap-2 rounded-full bg-[#1D4ED8] px-7 py-4 text-sm font-bold text-white shadow-lg shadow-blue-700/25 transition-colors hover:bg-[#1E40AF] lg:mt-0"
-              >
-                {admissionsCopy.applyHere}
-                <ArrowRight className="h-4 w-4" aria-hidden="true" />
-              </button>
             </div>
           </div>
         </section>

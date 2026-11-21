@@ -16,6 +16,9 @@ const en = {
   welcomeTitle: 'Welcome to SchoolCare Admissions',
   welcomeDescription:
     'Apply to join our school. Whether you have completed Senior 3 or want to transfer from another school, complete this simple application form.',
+  smootherStart: 'A smoother start for every new learner.',
+  whoCanApply:
+    'Completed Senior 3, or ready to transfer from another school? Apply online in a few simple steps — no account needed.',
   startApplication: 'Start Application',
   next: 'Continue',
   required: 'Required',
@@ -281,6 +284,9 @@ const rw: Record<keyof typeof en, string> = {
   welcomeTitle: 'Murakaza neza muri SchoolCare Admissions',
   welcomeDescription:
     'Saba kwinjira mu ishuri ryacu. Waba warangije S3 cyangwa ushaka kwimukira mu yandi mashuri, zuzuza iyi fomu yoroshye.',
+  smootherStart: 'Intangiro iroroshye kuri buri munyeshuri mushya.',
+  whoCanApply:
+    'Warangije S3 cyangwa ushaka kwimukira mu yandi shuri? Saba kwinjira kuri interineti mu ntambwe nke — nta konti ikenewe.',
   startApplication: 'Tangira Ubusabe',
   next: 'Komeza',
   required: 'Birakenewe',

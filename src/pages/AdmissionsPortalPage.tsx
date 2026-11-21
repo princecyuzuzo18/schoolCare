@@ -928,7 +928,9 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
                   {copy.welcomeTitle}
                 </h1>
                 <div className="mt-5 h-1.5 w-28 rounded-full bg-[#D6A84F]" aria-hidden="true" />
-                <p className="mt-6 max-w-xl text-base leading-8 text-[#52615C]">{copy.welcomeDescription}</p>
+                <p className="mt-5 text-lg font-bold text-[#0B6B51]">{copy.smootherStart}</p>
+                <p className="mt-3 max-w-xl text-base leading-8 text-[#52615C]">{copy.whoCanApply}</p>
+                <p className="mt-2 max-w-xl text-sm leading-7 text-[#6B7874]">{copy.welcomeDescription}</p>
                 <p className="mt-2 text-sm font-bold text-[#1D4ED8]">{copy.staffOnlyNote}</p>
 
                 <div className="mt-9 flex flex-col gap-3 sm:flex-row">

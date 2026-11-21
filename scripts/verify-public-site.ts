@@ -63,10 +63,18 @@ async function main(): Promise<void> {
   check('login links to existing portal login', home.includes('/portal#/login'));
   check('no student result data in public HTML', !home.includes('reportCard') && !home.includes('attendance_records'));
 
-  for (const route of ['/about', '/academics', '/news', '/events', '/admissions', '/gallery', '/contact']) {
+  for (const route of ['/about', '/academics', '/news', '/events', '/apply', '/gallery', '/contact']) {
     const response = await get(route);
     check(`${route} is publicly accessible`, response.status === 200);
   }
+
+  const applyHtml = await text('/apply');
+  check('apply page includes the how-to-apply guidance', applyHtml.includes('How to apply'));
+  check('apply page includes the requirements', applyHtml.includes('Admission requirements'));
+  check('apply page includes the application process', applyHtml.includes('Application process'));
+  check('apply page includes school contact information', applyHtml.includes('School contact information'));
+  check('apply page opens the online application form', applyHtml.includes(PUBLIC_SITE_TEST_HOOKS.APPLICATION_FORM_URL));
+  check('removed admissions page is no longer published', (await get('/admissions')).status !== 200);
 
   const eventsHtml = await text('/events');
   const eventsCanonical = eventsHtml.match(/<link rel="canonical" href="([^"]+)"/)?.[1] || '';
@@ -75,7 +83,8 @@ async function main(): Promise<void> {
   check('sitemap includes the events page', sitemapXml.includes('/events'));
 
   const sitemap = await text('/sitemap.xml');
-  check('sitemap lists official website', sitemap.includes('<urlset') && sitemap.includes('/admissions'));
+  check('sitemap lists official website', sitemap.includes('<urlset') && sitemap.includes('/apply'));
+  check('sitemap does not list removed admissions page', !sitemap.includes('/admissions</loc>'));
   const robots = await text('/robots.txt');
   check('robots.txt references sitemap', robots.includes('Sitemap:') && robots.includes('/sitemap.xml'));
 

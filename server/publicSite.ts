@@ -48,7 +48,8 @@ const SCHOOL = {
 };
 
 const LOGIN_URL = '/portal#/login';
-const APPLY_URL = '/portal#/apply';
+const APPLY_URL = '/apply';
+const APPLICATION_FORM_URL = '/portal#/apply';
 const TRACK_URL = '/portal#/track';
 
 const NAV = [
@@ -56,7 +57,6 @@ const NAV = [
   { href: '/about', label: 'About Us' },
   { href: '/academics', label: 'Academics' },
   { href: '/news', label: 'News & Events' },
-  { href: '/admissions', label: 'Admissions' },
   { href: APPLY_URL, label: 'Apply' },
   { href: '/gallery', label: 'Gallery' },
   { href: '/contact', label: 'Contact Us' }
@@ -116,10 +116,11 @@ function structuredData(): string {
 
 function layout(meta: PageMeta, content: string): string {
   const canonical = `${siteUrl()}${meta.path}`;
+  const closeMenu = ' onclick="this.closest(\'.nav\').classList.remove(\'open\')"';
   const navLinks = NAV.map(item => {
     const active = item.href === meta.path ? ' aria-current="page"' : '';
     const className = item.href === APPLY_URL ? ' class="apply-link"' : '';
-    return `<a href="${item.href}"${className}${active}>${escapeHtml(item.label)}</a>`;
+    return `<a href="${item.href}"${className}${active}${closeMenu}>${escapeHtml(item.label)}</a>`;
   }).join('');
 
   return `<!doctype html>
@@ -160,22 +161,28 @@ function layout(meta: PageMeta, content: string): string {
     .container{width:min(1120px,92%);margin:0 auto}
     .skip{position:absolute;left:-9999px;top:0;background:var(--navy);color:#fff;padding:10px 16px;z-index:100}
     .skip:focus{left:8px;top:8px}
-    .topbar{background:var(--navy);color:#dbeafe;font-size:.82rem;padding:7px 0}
-    .topbar .container{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
-    .site-header{background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50}
-    .header-inner{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0}
-    .brand{display:flex;align-items:center;gap:12px;font-weight:800;color:var(--navy);letter-spacing:.01em}
-    .brand img{width:46px;height:46px;object-fit:contain}
-    .brand span{display:block;line-height:1.15}
-    .brand small{display:block;font-size:.68rem;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
-    .nav{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-    .nav a{font-size:.9rem;font-weight:600;color:var(--navy2);padding:6px 0;border-bottom:2px solid transparent}
-    .nav a:hover,.nav a[aria-current="page"]{border-color:var(--blue);color:var(--blue)}
-    .nav a.apply-link{background:var(--blue);color:#fff;border-radius:8px;padding:7px 14px;border-bottom-color:transparent}
-    .nav a.apply-link:hover{background:var(--navy2);color:#fff;border-color:transparent}
-    .login-btn{background:var(--blue);color:#fff!important;padding:10px 18px;border-radius:10px;border:0!important;font-weight:700}
-    .login-btn:hover{background:var(--navy2)}
-    .menu-toggle{display:none;background:none;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:1.2rem;color:var(--navy)}
+    .topbar{background:linear-gradient(90deg,#0B1F3A 0%,var(--navy) 55%,#123A6B 100%);color:#c7d9f2;font-size:.8rem;padding:8px 0;letter-spacing:.02em}
+    .topbar .container{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center}
+    .topbar span{display:inline-flex;align-items:center;gap:8px}
+    .topbar span+span::before{content:"•";color:#6f9bd6;font-size:.9em}
+    .site-header{background:rgba(255,255,255,.96);border-bottom:1px solid rgba(16,43,80,.1);position:sticky;top:0;z-index:50;box-shadow:0 6px 24px rgba(16,43,80,.06);backdrop-filter:saturate(140%) blur(10px)}
+    .header-inner{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:10px 0;min-height:74px}
+    .brand{display:flex;align-items:center;gap:12px;font-weight:800;color:var(--navy);letter-spacing:.01em;line-height:1.1}
+    .brand img{width:48px;height:48px;object-fit:contain;border-radius:10px;background:var(--sky);padding:4px}
+    .brand span{display:block;font-size:1.02rem}
+    .brand small{display:block;font-size:.64rem;font-weight:700;color:var(--blue);letter-spacing:.12em;text-transform:uppercase;margin-top:2px}
+    .nav{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+    .nav a{position:relative;font-size:.88rem;font-weight:600;color:var(--navy2);padding:9px 12px;border-radius:9px;transition:background .18s ease,color .18s ease,transform .18s ease}
+    .nav a::after{content:"";position:absolute;left:12px;right:12px;bottom:5px;height:2px;background:var(--blue);border-radius:2px;transform:scaleX(0);transform-origin:left;transition:transform .2s ease}
+    .nav a:hover{color:var(--blue);background:var(--sky)}
+    .nav a:hover::after,.nav a[aria-current="page"]::after{transform:scaleX(1)}
+    .nav a[aria-current="page"]{color:var(--blue);background:var(--sky);font-weight:700}
+    .nav a.apply-link{background:linear-gradient(135deg,var(--blue),#1D4ED8);color:#fff;box-shadow:0 4px 12px rgba(37,99,235,.25)}
+    .nav a.apply-link::after{display:none}
+    .nav a.apply-link:hover{background:linear-gradient(135deg,#1D4ED8,var(--navy2));color:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(37,99,235,.32)}
+    .nav a.login-btn{margin-left:6px;background:transparent;color:var(--navy2)!important;border:1.5px solid var(--line)!important;padding:8px 16px;border-radius:10px;font-weight:700}
+    .nav a.login-btn:hover{background:var(--navy);color:#fff!important;border-color:var(--navy)!important;transform:translateY(-1px)}
+    .menu-toggle{display:none;background:var(--sky);border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:1.2rem;line-height:1;color:var(--navy);cursor:pointer;transition:background .18s ease}
     .hero{background:linear-gradient(135deg,var(--navy) 0%,var(--navy2) 58%,#1D4ED8 100%);color:#fff;padding:74px 0 80px}
     .hero-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:44px;align-items:center}
     .hero h1{font-size:clamp(2.1rem,5vw,3.5rem);line-height:1.12;margin:0 0 18px;letter-spacing:-.02em}
@@ -222,9 +229,16 @@ function layout(meta: PageMeta, content: string): string {
     .footer-bottom{border-top:1px solid rgba(255,255,255,.15);margin-top:36px;padding-top:18px;font-size:.82rem;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
     empty-state{padding:22px;border:1px dashed var(--line);border-radius:12px;color:var(--muted)}
     @media(max-width:900px){.hero-grid,.contact-grid,.footer-grid{grid-template-columns:1fr}.grid-4{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:960px){
+      .nav{display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border-bottom:1px solid var(--line);padding:14px 4% 20px;flex-direction:column;align-items:stretch;gap:4px;box-shadow:0 18px 30px rgba(16,43,80,.12)}
+      .nav.open{display:flex;animation:navFade .18s ease-out}
+      .nav a{padding:11px 14px;border-radius:10px}
+      .nav a::after{display:none}
+      .nav a.login-btn{margin:6px 0 0;text-align:center}
+      .menu-toggle{display:block}
+    }
+    @keyframes navFade{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
     @media(max-width:720px){
-      .nav{display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border-bottom:1px solid var(--line);padding:16px 4% 22px;flex-direction:column;align-items:flex-start}
-      .nav.open{display:flex}.menu-toggle{display:block}
       .grid-2,.grid-3,.grid-4,.gallery-grid,.news-item{grid-template-columns:1fr}
       .news-item img{height:170px}
       section{padding:48px 0}.hero{padding:52px 0 58px}
@@ -241,7 +255,7 @@ function layout(meta: PageMeta, content: string): string {
         <span>${escapeHtml(SCHOOL.name)}<small>Secondary &amp; Technical TVET</small></span>
       </a>
       <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" onclick="var n=document.querySelector('.nav');n.classList.toggle('open');this.setAttribute('aria-expanded',n.classList.contains('open'))">☰</button>
-      <nav class="nav" aria-label="Main navigation">${navLinks}<a class="login-btn" href="${LOGIN_URL}">Login</a></nav>
+      <nav class="nav" aria-label="Main navigation">${navLinks}<a class="login-btn" href="${LOGIN_URL}"${closeMenu}>Login</a></nav>
     </div>
   </header>
   <main id="main">${content}</main>
@@ -255,7 +269,7 @@ function layout(meta: PageMeta, content: string): string {
         </div>
         <div>
           <h3>Quick links</h3>
-          <p><a href="/about">About Us</a><br /><a href="/academics">Academics</a><br /><a href="/news">News &amp; Events</a><br /><a href="/admissions">Admissions</a><br /><a href="/gallery">Gallery</a><br /><a href="/contact">Contact Us</a></p>
+          <p><a href="/about">About Us</a><br /><a href="/academics">Academics</a><br /><a href="/news">News &amp; Events</a><br /><a href="${APPLY_URL}">Apply</a><br /><a href="${TRACK_URL}">Track Application</a><br /><a href="/gallery">Gallery</a><br /><a href="/contact">Contact Us</a></p>
         </div>
         <div>
           <h3>Contact</h3>
@@ -302,7 +316,7 @@ function homePage(res: Response): void {
           <h1>Welcome to ${escapeHtml(SCHOOL.name)}</h1>
           <p>${escapeHtml(SCHOOL.description)} Our students learn knowledge, practical skills and strong character in a caring Rwandan school community.</p>
           <div class="hero-actions">
-            <a class="btn btn-primary" href="/admissions">Explore admissions</a>
+            <a class="btn btn-primary" href="${APPLY_URL}">Apply now</a>
             <a class="btn btn-secondary" href="/about">Learn about our school</a>
           </div>
         </div>
@@ -335,7 +349,7 @@ function homePage(res: Response): void {
     </section>
     <section class="section-alt">
       <div class="container grid grid-3">
-        <div class="card"><h3>Admissions</h3><p>Find out how to apply and track an application.</p><p><a href="/admissions">Admissions information →</a></p></div>
+        <div class="card"><h3>Apply</h3><p>Find out how to apply, what to prepare and how to track an application.</p><p><a href="${APPLY_URL}">Apply information →</a></p></div>
         <div class="card"><h3>Academics</h3><p>Explore our secondary and TVET programmes.</p><p><a href="/academics">Academic programmes →</a></p></div>
         <div class="card"><h3>Contact</h3><p>Visit us in Rubengera or contact the school office.</p><p><a href="/contact">Contact details →</a></p></div>
       </div>
@@ -343,7 +357,7 @@ function homePage(res: Response): void {
   sendHtml(res, {
     path: '/',
     title: `${SCHOOL.name} | Official School Website`,
-    description: `Official website of ${SCHOOL.name}, a secondary and technical TVET school in Rubengera, Karongi District, Rwanda. Learn about our programmes, news, admissions and contact details.`
+    description: `Official website of ${SCHOOL.name}, a secondary and technical TVET school in Rubengera, Karongi District, Rwanda. Learn about our programmes, news, how to apply and contact details.`
   }, content);
 }
 
@@ -466,18 +480,22 @@ function articlePage(res: Response, article: PublicArticle): void {
   }, content);
 }
 
-function admissionsPage(res: Response): void {
+function applyPage(res: Response): void {
   const content = `
     <section class="section-alt">
-      <div class="container"><p class="eyebrow">Admissions</p><h1>Join ${escapeHtml(SCHOOL.name)}</h1><p class="lead">We welcome applications from learners who are ready to learn, work hard and contribute to our school community.</p><p><a class="btn btn-primary" href="${APPLY_URL}">Apply online</a> <a class="btn btn-secondary" href="${TRACK_URL}" style="background:var(--navy2);color:#fff">Track an application</a></p></div>
+      <div class="container">
+        <p class="eyebrow">Apply</p><h1>Join ${escapeHtml(SCHOOL.name)}</h1>
+        <p class="lead">We welcome applications from learners who are ready to learn, work hard and contribute to our school community. Completed Senior 3, or ready to transfer from another school? Apply online in a few simple steps — no account needed.</p>
+        <p><a class="btn btn-primary" href="${APPLICATION_FORM_URL}">Apply online</a> <a class="btn btn-secondary" href="${TRACK_URL}" style="background:var(--navy2);color:#fff">Track an application</a></p>
+      </div>
     </section>
     <section>
       <div class="container grid grid-2">
         <div>
           <h2>How to apply</h2>
           <ol class="steps">
-            <li>Read the admission requirements below and prepare the required documents.</li>
-            <li>Open the online application form using the Apply Online button.</li>
+            <li>Read the requirements below and prepare the documents requested by the school.</li>
+            <li>Open the online application form using the Apply online button.</li>
             <li>Complete the form and submit your application.</li>
             <li>Save the reference number you receive after submission.</li>
             <li>Use the tracking page to follow the progress of your application.</li>
@@ -497,9 +515,9 @@ function admissionsPage(res: Response): void {
       </div>
     </section>`;
   sendHtml(res, {
-    path: '/admissions',
-    title: `Admissions | ${SCHOOL.name}`,
-    description: `How to apply to ${SCHOOL.name}: admission requirements, application process and school contact information in Rubengera, Rwanda.`
+    path: '/apply',
+    title: `Apply | ${SCHOOL.name}`,
+    description: `How to apply to ${SCHOOL.name}: requirements, application process and school contact information in Rubengera, Rwanda.`
   }, content);
 }
 
@@ -652,6 +670,7 @@ export function registerPublicSite(app: Express): void {
       },
       loginUrl: LOGIN_URL,
       applyUrl: APPLY_URL,
+      applicationUrl: APPLICATION_FORM_URL,
       trackUrl: TRACK_URL
     });
   });
@@ -683,7 +702,7 @@ export function registerPublicSite(app: Express): void {
     articlePage(res, article);
   });
   app.get('/events', (_req: Request, res: Response) => newsPage(res, '/events'));
-  app.get('/admissions', (_req: Request, res: Response) => admissionsPage(res));
+  app.get('/apply', (_req: Request, res: Response) => applyPage(res));
   app.get('/gallery', (_req: Request, res: Response) => galleryPage(res));
   app.get('/contact', (_req: Request, res: Response) => contactPage(res));
   app.get('/sitemap.xml', (_req: Request, res: Response) => sitemap(res));
@@ -761,5 +780,6 @@ export const PUBLIC_SITE_TEST_HOOKS = {
   publicArticleDto,
   SCHOOL,
   LOGIN_URL,
-  APPLY_URL
+  APPLY_URL,
+  APPLICATION_FORM_URL
 };
