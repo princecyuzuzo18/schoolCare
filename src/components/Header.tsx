@@ -18,7 +18,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate, urgentIncidentCount }) => {
-  const { currentUser, role, school, logout } = useAuth();
+  const { currentUser, role, school, defaultDashboard, logout } = useAuth();
   const { language, toggleLanguage, t } = useLanguage();
   const [isAccessibilityOpen, setIsAccessibilityOpen] = useState(false);
 
@@ -27,7 +27,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate, urgentIn
       <header className="sticky top-0 z-40 brand-gradient text-white shadow-md border-b border-white/10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-2">
-            <div className="flex items-center gap-3 cursor-pointer" onClick={() => onNavigate('landing')}>
+            <div className="flex items-center gap-3 cursor-pointer" onClick={() => onNavigate(defaultDashboard)}>
               <div className="h-10 w-10 overflow-hidden rounded-xl bg-white ring-1 ring-white/15 shadow-inner">
                 <img
                   src="/images/school-logo.png"

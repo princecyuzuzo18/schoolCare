@@ -32,7 +32,7 @@ const MainApp: React.FC = () => {
   const { role, currentUser, isLoading, effectivePermissions, defaultDashboard } = useAuth();
   const { t } = useLanguage();
 
-  const [currentTab, setCurrentTab] = useState<string>('landing');
+  const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [accessDeniedTab, setAccessDeniedTab] = useState<string | null>(null);
   const [incidents, setIncidents] = useState<HealthIncident[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -89,12 +89,16 @@ const MainApp: React.FC = () => {
 
       if (!currentUser) {
         const publicTabs = new Set(['login', 'apply', 'track']);
-        if (requested && !publicTabs.has(requested)) {
+        if (requested === 'landing') {
+          // The public home lives outside the portal hash routes; a stale
+          // #/landing link simply shows the public landing page again.
+          history.replaceState(null, '', '#/');
+        } else if (requested && !publicTabs.has(requested)) {
           sessionStorage.setItem(REDIRECT_TARGET_KEY, requested);
           history.replaceState(null, '', '#/login');
           window.dispatchEvent(new Event('hashchange'));
         }
-        setCurrentTab('landing');
+        setCurrentTab('dashboard');
         return;
       }
 
@@ -296,79 +300,68 @@ const MainApp: React.FC = () => {
       </div>
 
       {/* Body Area */}
-      {currentTab === 'landing' ? (
+      <div className="flex-1 flex max-w-full">
+        {/* Desktop Sidebar */}
+        <div className="hidden md:block">
+          <Sidebar
+            currentTab={currentTab}
+            onNavigate={handleNavigate}
+            urgentIncidentCount={urgentCases.length}
+          />
+        </div>
+
+        {/* Mobile Overlay Sidebar */}
+        {mobileMenuOpen && (
+          <div className="fixed inset-0 z-50 flex md:hidden" role="presentation">
+            <button
+              type="button"
+              aria-label="Close navigation menu"
+              className="fixed inset-0 bg-black/50"
+              onClick={() => setMobileMenuOpen(false)}
+            />
+            <div
+              id="mobile-navigation"
+              ref={mobileMenuRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="SchoolCare navigation"
+              className="relative w-72 bg-white h-full z-10 shadow-2xl flex flex-col"
+            >
+              <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+                <span className="font-bold text-sm text-[color:var(--schoolcare-brand-900)]">SchoolCare Menu</span>
+                <button
+                  type="button"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="p-1 text-slate-400"
+                  aria-label="Close navigation menu"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                <Sidebar
+                  currentTab={currentTab}
+                  onNavigate={handleNavigate}
+                  urgentIncidentCount={urgentCases.length}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Main Content View */}
         <main
           ref={mainRef}
           id="main-content"
           tabIndex={-1}
-          className="app-main min-w-0 flex-1 overflow-x-hidden outline-none"
+          className="app-main min-w-0 flex-1 overflow-x-hidden min-h-[calc(100vh-4rem)] pb-20 md:pb-8 outline-none"
         >
-          {renderRoute('landing')}
-        </main>
-      ) : (
-        <div className="flex-1 flex max-w-full">
-          {/* Desktop Sidebar */}
-          <div className="hidden md:block">
-            <Sidebar
-              currentTab={currentTab}
-              onNavigate={handleNavigate}
-              urgentIncidentCount={urgentCases.length}
-            />
-          </div>
-
-          {/* Mobile Overlay Sidebar */}
-          {mobileMenuOpen && (
-            <div className="fixed inset-0 z-50 flex md:hidden" role="presentation">
-              <button
-                type="button"
-                aria-label="Close navigation menu"
-                className="fixed inset-0 bg-black/50"
-                onClick={() => setMobileMenuOpen(false)}
-              />
-              <div
-                id="mobile-navigation"
-                ref={mobileMenuRef}
-                role="dialog"
-                aria-modal="true"
-                aria-label="SchoolCare navigation"
-                className="relative w-72 bg-white h-full z-10 shadow-2xl flex flex-col"
-              >
-                <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-                  <span className="font-bold text-sm text-[color:var(--schoolcare-brand-900)]">SchoolCare Menu</span>
-                  <button
-                    type="button"
-                    onClick={() => setMobileMenuOpen(false)}
-                    className="p-1 text-slate-400"
-                    aria-label="Close navigation menu"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto">
-                  <Sidebar
-                    currentTab={currentTab}
-                    onNavigate={handleNavigate}
-                    urgentIncidentCount={urgentCases.length}
-                  />
-                </div>
-              </div>
-            </div>
+          <AiAssistantLauncher currentTab={currentTab} />
+          {renderRoute(
+            isTabAllowedForRole(role, currentTab, effectivePermissions) ? currentTab : defaultDashboard
           )}
-
-          {/* Main Content View */}
-          <main
-            ref={mainRef}
-            id="main-content"
-            tabIndex={-1}
-            className="app-main min-w-0 flex-1 overflow-x-hidden min-h-[calc(100vh-4rem)] pb-20 md:pb-8 outline-none"
-          >
-            <AiAssistantLauncher currentTab={currentTab} />
-            {renderRoute(
-              isTabAllowedForRole(role, currentTab, effectivePermissions) ? currentTab : defaultDashboard
-            )}
-          </main>
-        </div>
-      )}
+        </main>
+      </div>
 
       {/* Global Health Incident Modal */}
       <HealthIncidentModal

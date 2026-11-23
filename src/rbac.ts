@@ -6,22 +6,22 @@ export const ROLE_DASHBOARD_MAP = ROLE_DASHBOARD_TABS;
 export { getRoleDashboardTab };
 
 const ALL_ADMIN_TABS = [
-  'landing','dashboard','approval-center','parent-portal','student-portal','health','attendance','communication','students','guardians','academics','academic-admin','combination-management','report-printing','finance','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'
+  'dashboard','approval-center','parent-portal','student-portal','health','attendance','communication','students','guardians','academics','academic-admin','combination-management','report-printing','finance','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'
 ];
 
 export const ROLE_ALLOWED_TABS: Record<UserRole, string[]> = {
   SUPER_ADMIN: ALL_ADMIN_TABS,
   SCHOOL_ADMIN: ALL_ADMIN_TABS,
-  HEAD_TEACHER: ['landing','dashboard','approval-center','health','attendance','communication','students','guardians','academics','academic-admin','combination-management','report-printing','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'],
-  DEPUTY_HEAD: ['landing','dashboard','attendance','communication','students','academics','timetable','events','reports','report-printing','exams','teaching','admissions','ai-assistant'],
-  TEACHER: ['landing','dashboard','attendance','students','academics','timetable','events','reports','exams','marking-guides','teaching','ai-assistant'],
-  NURSE: ['landing','dashboard','health','events','reports','ai-assistant'],
-  ACCOUNTANT: ['landing','dashboard','finance','events','reports','inventory','ai-assistant'],
-  DISCIPLINE_OFFICER: ['landing','dashboard','attendance','students','guardians','discipline','events','reports','communication','ai-assistant'],
-  SCHOOL_IT: ['landing','dashboard','students','staff','reports','events','ai-assistant'],
-  ANIMATEUR: ['landing','dashboard','events','students','communication','attendance','reports','ai-assistant'],
-  PARENT: ['landing','parent-portal','events','reports','ai-assistant'],
-  STUDENT: ['landing','student-portal','events','reports','ai-assistant']
+  HEAD_TEACHER: ['dashboard','approval-center','health','attendance','communication','students','guardians','academics','academic-admin','combination-management','report-printing','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'],
+  DEPUTY_HEAD: ['dashboard','attendance','communication','students','academics','timetable','events','reports','report-printing','exams','teaching','admissions','ai-assistant'],
+  TEACHER: ['dashboard','attendance','students','academics','timetable','events','reports','exams','marking-guides','teaching','ai-assistant'],
+  NURSE: ['dashboard','health','events','reports','ai-assistant'],
+  ACCOUNTANT: ['dashboard','finance','events','reports','inventory','ai-assistant'],
+  DISCIPLINE_OFFICER: ['dashboard','attendance','students','guardians','discipline','events','reports','communication','ai-assistant'],
+  SCHOOL_IT: ['dashboard','students','staff','reports','events','ai-assistant'],
+  ANIMATEUR: ['dashboard','events','students','communication','attendance','reports','ai-assistant'],
+  PARENT: ['parent-portal','events','reports','ai-assistant'],
+  STUDENT: ['student-portal','events','reports','ai-assistant']
 };
 
 /**
@@ -71,10 +71,7 @@ export function isTabAllowedForRole(
   tab?: string,
   effectivePermissions?: readonly string[]
 ): boolean {
-  if (!tab || tab === 'landing') {
-    return true;
-  }
-  if (!role) {
+  if (!tab || !role) {
     return false;
   }
 
@@ -112,8 +109,11 @@ export function resolveRequestedTab(
   if (!requestedTab) {
     return safeFallback;
   }
+  // The public landing page is not part of the authenticated portal. A stale
+  // or hand-typed #/landing hash must fall back to the role dashboard (or the
+  // login page for anonymous visitors).
   if (requestedTab === 'landing') {
-    return 'landing';
+    return safeFallback;
   }
   if (isTabAllowedForRole(role, requestedTab, effectivePermissions)) {
     return requestedTab;

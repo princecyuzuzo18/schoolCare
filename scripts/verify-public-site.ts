@@ -61,6 +61,12 @@ async function main(): Promise<void> {
   check('homepage has School structured data', home.includes('"@type":"School"'));
   check('homepage uses official school name', home.includes('ES RUBENGERA RTB'));
   check('login links to existing portal login', home.includes('/portal#/login'));
+  check('public navigation includes Home', home.includes('>Home</a>'));
+  check('public navigation includes About Us', home.includes('>About Us</a>'));
+  check('public navigation includes Academics', home.includes('>Academics</a>'));
+  check('public navigation includes Apply', home.includes('>Apply</a>'));
+  check('public navigation includes Contact Us', home.includes('>Contact Us</a>'));
+  check('public navigation includes Login', home.includes('>Login</a>'));
   check('no student result data in public HTML', !home.includes('reportCard') && !home.includes('attendance_records'));
 
   for (const route of ['/about', '/academics', '/news', '/events', '/apply', '/gallery', '/contact']) {

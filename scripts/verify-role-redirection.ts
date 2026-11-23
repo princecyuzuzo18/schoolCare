@@ -22,7 +22,7 @@ try {
   const { app } = await import('../server');
   const { db } = await import('../server/database');
   const { createSession } = await import('../server/sessions');
-  const { isTabAllowedForRole } = await import('../src/rbac');
+  const { isTabAllowedForRole, resolveRequestedTab } = await import('../src/rbac');
   type UserRole = import('../src/types').UserRole;
   type UserProfile = import('../src/types').UserProfile;
 
@@ -93,6 +93,14 @@ try {
   const forged = await request('/api/auth/me', { headers: { Cookie: 'schoolcare_session=forged-session-id' } });
   check('Forged session cookie is rejected', forged.status === 401, `status ${forged.status}`);
 
+  const { buildAuthSessionView } = await import('../server/authSession');
+  const anonymousView = buildAuthSessionView(null);
+  check(
+    'Anonymous session payload points to portal login, never the public landing page',
+    anonymousView.defaultDashboard === 'login' && anonymousView.dashboardUrl === '/portal#/login',
+    `${anonymousView.defaultDashboard} / ${anonymousView.dashboardUrl}`
+  );
+
   for (const [role, expected] of Object.entries(expectedDashboards) as [UserRole, string][]) {
     const id = `redirect-${role.toLowerCase()}`;
     db.createUser(makeUser(id, role));
@@ -115,6 +123,17 @@ try {
       `${role} dashboard URL matches its dashboard`,
       body.dashboardUrl === `/portal#/${expected}`,
       body.dashboardUrl
+    );
+    check(
+      `${role} is never redirected to the public Home page`,
+      body.defaultDashboard !== 'landing' && !body.dashboardUrl.includes('/landing'),
+      `${body.defaultDashboard} / ${body.dashboardUrl}`
+    );
+    check(
+      `${role} stale Home or Apply hash falls back to its dashboard`,
+      resolveRequestedTab(role, 'landing', expected) === expected &&
+        resolveRequestedTab(role, 'apply', expected) === expected,
+      expected
     );
     check(
       `${role} dashboard passes frontend RBAC validation`,
@@ -170,6 +189,32 @@ try {
     'Platform Super Admin may still target a school explicitly',
     superOtherSchool.status === 200 && Array.isArray(superOtherSchool.body),
     `status ${superOtherSchool.status}`
+  );
+
+  // Logout must clear the server session so a stale cookie cannot restore the
+  // portal after the public navigation has been shown again.
+  const logoutCookie = sessionCookies.NURSE!;
+  const logoutResponse = await fetch(`${base}/api/auth/logout`, {
+    method: 'POST',
+    headers: { Cookie: logoutCookie }
+  });
+  const clearedCookie = logoutResponse.headers.get('set-cookie') || '';
+  check(
+    'Logout clears the session cookie',
+    logoutResponse.status === 200 && /Max-Age=0/.test(clearedCookie),
+    `status ${logoutResponse.status}, cookie ${clearedCookie}`
+  );
+  const afterLogout = await request('/api/auth/me', { headers: { Cookie: logoutCookie } });
+  check(
+    'Logged-out session cannot restore the portal',
+    afterLogout.status === 401,
+    `status ${afterLogout.status}`
+  );
+  const protectedAfterLogout = await request('/api/students', { headers: { Cookie: logoutCookie } });
+  check(
+    'Logged-out session cannot access protected pages',
+    protectedAfterLogout.status === 401,
+    `status ${protectedAfterLogout.status}`
   );
 
   const failed = checks.filter(item => !item.passed);

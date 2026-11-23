@@ -10,7 +10,6 @@ import {
   FileText,
   GraduationCap,
   HeartPulse,
-  Home,
   KeyRound,
   Layers,
   LayoutDashboard,
@@ -65,14 +64,6 @@ export interface NavSection {
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
-  {
-    id: 'landing',
-    label: 'Home',
-    labelKey: 'navLanding',
-    icon: Home,
-    section: 'overview',
-    description: 'Public school landing page'
-  },
   {
     id: 'dashboard',
     label: 'Dashboard',

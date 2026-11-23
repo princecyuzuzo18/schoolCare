@@ -1,7 +1,6 @@
 import React from 'react';
 import type { HealthIncident } from './types';
 
-import { LandingPage } from './pages/LandingPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ApprovalCenterPage } from './pages/ApprovalCenterPage';
 import { ParentPortalPage } from './pages/ParentPortalPage';
@@ -42,11 +41,6 @@ export interface AppRoute {
 }
 
 export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
-  landing: {
-    id: 'landing',
-    title: 'Home',
-    render: ({ onNavigate }) => <LandingPage onNavigate={onNavigate} />
-  },
   dashboard: {
     id: 'dashboard',
     title: 'Dashboard',

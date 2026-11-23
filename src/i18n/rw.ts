@@ -6,7 +6,6 @@
   switchLanguage: 'English',
   demoMode: 'Uburyo bwo Kwerekana (Demo)',
   productionNotice: 'Urubuga rwâ€™Ubuyobozi bwâ€™Ishuri',
-  navLanding: 'Ahabanza',
   navDashboard: 'Incamake',
   navApprovalCenter: 'Icyicaro cy’Ibyemezo',
   navStudents: 'Abanyeshuri & Iyandikwa',

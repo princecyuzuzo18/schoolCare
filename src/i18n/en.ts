@@ -5,7 +5,6 @@ export const en = {
   schoolLocation: 'Karongi, Western Province, Rwanda',
   switchLanguage: 'Kinyarwanda',
   productionNotice: 'Authorized School Operations System',
-  navLanding: 'Home',
   navDashboard: 'Dashboard',
   navApprovalCenter: 'Approval Center',
   navStudents: 'Students & Enrollment',

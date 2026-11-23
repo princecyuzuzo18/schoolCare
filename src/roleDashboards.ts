@@ -24,7 +24,9 @@ export const ROLE_DASHBOARD_TABS: Record<UserRole, string> = {
 };
 
 export function getRoleDashboardTab(role?: UserRole | null): string {
-  if (!role) return 'landing';
+  // Anonymous visitors belong on the public site; inside the portal their
+  // only destination is the login page, never the public landing page.
+  if (!role) return 'login';
   return ROLE_DASHBOARD_TABS[role] ?? 'dashboard';
 }
 

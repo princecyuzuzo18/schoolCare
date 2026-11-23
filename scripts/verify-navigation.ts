@@ -1,6 +1,6 @@
-import { NAV_ITEMS, getQuickNavItems, getVisibleNavSections } from '../src/navigation';
+import { NAV_ITEMS, getQuickNavItems, getVisibleNavItems, getVisibleNavSections } from '../src/navigation';
 import { APP_ROUTES } from '../src/routes';
-import { ROLE_ALLOWED_TABS, ROLE_DASHBOARD_MAP, isTabAllowedForRole } from '../src/rbac';
+import { ROLE_ALLOWED_TABS, ROLE_DASHBOARD_MAP, isTabAllowedForRole, resolveRequestedTab } from '../src/rbac';
 import { ROLE_DASHBOARD_TABS, getRoleDashboardTab } from '../src/roleDashboards';
 import { translations } from '../src/i18n/translations';
 import type { UserRole } from '../src/types';
@@ -52,6 +52,35 @@ check(
   unreachableNavIds.join(', ')
 );
 
+// Public marketing pages stay on the public site; the authenticated shell must
+// not register or link to Home/Apply.
+const publicOnlyTabs = ['landing', 'apply'];
+check(
+  'Authenticated portal does not register public Home or Apply pages',
+  publicOnlyTabs.every(id => !APP_ROUTES[id]),
+  publicOnlyTabs.filter(id => APP_ROUTES[id]).join(', ')
+);
+check(
+  'Authenticated navigation does not contain public Home or Apply links',
+  NAV_ITEMS.every(item => !publicOnlyTabs.includes(item.id)),
+  NAV_ITEMS.filter(item => publicOnlyTabs.includes(item.id)).map(item => item.id).join(', ')
+);
+check(
+  'No role can open the public landing page inside the portal',
+  ROLES.every(role => !isTabAllowedForRole(role, 'landing')),
+  ROLES.filter(role => isTabAllowedForRole(role, 'landing')).join(', ')
+);
+check(
+  'Anonymous portal fallback is the login page, not the public landing page',
+  getRoleDashboardTab(null) === 'login',
+  getRoleDashboardTab(null)
+);
+check(
+  'Anonymous landing hash resolves to the login page',
+  resolveRequestedTab(null, 'landing') === 'login',
+  resolveRequestedTab(null, 'landing')
+);
+
 // Delegated permission reductions must also hide tabs that the role normally
 // includes. Server authorization remains authoritative; this keeps the menu
 // consistent with what the API will actually allow.
@@ -100,6 +129,26 @@ for (const role of ROLES) {
     `${role} default page is allowed by RBAC`,
     isTabAllowedForRole(role, dashboard),
     dashboard
+  );
+  check(
+    `${role} default page is not the public landing page`,
+    dashboard !== 'landing',
+    dashboard
+  );
+  check(
+    `${role} landing hash resolves to the authorized dashboard`,
+    resolveRequestedTab(role, 'landing', dashboard) === dashboard,
+    resolveRequestedTab(role, 'landing', dashboard)
+  );
+  check(
+    `${role} apply hash resolves to the authorized dashboard`,
+    resolveRequestedTab(role, 'apply', dashboard) === dashboard,
+    resolveRequestedTab(role, 'apply', dashboard)
+  );
+  check(
+    `${role} visible menu excludes public Home and Apply links`,
+    getVisibleNavItems(role).every(item => !publicOnlyTabs.includes(item.id)),
+    getVisibleNavItems(role).filter(item => publicOnlyTabs.includes(item.id)).map(item => item.id).join(', ')
   );
 
   const visibleSections = getVisibleNavSections(role);
@@ -162,7 +211,7 @@ check(
 );
 
 const headteacherVisibleIds = headteacherSections.flatMap(section => section.items).map(item => item.id);
-const headteacherTabs = ROLE_ALLOWED_TABS.HEAD_TEACHER.filter(id => id !== 'landing');
+const headteacherTabs = ROLE_ALLOWED_TABS.HEAD_TEACHER;
 const missingGroupedTabs = headteacherTabs.filter(id => !headteacherVisibleIds.includes(id));
 check(
   'Grouping preserves every Headteacher page',

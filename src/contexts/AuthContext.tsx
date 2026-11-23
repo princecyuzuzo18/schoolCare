@@ -34,7 +34,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [school, setSchool] = useState<School | null>(null);
   const [defaultDashboard, setDefaultDashboard] = useState<string>(() => getRoleDashboard(null));
-  const [dashboardUrl, setDashboardUrl] = useState<string>('/portal#/landing');
+  const [dashboardUrl, setDashboardUrl] = useState<string>('/portal#/login');
   const [availableUsers, setAvailableUsers] = useState<UserProfile[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [sessionExpired, setSessionExpired] = useState(false);
@@ -70,7 +70,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setCurrentUser(null);
         setPermissions(null);
         setDefaultDashboard(getRoleDashboard(null));
-        setDashboardUrl('/portal#/landing');
+        setDashboardUrl('/portal#/login');
       }
     } catch (err) {
       console.error('Failed to initialize auth:', err);
@@ -121,9 +121,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentUser(null);
       setPermissions(null);
       setDefaultDashboard(getRoleDashboard(null));
-      setDashboardUrl('/portal#/landing');
+      setDashboardUrl('/portal#/login');
       sessionStorage.removeItem(REDIRECT_TARGET_KEY);
       setSessionExpired(false);
+      if (typeof window !== 'undefined') {
+        // Leave the portal entirely so the public website (with its Home and
+        // Apply navigation) is restored instead of the portal's login screen.
+        window.location.href = '/';
+      }
     }
   };
 
