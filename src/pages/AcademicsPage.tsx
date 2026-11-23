@@ -56,7 +56,7 @@ export const AcademicsPage: React.FC = () => {
         setLoading(true);
         const [rcList, clsList, subList, stuList] = await Promise.all([
           api.getReportCards(),
-          api.getClasses(),
+          api.getActiveClasses(),
           api.getSubjects(),
           api.getStudents()
         ]);

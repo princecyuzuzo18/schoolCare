@@ -308,7 +308,8 @@ export const ParentPortalPage: React.FC = () => {
               <span>Gate Pickup Authorization</span>
             </p>
             <p className="text-emerald-800 mt-0.5 text-[11px]">
-              You ({currentUser?.fullName}) are registered as Primary Authorized Guardian with gate security.
+              Gate pickup permissions are managed by the school office. Contact the school to confirm
+              who may collect {selectedChild?.firstName || 'your child'}.
             </p>
           </div>
         </div>
@@ -395,13 +396,9 @@ export const ParentPortalPage: React.FC = () => {
             </div>
 
             {activeInvoice && (
-              <button
-                onClick={() => setShowPayModal(true)}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition flex items-center gap-1.5"
-              >
-                <CreditCard className="w-4 h-4" />
-                <span>Pay via MTN MoMo</span>
-              </button>
+              <p className="text-[11px] text-slate-500 max-w-[15rem] text-right">
+                Pay at the bursar or by bank/MTN/Airtel using the invoice reference. The bursar records the official receipt; online self-payment is not enabled.
+              </p>
             )}
           </div>
 

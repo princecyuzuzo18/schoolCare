@@ -120,7 +120,7 @@ export const CommunicationPage: React.FC = () => {
       setLoadingDirectory(true);
       const [guardianData, classData, studentData] = await Promise.all([
         api.getGuardians(),
-        api.getClasses(),
+        api.getActiveClasses(),
         api.getStudents()
       ]);
       setGuardians(guardianData);

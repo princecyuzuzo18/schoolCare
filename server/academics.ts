@@ -651,6 +651,7 @@ export function registerAcademicRoutes(app: Express): void {
     }
 
     const allMarks = db.getAcademicCollection<MarkEntry>('marks');
+    const marksBeforeSubmit = structuredClone(allMarks);
     for (const record of updates.values()) {
       const index = allMarks.findIndex(item => item.id === record.id || (
         item.schoolId === schoolId && item.academicYearId === record.academicYearId &&
@@ -660,16 +661,24 @@ export function registerAcademicRoutes(app: Express): void {
       if (index === -1) allMarks.push(record);
       else allMarks[index] = { ...allMarks[index], ...record, id: allMarks[index].id };
     }
+    const action = b.action === 'SUBMIT' ? 'SUBMIT' : 'DRAFT';
     db.saveAcademicCollection('marks', allMarks);
 
-    const action = b.action === 'SUBMIT' ? 'SUBMIT' : 'DRAFT';
-    const current = ensureSubmission(schoolId, year.id, term.id, classId, subjectId, actor);
+    // Validate against the newly saved marks. If the submission is rejected,
+    // restore the exact previous snapshot so a failed SUBMIT cannot leave
+    // partial marks behind while the submission stays in DRAFT/RETURNED.
     if (action === 'SUBMIT') {
-      const calculated = calculateClassResults(schoolId, year.id, term.id, classId, [subjectId]);
-      if (calculated.missing.length > 0) {
-        throw new HttpError(400, `Complete all marks before submitting. ${calculated.missing.length} mark(s) missing.`,);
+      try {
+        const calculated = calculateClassResults(schoolId, year.id, term.id, classId, [subjectId]);
+        if (calculated.missing.length > 0) {
+          throw new HttpError(400, `Complete all marks before submitting. ${calculated.missing.length} mark(s) missing.`);
+        }
+      } catch (error) {
+        db.saveAcademicCollection('marks', marksBeforeSubmit);
+        throw error;
       }
     }
+    const current = ensureSubmission(schoolId, year.id, term.id, classId, subjectId, actor);
     const updated = db.updateAcademicRecord<MarkSubmission>('markSubmissions', current.id, schoolId, {
       status: action === 'SUBMIT' ? 'SUBMITTED' : 'DRAFT',
       teacherId: current.teacherId,
@@ -777,13 +786,17 @@ export function registerAcademicRoutes(app: Express): void {
     }
     const calculated = calculateClassResults(schoolId, submission.academicYearId, submission.termId, submission.classId, [submission.subjectId]);
     if (calculated.missing.length > 0) throw new HttpError(400, 'Incomplete marks cannot be approved.');
+    const notes = typeof bodyOf(req).notes === 'string' ? String(bodyOf(req).notes).trim() : '';
+    if (settings.commentsRequiredBeforeApproval && notes.length === 0) {
+      throw new HttpError(400, 'School policy requires a review comment before approval.');
+    }
     const now = new Date().toISOString();
     const updated = db.updateAcademicRecord<MarkSubmission>('markSubmissions', submission.id, schoolId, {
       status: 'APPROVED', approvedAt: now, approvedBy: reviewer.id, reviewedAt: now,
       reviewedBy: reviewer.id, reviewedByName: reviewer.fullName,
-      reviewNotes: typeof bodyOf(req).notes === 'string' ? String(bodyOf(req).notes) : undefined,
+      reviewNotes: notes || undefined,
       updatedAt: now,
-      history: addHistory({ action: 'APPROVED', by: reviewer.id, byName: reviewer.fullName, role: reviewer.role, at: now, note: typeof bodyOf(req).notes === 'string' ? String(bodyOf(req).notes) : undefined }, submission.history)
+      history: addHistory({ action: 'APPROVED', by: reviewer.id, byName: reviewer.fullName, role: reviewer.role, at: now, note: notes || undefined }, submission.history)
     });
     const year = db.getAcademicCollection<AcademicYear>('academicYears', schoolId).find(item => item.id === submission.academicYearId);
     const term = db.getAcademicCollection<AcademicTerm>('terms', schoolId).find(item => item.id === submission.termId);

@@ -16,13 +16,14 @@ export const StudentIdCardModal: React.FC<StudentIdCardModalProps> = ({ student,
 
   useEffect(() => {
     if (student) {
+      // QR data identifies the card holder. It does not claim verification:
+      // only the school's own records can confirm status at the point of use.
       const qrPayload = JSON.stringify({
+        type: 'student-id-card',
         admissionNumber: student.admissionNumber,
         name: `${student.firstName} ${student.lastName}`,
         class: student.className,
-        school: school?.name || 'ES RUBENGERA RTB',
-        verified: true,
-        verificationUrl: `https://schoolcare.rw/verify/${student.admissionNumber}`
+        school: school?.name || 'SchoolCare'
       });
 
       QRCode.toDataURL(qrPayload, { width: 160, margin: 1, color: { dark: '#102B50', light: '#FFFFFF' } })
@@ -119,10 +120,10 @@ export const StudentIdCardModal: React.FC<StudentIdCardModalProps> = ({ student,
                   Gate Scan & Parent Pickup Pass
                 </p>
                 <p className="text-[9px] text-slate-300">
-                  Emergency: {school?.emergencyPhone || '+250 788 999 112'}
+                  Emergency: {school?.emergencyPhone || 'Not configured'}
                 </p>
                 <p className="text-[8px] text-blue-300">
-                  Valid for Academic Year 2025-2026
+                  Academic Year: {school?.currentAcademicYear || 'Not configured'}
                 </p>
               </div>
               {qrDataUrl && (

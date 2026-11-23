@@ -1,6 +1,6 @@
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import type { RowDataPacket } from 'mysql2';
-import { DB_CONNECT_TIMEOUT_MS, getMysqlPool } from './mysqlConnector';
+import { getMysqlPool } from './mysqlConnector';
 
 const KEY_LENGTH = 64;
 const SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1 };
@@ -98,7 +98,11 @@ export async function verifyPassword(password: string, encoded: string | undefin
     !/^[a-f0-9]{128}$/i.test(keyHex || '') ||
     extra.length > 0
   ) {
-    throw new Error('Authentication credential has an invalid format.');
+    // A corrupt/legacy row must fail authentication, not return HTTP 500.
+    // Still perform a derivation to keep timing comparable to a real check.
+    console.error('[Auth] Stored credential has an invalid format; login denied.');
+    await deriveKey(password, Buffer.alloc(16, 1));
+    return false;
   }
 
   const expected = Buffer.from(keyHex, 'hex');
@@ -108,25 +112,19 @@ export async function verifyPassword(password: string, encoded: string | undefin
 
 export async function getPasswordHash(email: string): Promise<string | undefined> {
   const pool = requireMysqlPool();
-  const query = pool.execute<PasswordHashRow[]>(
-    `SELECT credentials.password_hash
-     FROM user_auth_credentials AS credentials
-     INNER JOIN user_profiles AS profile ON profile.id = credentials.user_id
-     WHERE LOWER(profile.email) = LOWER(?) AND profile.is_active = 1
-     LIMIT 1`,
-    [email.trim()]
-  ).then(([rows]) => rows[0]?.password_hash);
-
   try {
-    return await Promise.race([
-      query,
-      new Promise<never>((_, reject) => {
-        setTimeout(
-          () => reject(new Error('Database is unavailable. Check the MariaDB service and DB_* settings in .env.')),
-          DB_CONNECT_TIMEOUT_MS + 1000
-        );
-      })
-    ]);
+    // Do not race the query against a separate timer: mysql2 applies the
+    // configured connectTimeout/queue limits, and a losing timer previously
+    // left the eventual query result unobserved.
+    const [rows] = await pool.execute<PasswordHashRow[]>(
+      `SELECT credentials.password_hash
+       FROM user_auth_credentials AS credentials
+       INNER JOIN user_profiles AS profile ON profile.id = credentials.user_id
+       WHERE LOWER(profile.email) = LOWER(?) AND profile.is_active = 1
+       LIMIT 1`,
+      [email.trim()]
+    );
+    return rows[0]?.password_hash;
   } catch (error) {
     const code = error && typeof error === 'object' && 'code' in error ? (error as any).code : undefined;
     const message = error instanceof Error ? error.message : String(error);

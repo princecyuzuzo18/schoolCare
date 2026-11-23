@@ -45,8 +45,9 @@ export const HealthIncidentModal: React.FC<HealthIncidentModalProps> = ({
   const [priority, setPriority] = useState<IncidentPriority>(incident?.priority || 'URGENT');
   const [symptoms, setSymptoms] = useState(incident?.symptoms || '');
   const [observations, setObservations] = useState(incident?.observations || '');
-  const [temperature, setTemperature] = useState(incident?.temperature || '38.5 °C');
-  const [pulse, setPulse] = useState(incident?.pulse || '95 bpm');
+  const [temperature, setTemperature] = useState(incident?.temperature || '');
+  const [pulse, setPulse] = useState(incident?.pulse || '');
+  const [selectedGuardianId, setSelectedGuardianId] = useState(incident?.guardianId || '');
   const [actionsTaken, setActionsTaken] = useState(incident?.actionsTaken || '');
   const [outcome, setOutcome] = useState<IncidentOutcome>(incident?.outcome || 'RESTING_IN_INFIRMARY');
   const [medicalReferral, setMedicalReferral] = useState(incident?.medicalReferral || 'Rubengera Health Center (Centre de Santé Rubengera)');
@@ -57,11 +58,8 @@ export const HealthIncidentModal: React.FC<HealthIncidentModalProps> = ({
   if (!isOpen) return null;
 
   const selectedStudent = students.find(s => s.id === studentId) || students[0];
-  const matchedGuardian = guardians[0] || {
-    id: 'grd-01',
-    fullName: 'Chantal Mukantabana (Mother)',
-    phone: '+250 788 888 707'
-  };
+  // Never invent a guardian: the server also verifies the link to this student.
+  const matchedGuardian = guardians.find(g => g.id === selectedGuardianId) || null;
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,9 +91,9 @@ export const HealthIncidentModal: React.FC<HealthIncidentModalProps> = ({
           pulse,
           actionsTaken,
           responsibleStaffName: currentUser?.fullName || 'School Nurse Aline',
-          guardianId: matchedGuardian.id,
-          guardianName: matchedGuardian.fullName,
-          guardianPhone: matchedGuardian.phone,
+          guardianId: matchedGuardian?.id,
+          guardianName: matchedGuardian?.fullName,
+          guardianPhone: matchedGuardian?.phone,
           medicalReferral: priority === 'URGENT' || priority === 'EMERGENCY' ? medicalReferral : undefined,
           outcome
         });
@@ -287,13 +285,30 @@ export const HealthIncidentModal: React.FC<HealthIncidentModalProps> = ({
                 </div>
               </div>
 
-              {/* Guardian Target Preview */}
-              <div className="p-3 bg-blue-50 rounded-xl border border-blue-200">
-                <p className="font-bold text-blue-900">Automated Guardian Alert:</p>
-                <p className="text-slate-600 mt-0.5">
-                  An urgent WhatsApp & SMS alert will be automatically dispatched to primary guardian{' '}
-                  <span className="font-semibold text-slate-800">{matchedGuardian.fullName} ({matchedGuardian.phone})</span> upon submission.
-                </p>
+              {/* Guardian Target — must be explicitly selected and verified server-side */}
+              <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 space-y-2">
+                <label htmlFor="incident-guardian" className="font-bold text-blue-900 block">
+                  Guardian to alert (optional)
+                </label>
+                <select
+                  id="incident-guardian"
+                  value={selectedGuardianId}
+                  onChange={e => setSelectedGuardianId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-blue-200 bg-white text-sm"
+                >
+                  <option value="">No alert — record incident only</option>
+                  {guardians.map(guardian => (
+                    <option key={guardian.id} value={guardian.id}>
+                      {guardian.fullName} ({guardian.phone})
+                    </option>
+                  ))}
+                </select>
+                {matchedGuardian && (
+                  <p className="text-slate-600 mt-0.5">
+                    An urgent alert will be queued for{' '}
+                    <span className="font-semibold text-slate-800">{matchedGuardian.fullName}</span> if the school verifies this guardian is linked to the student.
+                  </p>
+                )}
               </div>
             </>
           ) : (
@@ -312,8 +327,8 @@ export const HealthIncidentModal: React.FC<HealthIncidentModalProps> = ({
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 uppercase">Vitals</span>
-                  <p className="font-bold text-slate-800">{incident.temperature || '38.5 °C'}</p>
-                  <p className="text-[11px] text-slate-500">{incident.pulse || '90 bpm'}</p>
+                  <p className="font-bold text-slate-800">{incident.temperature || 'Not recorded'}</p>
+                  <p className="text-[11px] text-slate-500">{incident.pulse || 'Not recorded'}</p>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 uppercase">Guardian Status</span>

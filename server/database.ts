@@ -45,7 +45,8 @@ import {
   ReportCardSubjectRow,
   ReportDistribution,
   AcademicSettings,
-  AcademicCollectionKey
+  AcademicCollectionKey,
+  AcademicCombination
 } from '../src/types';
 import {
   initialSchool,
@@ -73,7 +74,8 @@ import {
   initialGradingScales,
   initialAcademicSettings,
   initialClassSubjectAssignments,
-  initialClassTeacherAssignments
+  initialClassTeacherAssignments,
+  initialCombinations
 } from './seedData';
 import { getProfessionalTitle, isStaffRole } from '../src/roleCatalog';
 
@@ -81,6 +83,7 @@ interface DatabaseSchema {
   schools: School[];
   users: UserProfile[];
   classes: AcademicClass[];
+  combinations: AcademicCombination[];
   subjects: Subject[];
   students: Student[];
   guardians: Guardian[];
@@ -155,6 +158,12 @@ class DatabaseStore {
       schools: [initialSchool],
       users: [...initialUsers],
       classes: [...initialClasses],
+      combinations: initialCombinations.map(item => ({
+        ...item,
+        subjects: item.subjects.map(subject => ({ ...subject, teacherIds: [...subject.teacherIds] })),
+        classIds: [...item.classIds],
+        teacherIds: [...item.teacherIds]
+      })),
       subjects: [...initialSubjects],
       students: [...initialStudents],
       guardians: [...initialGuardians],
@@ -347,6 +356,80 @@ class DatabaseStore {
     return changed;
   }
 
+  /**
+   * Additive academic-structure normalization.
+   *
+   * - Renames the legacy Level 3/4/5 Accounting classes to Y1/Y2/Y3 without
+   *   changing their IDs (so student, mark and report links stay valid).
+   * - Marks discontinued O-Level S3 and CST classes as ARCHIVED; their rows,
+   *   students, marks, attendance and report cards are untouched.
+   * - Seeds the managed combination catalogue only for schools that have none.
+   */
+  private normalizeAcademicStructure(data: DatabaseSchema): boolean {
+    let changed = false;
+
+    if (!Array.isArray(data.combinations)) {
+      data.combinations = [];
+      changed = true;
+    }
+
+    const archivedAt = new Date().toISOString();
+    const accountingNames: Record<string, { name: string; grade: string }> = {
+      'class-l3-accounting-a': { name: 'Y1 Accounting', grade: 'Y1 Accounting' },
+      'class-l4-accounting-a': { name: 'Y2 Accounting', grade: 'Y2 Accounting' },
+      'class-l5-accounting-a': { name: 'Y3 Accounting', grade: 'Y3 Accounting' }
+    };
+    const classCombination: Record<string, string> = {
+      'class-l3-sod-a': 'comb-sod', 'class-l4-sod-a': 'comb-sod', 'class-l5-sod-b': 'comb-sod',
+      'class-l3-nit-a': 'comb-nit', 'class-l4-nit-a': 'comb-nit', 'class-l5-nit-a': 'comb-nit',
+      'class-l3-accounting-a': 'comb-accounting', 'class-l4-accounting-a': 'comb-accounting',
+      'class-l5-accounting-a': 'comb-accounting',
+      'class-l4-cst': 'comb-cst-archived',
+      'class-s3-a': 'comb-general-science-archived'
+    };
+
+    for (const classItem of data.classes) {
+      const nextAccounting = accountingNames[classItem.id];
+      if (nextAccounting && (classItem.name !== nextAccounting.name || classItem.grade !== nextAccounting.grade)) {
+        classItem.name = nextAccounting.name;
+        classItem.grade = nextAccounting.grade;
+        changed = true;
+      }
+      const linkedCombination = classCombination[classItem.id];
+      if (linkedCombination && !classItem.combinationId) {
+        classItem.combinationId = linkedCombination;
+        changed = true;
+      }
+      if (classItem.id === 'class-s3-a' || classItem.id === 'class-l4-cst') {
+        if (classItem.status !== 'ARCHIVED') {
+          classItem.status = 'ARCHIVED';
+          classItem.archivedAt = classItem.archivedAt || archivedAt;
+          classItem.archivedBy = classItem.archivedBy || 'system-migration';
+          changed = true;
+        }
+      } else if (!classItem.status) {
+        classItem.status = 'ACTIVE';
+        changed = true;
+      }
+    }
+
+    for (const seedCombination of initialCombinations) {
+      const exists = data.combinations.some(
+        item => item.schoolId === seedCombination.schoolId && item.code === seedCombination.code
+      );
+      if (exists) continue;
+      data.combinations.push({
+        ...seedCombination,
+        subjects: seedCombination.subjects.map(subject => ({ ...subject, teacherIds: [...subject.teacherIds] })),
+        classIds: [...seedCombination.classIds],
+        teacherIds: [...seedCombination.teacherIds]
+      });
+      changed = true;
+    }
+
+    return changed;
+  }
+
   private loadOrSeed(): DatabaseSchema {
     try {
       if (!fs.existsSync(DATA_DIR)) {
@@ -396,6 +479,7 @@ class DatabaseStore {
           }
           needsSave = this.normalizeStaffData(parsed) || needsSave;
           needsSave = this.normalizeAcademicData(parsed) || needsSave;
+          needsSave = this.normalizeAcademicStructure(parsed) || needsSave;
           if (needsSave) {
             this.saveData(parsed);
           }
@@ -403,12 +487,28 @@ class DatabaseStore {
         }
       }
     } catch (err) {
-      console.warn('Could not read existing database file, initializing with fresh seed data.', err);
+      // Never replace an existing data file with seed data. A corrupt or
+      // unreadable store must be preserved for manual recovery: silently
+      // re-seeding here would destroy real student and financial records.
+      if (fs.existsSync(DB_FILE)) {
+        const preserved = `${DB_FILE}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        try {
+          fs.copyFileSync(DB_FILE, preserved);
+        } catch {
+          // The original file remains untouched even if the copy fails.
+        }
+        throw new Error(
+          `Unable to read ${DB_FILE}: ${err instanceof Error ? err.message : String(err)}. ` +
+          `A copy was preserved at ${preserved}. Refusing to overwrite existing data with seed records.`
+        );
+      }
+      console.warn('No existing database file found; initializing with fresh seed data.');
     }
 
     const defaultData = this.getDefaultData();
     this.normalizeStaffData(defaultData);
     this.normalizeAcademicData(defaultData);
+    this.normalizeAcademicStructure(defaultData);
     this.saveData(defaultData);
     return defaultData;
   }
@@ -418,7 +518,25 @@ class DatabaseStore {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
       }
-      fs.writeFileSync(DB_FILE, JSON.stringify(dataToSave, null, 2), { encoding: 'utf-8', mode: 0o600 });
+      // Write to a temporary file and rename it into place: an interrupted
+      // write must never truncate the authoritative store.
+      const tempFile = path.join(DATA_DIR, `.schoolcare_db.${process.pid}.${Date.now()}.tmp`);
+      const fd = fs.openSync(tempFile, 'w', 0o600);
+      try {
+        fs.writeFileSync(fd, JSON.stringify(dataToSave, null, 2), { encoding: 'utf-8' });
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      try {
+        fs.renameSync(tempFile, DB_FILE);
+      } catch (error) {
+        // Windows cannot rename over an existing file atomically. Fall back to
+        // a copy there, keeping the temp file until the copy succeeds.
+        if (process.platform !== 'win32') throw error;
+        fs.copyFileSync(tempFile, DB_FILE);
+        fs.unlinkSync(tempFile);
+      }
       try {
         fs.chmodSync(DB_FILE, 0o600);
       } catch {
@@ -437,6 +555,7 @@ class DatabaseStore {
   public resetToSeed(): DatabaseSchema {
     this.data = this.getDefaultData();
     this.normalizeStaffData(this.data);
+    this.normalizeAcademicStructure(this.data);
     this.saveData(this.data);
     return this.data;
   }
@@ -801,8 +920,14 @@ class DatabaseStore {
   }
 
   // --- Classes & Subjects ---
+  /** All classes, including archived ones (needed for historical records). */
   public getClasses(schoolId: string): AcademicClass[] {
     return this.data.classes.filter(c => c.schoolId === schoolId);
+  }
+
+  /** Only classes that may be offered to new registrations/assignments. */
+  public getActiveClasses(schoolId: string): AcademicClass[] {
+    return this.data.classes.filter(c => c.schoolId === schoolId && (c.status ?? 'ACTIVE') === 'ACTIVE');
   }
 
   public getSubjects(schoolId: string): Subject[] {
@@ -847,6 +972,9 @@ class DatabaseStore {
   public updateAttendanceExplanation(id: string, explanation: string): AttendanceRecord | null {
     const idx = this.data.attendance.findIndex(a => a.id === id);
     if (idx === -1) return null;
+    // An explanation may only excuse an absence. Re-mark other statuses avoids
+    // silently rewriting verified attendance or medical/leave records.
+    if (this.data.attendance[idx].status !== 'ABSENT') return null;
     this.data.attendance[idx].parentExplanation = explanation;
     this.data.attendance[idx].status = 'EXCUSED';
     this.saveData();
@@ -945,17 +1073,34 @@ class DatabaseStore {
   }
 
   public recordPayment(payment: Payment): { payment: Payment; invoice?: Invoice } {
-    this.data.payments.unshift(payment);
-    const invoice = this.data.invoices.find(i => i.id === payment.invoiceId);
-    if (invoice) {
-      invoice.paidAmountRwf += payment.amountRwf;
-      invoice.balanceRwf = Math.max(0, invoice.totalAmountRwf - invoice.paidAmountRwf);
-      if (invoice.balanceRwf === 0) {
-        invoice.status = 'PAID';
-      } else {
-        invoice.status = 'PARTIAL';
-      }
+    if (!Number.isFinite(payment.amountRwf) || payment.amountRwf <= 0) {
+      throw new Error('A positive payment amount is required.');
     }
+    const invoice = this.data.invoices.find(i => i.id === payment.invoiceId);
+    if (!invoice) {
+      throw new Error('The linked invoice no longer exists.');
+    }
+    if (invoice.schoolId !== payment.schoolId || invoice.studentId !== payment.studentId) {
+      throw new Error('The invoice does not belong to this school and student.');
+    }
+    if (payment.amountRwf > invoice.balanceRwf) {
+      throw new Error('Payment exceeds the outstanding invoice balance.');
+    }
+    if (
+      this.data.payments.some(
+        item =>
+          item.reference === payment.reference ||
+          item.receiptNumber === payment.receiptNumber ||
+          item.id === payment.id
+      )
+    ) {
+      throw new Error('A payment with this reference already exists.');
+    }
+
+    this.data.payments.unshift(payment);
+    invoice.paidAmountRwf += payment.amountRwf;
+    invoice.balanceRwf = Math.max(0, invoice.totalAmountRwf - invoice.paidAmountRwf);
+    invoice.status = invoice.balanceRwf === 0 ? 'PAID' : 'PARTIAL';
     this.saveData();
     return { payment, invoice };
   }
@@ -1051,7 +1196,27 @@ class DatabaseStore {
     if (index === -1) {
       this.data.reportCards.unshift(card);
     } else {
-      this.data.reportCards[index] = { ...this.data.reportCards[index], ...card, id: this.data.reportCards[index].id };
+      const existing = this.data.reportCards[index];
+      // Regeneration creates blank qualitative fields. Never overwrite an
+      // existing teacher/headteacher note or published state with generated
+      // defaults. Reopening explicitly clears publication before regeneration.
+      const preservedKeys: (keyof ReportCard)[] = [
+        'conductScore', 'classTeacherRemarks', 'headTeacherRemarks',
+        'strengths', 'areasForImprovement', 'promotionDecision',
+        'publishedAt', 'publishedBy'
+      ];
+      const preserved: Partial<ReportCard> = {};
+      for (const key of preservedKeys) {
+        const existingValue = existing[key];
+        const incomingValue = card[key];
+        if ((incomingValue === '' || incomingValue === undefined || incomingValue === null) &&
+            existingValue !== '' && existingValue !== undefined && existingValue !== null) {
+          (preserved as Record<string, unknown>)[key] = existingValue;
+        }
+      }
+      this.data.reportCards[index] = {
+        ...existing, ...card, ...preserved, id: existing.id
+      };
     }
     this.saveData();
     return index === -1 ? card : this.data.reportCards[index];

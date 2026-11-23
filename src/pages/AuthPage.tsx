@@ -108,7 +108,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack }) => {
         <div
           aria-hidden="true"
           className="absolute inset-0 -z-10 bg-cover bg-center opacity-25"
-          style={{ backgroundImage: "url('/school-classroom-scene.svg')" }}
+          style={{ backgroundImage: "url('/school-classroom.svg')" }}
         />
         <div aria-hidden="true" className="brand-gradient absolute inset-0 -z-10 opacity-90" />
         <div className="flex items-center gap-4">

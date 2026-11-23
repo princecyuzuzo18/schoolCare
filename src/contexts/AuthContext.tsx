@@ -105,8 +105,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setDashboardUrl(session.dashboardUrl || `/portal#/${authorizedDashboard}`);
     await loadPermissions();
     setSessionExpired(false);
-    if (typeof window !== 'undefined') {
-      // A successful login always wins over any stale or deep-link target.
+    if (typeof window !== 'undefined' && !window.sessionStorage.getItem(REDIRECT_TARGET_KEY)) {
+      // Preserve a private deep link captured before login. App validates it
+      // against the signed-in role and permissions, then clears it; otherwise
+      // use the role dashboard.
       window.sessionStorage.setItem(REDIRECT_TARGET_KEY, authorizedDashboard);
     }
     return user;

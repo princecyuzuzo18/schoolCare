@@ -412,12 +412,12 @@ function academicsPage(res: Response): void {
     </section>
     <section>
       <div class="container grid grid-3">
-        <div class="card"><span class="tag">O-Level</span><h3>Senior 3 (S3)</h3><p>Foundation secondary education with core subjects and continuous assessment.</p></div>
-        <div class="card"><span class="tag">TVET Level 4</span><h3>Software Development (SOD)</h3><p>Practical computing and software skills for learners preparing for technology careers.</p></div>
-        <div class="card"><span class="tag">TVET Level 4</span><h3>Building Construction (CST)</h3><p>Hands-on construction skills and safety awareness for the building sector.</p></div>
-        <div class="card"><span class="tag">TVET Level 5</span><h3>Advanced TVET pathways</h3><p>Further technical training for learners progressing beyond Level 4.</p></div>
+        <div class="card"><span class="tag">TVET RTB</span><h3>Software Development (SOD)</h3><p>Practical computing and software skills for learners preparing for technology careers.</p></div>
+        <div class="card"><span class="tag">TVET RTB</span><h3>Networking (NIT)</h3><p>Computer networking and infrastructure skills for modern workplaces.</p></div>
+        <div class="card"><span class="tag">TVET RTB</span><h3>Accounting</h3><p>Commercial accounting and entrepreneurship across Y1, Y2 and Y3.</p></div>
+        <div class="card"><span class="tag">TVET Levels 4-5</span><h3>Advanced TVET pathways</h3><p>Further technical training for learners progressing beyond Level 3.</p></div>
         <div class="card"><span class="tag">Assessment</span><h3>Continuous assessment</h3><p>Class tests and terminal examinations measure knowledge, skills and conduct.</p></div>
-        <div class="card"><span class="tag">Languages</span><h3>English &amp; Ikinyarwanda</h3><p>Teaching and communication support both English and Ikinyarwanda.</p></div>
+        <div class="card"><span class="tag">Communication</span><h3>English &amp; Ikinyarwanda</h3><p>Communication skills support learning, work placements and community life.</p></div>
       </div>
     </section>
     <section class="section-alt">
@@ -426,7 +426,7 @@ function academicsPage(res: Response): void {
   sendHtml(res, {
     path: '/academics',
     title: `Academic Programmes | ${SCHOOL.name}`,
-    description: `Explore secondary and TVET programmes at ${SCHOOL.name}, including S3, Software Development, Building Construction and advanced technical pathways.`
+    description: `Explore current TVET programmes at ${SCHOOL.name}, including Software Development, Networking, Accounting and advanced technical pathways.`
   }, content);
 }
 

@@ -80,6 +80,28 @@ SQL
 apply_migrations() {
   local applied=0 skipped=0
   ensure_tracking
+
+  # Fail fast on naming mistakes and warn about duplicate numeric prefixes.
+  # The live database already has two applied 005_* files, so duplicates are
+  # tolerated for compatibility; new migrations must use a unique prefix.
+  local -A prefixes=()
+  local preflight_name preflight_prefix
+  for file in "$MIGRATIONS_DIR"/*.sql; do
+    [[ -e "$file" ]] || continue
+    preflight_name="$(basename "$file")"
+    if [[ ! "$preflight_name" =~ ^[0-9]{3}_.+\.sql$ ]]; then
+      echo "ERROR: migration ${preflight_name} must use the NNN_description.sql naming convention." >&2
+      exit 1
+    fi
+    preflight_prefix="${preflight_name:0:3}"
+    prefixes["$preflight_prefix"]="$(( ${prefixes[$preflight_prefix]:-0} + 1 ))"
+  done
+  for preflight_prefix in "${!prefixes[@]}"; do
+    if [[ "${prefixes[$preflight_prefix]}" -gt 1 ]]; then
+      echo "WARNING: migration prefix ${preflight_prefix} is used by ${prefixes[$preflight_prefix]} files; ordering depends on the filename." >&2
+    fi
+  done
+
   echo "Applying migrations from $MIGRATIONS_DIR ..."
   for file in "$MIGRATIONS_DIR"/*.sql; do
     if [[ ! -e "$file" ]]; then

@@ -68,6 +68,10 @@ export const HealthCenterPage: React.FC = () => {
 
   const urgentCount = incidents.filter(i => !i.resolved && (i.priority === 'URGENT' || i.priority === 'EMERGENCY')).length;
   const hospitalCount = incidents.filter(i => i.outcome === 'REFERRED_TO_HOSPITAL').length;
+  const acknowledgedCount = incidents.filter(i => i.parentAcknowledged).length;
+  const acknowledgmentRate = incidents.length > 0
+    ? Math.round((acknowledgedCount / incidents.length) * 100)
+    : 0;
 
   const handleOpenNew = () => {
     setSelectedIncident(null);
@@ -136,8 +140,8 @@ export const HealthCenterPage: React.FC = () => {
             <span className="text-xs font-bold uppercase text-emerald-800 tracking-wider">Parent Acknowledgment Rate</span>
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
           </div>
-          <p className="text-3xl font-black text-emerald-950 mt-2">100%</p>
-          <p className="text-xs text-emerald-700 mt-1">Multi-channel SMS & WhatsApp delivery verified</p>
+          <p className="text-3xl font-black text-emerald-950 mt-2">{acknowledgmentRate}%</p>
+          <p className="text-xs text-emerald-700 mt-1">Acknowledgments recorded in school records ({acknowledgedCount}/{incidents.length})</p>
         </div>
       </div>
 

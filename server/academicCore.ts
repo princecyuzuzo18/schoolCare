@@ -341,6 +341,21 @@ export function calculateClassResults(
         }
       }
 
+      // An all-EXCUSED subject has no scorable evidence. It must not be treated
+      // as a complete 0% result that can be submitted and graded "F".
+      if (activeWeight === 0 && categories.length > 0) {
+        complete = false;
+        missing.push({
+          studentId: student.id,
+          studentName: `${student.firstName} ${student.lastName}`,
+          subjectId: assignment.subjectId,
+          subjectName: subject?.name ?? assignment.subjectId,
+          categoryId: categories[0].id,
+          categoryName: categories[0].name,
+          reason: 'No scorable assessment — all categories are excused or missing'
+        });
+      }
+
       const percentage = activeWeight > 0 ? round((weightedSum / activeWeight) * 100) : 0;
       const boundary = gradeFor(percentage, scale);
       const byCode = (code: string) => breakdown.find(item => item.code === code);
@@ -366,8 +381,8 @@ export function calculateClassResults(
         examMax: exam?.maxMarks ?? 0,
         totalMarks: round(totalMarks),
         percentage,
-        grade: boundary.grade,
-        gradeDescription: boundary.description,
+        grade: activeWeight > 0 ? boundary.grade : 'N/A',
+        gradeDescription: activeWeight > 0 ? boundary.description : 'No scorable assessment',
         remark: categoryMark('EXAM')?.remark ?? categoryMark('COURSEWORK')?.remark ?? '',
         rankInClass: 0,
         isComplete: complete
@@ -500,11 +515,14 @@ export function generateReportCards(
   const academicClass = db.getClasses(schoolId).find(item => item.id === classId);
   const users = db.getUsers(schoolId);
   const headteacher = users.find(user => user.role === 'HEAD_TEACHER') ?? users.find(user => user.role === 'SCHOOL_ADMIN');
+  // Class-teacher assignments are year-scoped; historical/current reports must
+  // not display a teacher assigned for a different academic year.
   const classTeacherAssignment = db.getAcademicCollection<ClassTeacherAssignment>('classTeacherAssignments', schoolId)
-    .find(item => item.classId === classId);
+    .find(item => item.classId === classId && item.academicYearId === year.id);
   const classTeacher = users.find(user => user.id === classTeacherAssignment?.teacherId);
 
   const sourceSubmissionIds = getApprovedSubmissionIds(schoolId, year.id, term.id, classId, approvedSubjectIds);
+  const combinationCatalogue = db.getAcademicCollection<any>('combinations', schoolId);
   const issueDate = new Date().toISOString().slice(0, 10);
   const targetStudents = options.studentIds?.length
     ? results.students.filter(student => options.studentIds!.includes(student.studentId))
@@ -512,6 +530,13 @@ export function generateReportCards(
 
   const cards: ReportCard[] = [];
   for (const student of targetStudents) {
+    const attendance = attendanceSummary(schoolId, classId, term, student.studentId);
+    const studentRecord = db.getStudentById(student.studentId);
+    const combinationId = studentRecord?.combinationId ?? academicClass?.combinationId;
+    const combination = combinationCatalogue.find(item => item.id === combinationId)
+      ?? combinationCatalogue.find(item =>
+        item.name?.toLowerCase() === String(studentRecord?.combination ?? '').toLowerCase()
+      );
     const subjects: ReportCardSubjectRow[] = student.subjects.map(subject => ({
       subjectName: subject.subjectName,
       subjectCode: subject.subjectCode,
@@ -540,7 +565,10 @@ export function generateReportCards(
       admissionNumber: student.admissionNumber,
       className: academicClass?.name ?? '',
       classId,
-      combination: academicClass?.combination ?? '',
+      combination: studentRecord?.combination ?? combination?.name ?? academicClass?.combination ?? '',
+      programme: combination?.academicProgramme ?? studentRecord?.academicProgramme ?? '',
+      educationLevel: combination?.educationLevel ?? studentRecord?.educationLevel ?? '',
+      academicLevel: academicClass?.grade ?? '',
       academicYear: year.name,
       term: term.name,
       subjects,
@@ -548,8 +576,8 @@ export function generateReportCards(
       overallGrade: student.grade,
       overallRank: settings.enableRanking ? student.rank : 0,
       totalStudentsInClass: results.students.length,
-      attendanceDaysPresent: 0,
-      attendanceTotalDays: 0,
+      attendanceDaysPresent: attendance.present,
+      attendanceTotalDays: attendance.total,
       conductScore: '',
       classTeacherRemarks: '',
       headTeacherRemarks: '',
@@ -753,8 +781,8 @@ export function notifyParentsAndStudents(
   void studentName;
 }
 
-export function attendanceSummary(schoolId: string, classId: string, term?: AcademicTerm) {
-  let records = db.getAttendance(schoolId, undefined, classId);
+export function attendanceSummary(schoolId: string, classId: string, term?: AcademicTerm, studentId?: string) {
+  let records = db.getAttendance(schoolId, studentId, classId);
   if (term?.startDate) records = records.filter(record => record.date >= term.startDate!);
   if (term?.endDate) records = records.filter(record => record.date <= term.endDate!);
   const present = records.filter(record => ['PRESENT', 'LATE'].includes(record.status)).length;

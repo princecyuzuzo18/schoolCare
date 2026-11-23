@@ -17,7 +17,9 @@ export interface MysqlStatus {
 }
 
 function positiveInt(value: string | undefined, fallback: number, min = 1, max = 65535): number {
-  const parsed = Number.parseInt(value ?? '', 10);
+  const text = (value ?? '').trim();
+  if (!/^\d+$/.test(text)) return fallback;
+  const parsed = Number.parseInt(text, 10);
   return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 }
 
@@ -39,7 +41,9 @@ const dbConfig = {
   connectTimeout: DB_CONNECT_TIMEOUT_MS,
   waitForConnections: true,
   connectionLimit: positiveInt(process.env.DB_CONNECTION_LIMIT, 10, 1, 100),
-  queueLimit: positiveInt(process.env.DB_QUEUE_LIMIT, 10, 0, 1000)
+  queueLimit: positiveInt(process.env.DB_QUEUE_LIMIT, 10, 0, 1000),
+  idleTimeout: 60_000,
+  enableKeepAlive: true
 };
 
 let pool: mysql.Pool | null = null;
@@ -111,15 +115,10 @@ export async function checkMysqlHealth(): Promise<MysqlStatus> {
       return lastKnownStatus;
     }
 
-    const connection = await Promise.race([
-      currentPool.getConnection(),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error('Database connection timed out')),
-          DB_CONNECT_TIMEOUT_MS + 1000
-        )
-      )
-    ]);
+    // mysql2 already applies connectTimeout and pool queue limits. Racing a
+    // separate timer used to leak a connection if the timer won and the pool
+    // handed out a connection afterwards.
+    const connection = await currentPool.getConnection();
     try {
       const [rows] = await connection.query('SHOW TABLES');
       const tableCount = Array.isArray(rows) ? rows.length : 0;

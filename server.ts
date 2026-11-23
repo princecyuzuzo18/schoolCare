@@ -5,6 +5,7 @@ import net from 'net';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import { pipeline } from 'node:stream/promises';
 import multer from 'multer';
 import type { RowDataPacket } from 'mysql2';
 import { db } from './server/database';
@@ -16,7 +17,12 @@ import { buildAuthSessionView } from './server/authSession';
 import { ASSIGNABLE_STAFF_ROLES, getProfessionalTitle } from './src/roleCatalog';
 import { registerPublicSite } from './server/publicSite';
 import { registerAcademicRoutes } from './server/academics';
+import { registerCombinationRoutes } from './server/combinations';
 import { registerReportPrintingRoutes } from './server/reportPrinting';
+import { registerAiRoutes } from './server/ai/routes';
+import { registerHeadteacherDashboardRoutes } from './server/headteacherDashboard';
+import { registerHeadteacherAppointmentRoutes } from './server/headteacherAppointment';
+import { registerStudentImportRoutes } from './server/studentImport';
 import {
   DELEGATABLE_PERMISSIONS,
   PERMISSION_CATALOG,
@@ -59,7 +65,7 @@ import {
   approveSignupRequest,
   createParentSignupRequest,
   createStudentSignupRequest,
-  getSignupRequestView,
+  getPublicSignupRequestView,
   listSignupRequests,
   rejectSignupRequest,
   resendSignupCode,
@@ -117,6 +123,7 @@ import {
   PermissionGroup,
   PortalDashboardView,
   ResultSlipVerificationStatus,
+  School,
   UserProfile,
   UserRole
 } from './src/types';
@@ -128,6 +135,21 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
+
+// Only trust X-Forwarded-* when an explicit reverse proxy hop is configured.
+// With no proxy, leaving this unset prevents client IP spoofing.
+const trustProxyHops = Number(process.env.TRUST_PROXY || 0);
+if (Number.isInteger(trustProxyHops) && trustProxyHops > 0) {
+  app.set('trust proxy', trustProxyHops);
+}
+
+// Fail closed in production: verification-code hashes and admission tracking
+// tokens must never be protected by the development fallback secret.
+if (isProduction && (process.env.ADMISSION_TRACKING_SECRET || '').length < 32) {
+  throw new Error(
+    'ADMISSION_TRACKING_SECRET must be set to at least 32 random characters when NODE_ENV=production.'
+  );
+}
 
 async function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -143,23 +165,41 @@ async function isPortAvailable(port: number): Promise<boolean> {
 }
 
 async function resolvePort(preferredPort?: number): Promise<number> {
-  const fallbackPorts = [3000, 3010, 3011, 3012, 3020];
-  const candidates = preferredPort
-    ? Array.from(new Set([preferredPort, ...fallbackPorts]))
-    : fallbackPorts;
-
-  for (const port of candidates) {
-    const available = await isPortAvailable(port);
-    if (available) {
-      return port;
+  // In production an explicit PORT is a deployment contract: silently moving
+  // to a fallback port would leave the reverse proxy talking to another app.
+  if (preferredPort) {
+    if (!(await isPortAvailable(preferredPort))) {
+      throw new Error(
+        `Configured PORT ${preferredPort} is already in use. Free that port or change PORT in .env.`
+      );
     }
+    return preferredPort;
   }
 
-  return preferredPort ?? 3000;
+  const fallbackPorts = [3000, 3010, 3011, 3012, 3020];
+  for (const port of fallbackPorts) {
+    if (await isPortAvailable(port)) return port;
+  }
+
+  throw new Error('No available development port found in 3000, 3010, 3011, 3012, 3020.');
 }
 
+app.disable('x-powered-by');
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Baseline response hardening. Routes that serve downloads set their own
+// restrictive CSP; these defaults apply to every other response.
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (isProduction) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
 
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const LOGIN_ATTEMPT_LIMIT = 5;
@@ -262,7 +302,26 @@ function sanitizeReference(value: unknown): string {
   return sanitizeInput(value, 40).toUpperCase();
 }
 
-const accountSignupRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 8, prefix: 'account-signup' });
+/** Stream a file without letting an I/O error become an unhandled process event. */
+function streamFileSafely(filePath: string, res: Response): void {
+  pipeline(fs.createReadStream(filePath), res).catch(error => {
+    console.error('[Files] Stream failed:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Unable to read the requested file.' });
+    } else {
+      res.destroy();
+    }
+  });
+}
+
+// Signup verification must not be bypassable by changing a client-supplied
+// referenceNumber, and resends must share one bucket with verification.
+const accountSignupRateLimiter = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 8,
+  prefix: 'account-signup',
+  keyFrom: (req, prefix) => `${prefix}:${req.ip}:${req.path}`
+});
 const submissionRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 8, prefix: 'admission-submit' });
 const slipUploadRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 15, prefix: 'admission-slip-upload' });
 const slipPreviewRateLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 30, prefix: 'admission-slip-preview' });
@@ -479,8 +538,24 @@ function authorizeApiRequest(req: Request, res: Response, next: () => void): voi
  */
 registerPublicSite(app);
 
+/**
+ * Public, dependency-free liveness probe for reverse proxies and uptime
+ * monitors. It deliberately exposes no database, user or configuration data.
+ */
+app.get('/api/health', (_req, res) => {
+  return res.json({
+    status: 'ok',
+    service: 'schoolcare',
+    uptimeSeconds: Math.round(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.use('/api', (req, res, next) => {
-  const isPublicSchoolRead = req.method === 'GET' && /^\/schools(?:\/[^/]+)?$/.test(req.path);
+  // /schools/me is authenticated: it must resolve the school from the session,
+  // never from the anonymous public school directory used by the website.
+  const isPublicSchoolRead =
+    req.method === 'GET' && /^\/schools(?:\/[^/]+)?$/.test(req.path) && req.path !== '/schools/me';
   const isLogin = req.method === 'POST' && req.path === '/auth/login';
   const isPasswordResetRequest = req.method === 'POST' && req.path === '/auth/password-reset/request';
   const isStaffActivation = req.method === 'POST' && req.path === '/staff/invitations/activate';
@@ -534,6 +609,86 @@ function portalStudentIds(actor?: UserProfile | null): string[] | null {
   if (!actor) return null;
   if (actor.role === 'PARENT') return Array.isArray(actor.linkedStudentIds) ? actor.linkedStudentIds : [];
   if (actor.role === 'STUDENT') return actor.studentId ? [actor.studentId] : [];
+  return null;
+}
+
+/** Broadcast recipients intentionally visible to every portal account. */
+const BROADCAST_NOTIFICATION_RECIPIENTS = new Set(['all-guardians', 'all-students', 'all-staff']);
+
+/**
+ * Recipient IDs a parent/student account may read or message: the account
+ * itself, linked students, and guardians linked to those students. Staff
+ * accounts return null because their hub is school-wide.
+ */
+function portalNotificationRecipientIds(actor: UserProfile | undefined, schoolId: string): string[] | null {
+  const students = portalStudentIds(actor);
+  if (!students) return null;
+  const ids = new Set<string>([actor?.id ?? '', ...students]);
+  for (const studentId of students) {
+    for (const { guardian } of db.getGuardiansForStudent(studentId)) ids.add(guardian.id);
+  }
+  ids.delete('');
+  return [...ids];
+}
+
+function isPortalNotificationVisible(
+  notification: { recipientId: string; relatedEntityId?: string },
+  actor: UserProfile | undefined,
+  schoolId: string,
+  allowedRecipientIds: string[] | null,
+  allowedStudentIds: string[] | null
+): boolean {
+  if (!allowedRecipientIds || !allowedStudentIds) return true;
+  if (BROADCAST_NOTIFICATION_RECIPIENTS.has(notification.recipientId)) return true;
+  if (allowedRecipientIds.includes(notification.recipientId)) return true;
+  if (notification.relatedEntityId) {
+    const incident = db.getHealthIncidents(schoolId).find(item => item.id === notification.relatedEntityId);
+    if (incident && allowedStudentIds.includes(incident.studentId)) return true;
+  }
+  return false;
+}
+
+interface NotificationRecipient {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string;
+}
+
+/** Resolve a recipient from school records instead of trusting client input. */
+function resolveNotificationRecipient(
+  recipientId: string,
+  schoolId: string,
+  actor: UserProfile
+): NotificationRecipient | null {
+  const broadcastName = recipientId === 'all-guardians'
+    ? 'All Parents & Guardians'
+    : recipientId === 'all-students'
+      ? 'All Students'
+      : recipientId === 'all-staff'
+        ? 'All Staff'
+        : null;
+  if (broadcastName) {
+    return BROADCAST_NOTIFICATION_RECIPIENTS.has(recipientId)
+      ? { id: recipientId, name: broadcastName, phone: '' }
+      : null;
+  }
+
+  const portalAllowed = portalNotificationRecipientIds(actor, schoolId);
+  if (portalAllowed && !portalAllowed.includes(recipientId)) return null;
+
+  const guardian = db.getGuardians(schoolId).find(item => item.id === recipientId);
+  if (guardian) {
+    return { id: guardian.id, name: guardian.fullName, phone: guardian.phone || '', email: guardian.email || undefined };
+  }
+  const student = db.getStudents(schoolId).find(item => item.id === recipientId);
+  if (student) {
+    return { id: student.id, name: `${student.firstName} ${student.lastName}`, phone: '' };
+  }
+  const user = db.getUserById(recipientId);
+  if (user && user.schoolId === schoolId) {
+    return { id: user.id, name: user.fullName, phone: user.phone || '', email: user.email || undefined };
+  }
   return null;
 }
 
@@ -599,9 +754,17 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
 
   const ip = req.ip || 'unknown';
   const now = Date.now();
-  const attempt = loginAttempts.get(ip);
-  if (attempt && attempt.resetAt > now && attempt.count >= LOGIN_ATTEMPT_LIMIT) {
-    res.setHeader('Retry-After', String(Math.ceil((attempt.resetAt - now) / 1000)));
+  // Throttle both the source IP and the target account. This keeps a shared
+  // office IP from locking out every user after one person's failures, while
+  // still blocking distributed brute force against one email.
+  const ipKey = `ip:${ip}`;
+  const emailKey = `email:${email.toLowerCase()}`;
+  const activeAttempts = [ipKey, emailKey]
+    .map(key => loginAttempts.get(key))
+    .filter((item): item is { count: number; resetAt: number } => Boolean(item && item.resetAt > now));
+  const blocked = activeAttempts.find(item => item.count >= LOGIN_ATTEMPT_LIMIT);
+  if (blocked) {
+    res.setHeader('Retry-After', String(Math.ceil((blocked.resetAt - now) / 1000)));
     return res.status(429).json({ error: 'Too many sign-in attempts. Try again later.' });
   }
 
@@ -623,14 +786,21 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Unable to authenticate at this time.' });
   }
   if (!user || !passwordMatches || user.isActive === false) {
-    const nextAttempt = attempt && attempt.resetAt > now
-      ? { count: attempt.count + 1, resetAt: attempt.resetAt }
-      : { count: 1, resetAt: now + LOGIN_WINDOW_MS };
-    loginAttempts.set(ip, nextAttempt);
+    for (const key of [ipKey, emailKey]) {
+      const current = loginAttempts.get(key);
+      loginAttempts.set(
+        key,
+        current && current.resetAt > now
+          ? { count: current.count + 1, resetAt: current.resetAt }
+          : { count: 1, resetAt: now + LOGIN_WINDOW_MS }
+      );
+    }
     return res.status(401).json({ error: 'Invalid email or password.' });
   }
 
-  loginAttempts.delete(ip);
+  // Clear only this account's failure bucket after a legitimate login; other
+  // users behind the same IP must not inherit a clean slate.
+  loginAttempts.delete(emailKey);
   createSession(user.id, res);
   db.logAudit(
     user.schoolId,
@@ -762,7 +932,7 @@ app.post(
 
 app.get('/api/public/accounts/status/:id', async (req: Request, res: Response) => {
   try {
-    const request = await getSignupRequestView(req.params.id);
+    const request = await getPublicSignupRequestView(req.params.id);
     return res.json({ request });
   } catch (error) {
     return respondWithSignupError(res, error);
@@ -842,6 +1012,9 @@ app.post('/api/portal/attendance/:id/explain', requireRole('PARENT'), (req: Requ
     const existing = db.getAttendance(actor.schoolId).find(record => record.id === req.params.id);
     if (!existing) return res.status(404).json({ error: 'Record not found' });
     assertPortalStudentAccess(actor, existing.studentId);
+    if (existing.status !== 'ABSENT') {
+      return res.status(400).json({ error: 'Only absence records can be explained.' });
+    }
     const explanation = sanitizeInput(req.body?.explanation, 1000);
     if (!explanation) return res.status(400).json({ error: 'Enter an explanation.' });
     const updated = db.updateAttendanceExplanation(req.params.id, explanation);
@@ -868,6 +1041,7 @@ app.post('/api/portal/health-incidents/:id/acknowledge', requireRole('PARENT'), 
     const actor = getActor(req);
     const existing = db.getHealthIncidentById(req.params.id);
     if (!existing) return res.status(404).json({ error: 'Incident not found' });
+    assertSchoolRecordAccess(req, existing.schoolId, 'Health incident');
     assertPortalStudentAccess(actor, existing.studentId);
     const updated = db.acknowledgeIncident(req.params.id, sanitizeInput(req.body?.notes, 1000));
     if (!updated) return res.status(404).json({ error: 'Incident not found' });
@@ -888,46 +1062,14 @@ app.post('/api/portal/health-incidents/:id/acknowledge', requireRole('PARENT'), 
   }
 });
 
-app.post('/api/portal/payments', requireRole('PARENT'), (req: Request, res: Response) => {
-  try {
-    const actor = getActor(req);
-    const body = req.body;
-    assertPortalStudentAccess(actor, String(body?.studentId || ''));
-    const amountRwf = Number(body?.amountRwf);
-    if (!body?.invoiceId || !Number.isFinite(amountRwf) || amountRwf <= 0) {
-      return res.status(400).json({ error: 'A valid invoice and amount are required.' });
-    }
-    const payment: Payment = {
-      id: `pay-${Date.now()}`,
-      schoolId: actor.schoolId,
-      invoiceId: body.invoiceId,
-      receiptNumber: `REC-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`,
-      studentId: body.studentId,
-      studentName: String(body.studentName || ''),
-      amountRwf,
-      method: body.method || 'MTN_MOMO',
-      reference: String(body.reference || `MOMO-RW-${Date.now()}`),
-      payerName: actor.fullName,
-      payerPhone: String(body.payerPhone || actor.phone),
-      status: 'COMPLETED',
-      date: new Date().toISOString().split('T')[0]
-    };
-    const created = db.recordPayment(payment);
-    db.logAudit(
-      actor.schoolId,
-      actor.id,
-      actor.fullName,
-      actor.role,
-      'RECORD_PAYMENT',
-      'PAYMENT',
-      created.payment.id,
-      `Parent recorded a payment of ${amountRwf.toLocaleString()} RWF for ${payment.studentId}.`,
-      req.ip
-    );
-    return res.status(201).json(created);
-  } catch (error) {
-    return respondWithPortalError(res, error);
-  }
+app.post('/api/portal/payments', requireRole('PARENT'), (_req: Request, res: Response) => {
+  // A parent must never be able to mark an invoice as paid from the browser.
+  // There is no verified payment-provider callback wired into this deployment,
+  // so accepting these requests would create false COMPLETED receipts.
+  return res.status(503).json({
+    error:
+      'Online parent payments are not enabled. Pay through the school bursar (bank/MTN/Airtel) and ask the bursar to record the official receipt.'
+  });
 });
 
 app.get('/api/users', requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req: Request, res: Response) => {
@@ -1880,84 +2022,20 @@ app.post('/api/staff/invitations/activate', async (req: Request, res: Response) 
   }
 });
 
-// --- AI Assistant (server-side key only) ---
-app.post(
-  '/api/ai/assistant',
-  requireRole(
-    'SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER',
-    'ACCOUNTANT', 'DISCIPLINE_OFFICER', 'SCHOOL_IT', 'ANIMATEUR'
-  ),
-  async (req: Request, res: Response) => {
-    const actor = getActor(req);
-    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
-    const context = typeof req.body?.context === 'string' ? req.body.context.slice(0, 30000) : '';
-
-    if (!message) {
-      return res.status(400).json({ error: 'Enter a question for the assistant.' });
-    }
-    if (message.length > 4000) {
-      return res.status(400).json({ error: 'Question is too long. Keep it under 4,000 characters.' });
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(503).json({
-        error: 'AI assistant is not configured. Ask an administrator to set GEMINI_API_KEY on the server.'
-      });
-    }
-
-    try {
-      const upstream = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{
-                text: `You are a school administration AI assistant for ES RUBENGERA RTB in Rwanda. Use the following school training material when relevant:\n${context}\n\nUser question: ${message}`
-              }]
-            }]
-          })
-        }
-      );
-
-      if (!upstream.ok) {
-        console.error('[AI] Upstream error:', upstream.status, await upstream.text());
-        return res.status(502).json({ error: 'The AI service could not answer right now. Try again later.' });
-      }
-
-      const data = await upstream.json() as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-      };
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-      if (!reply) {
-        return res.status(502).json({ error: 'The AI service returned an empty response.' });
-      }
-
-      db.logAudit(
-        actor.schoolId,
-        actor.id,
-        actor.fullName,
-        actor.role,
-        'AI_ASSISTANT_QUERY',
-        'AI',
-        actor.id,
-        `AI assistant question (${message.length} chars)`,
-        req.ip
-      );
-
-      return res.json({ reply });
-    } catch (error) {
-      console.error('[AI] Request failed:', error);
-      return res.status(502).json({ error: 'Unable to reach the AI service right now.' });
-    }
-  }
-);
-
 // --- Schools ---
 app.get('/api/schools', (req: Request, res: Response) => {
   return res.json(db.getSchools());
+});
+
+/**
+ * Authenticated school context. Multi-school accounts must never fall back to
+ * `schools[0]`; the school is derived from the verified account (or, for the
+ * platform super admin, from an explicitly scoped schoolId).
+ */
+app.get('/api/schools/me', (req: Request, res: Response) => {
+  const school = db.getSchool(getScopedSchoolId(req));
+  if (!school) return res.status(404).json({ error: 'School not found' });
+  return res.json(school);
 });
 
 app.get('/api/schools/:id', (req: Request, res: Response) => {
@@ -1973,7 +2051,24 @@ app.patch('/api/schools/:id', requirePermission('school.write'), (req: Request, 
     return respondWithSchoolAccessError(res, error, 'school settings update');
   }
 
-  const updated = db.updateSchool(req.params.id, req.body);
+  // Only display/contact fields are editable here. Never let a client replace
+  // identity keys, counters or arbitrary object properties.
+  const editableFields: (keyof School)[] = [
+    'name', 'type', 'motto', 'logo', 'district', 'sector', 'province', 'country',
+    'phone', 'emergencyPhone', 'email', 'website', 'currentAcademicYear', 'currentTerm'
+  ];
+  const updates: Partial<School> = {};
+  for (const field of editableFields) {
+    const value = req.body?.[field];
+    if (typeof value === 'string') {
+      (updates as Record<string, string>)[field] = sanitizeInput(value, field === 'logo' ? 2000 : 300);
+    }
+  }
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No editable school fields were provided.' });
+  }
+
+  const updated = db.updateSchool(req.params.id, updates);
   if (!updated) return res.status(404).json({ error: 'School not found' });
   const actor = getActor(req);
   db.logAudit(
@@ -2107,10 +2202,79 @@ app.post('/api/students', requirePermission('students:write'), async (req: Reque
       });
     }
 
+    const blockedRegistrationCombination = (value: unknown) => {
+      const text = String(value || '').toLowerCase();
+      return text.includes('o-level') || text.includes('o level') || text.includes('senior 3') ||
+        text.includes('building') || text.includes('construction') || text.includes('cst');
+    };
+
+    /**
+     * Registration may only use an ACTIVE class and an ACTIVE, school-owned
+     * combination. Browser-supplied schoolId is never trusted here.
+     */
+    const validateRegistrationAcademics = (
+      selectedClassId: string | undefined,
+      mysqlClassInfo?: { status?: string; combination_id?: string | null; combination?: string; name?: string }
+    ): { ok: true; combination: any; className: string } | { ok: false; error: string } => {
+      const schoolId = getScopedSchoolId(req);
+      if (!selectedClassId) return { ok: false, error: 'Class selection is required' };
+
+      const jsonClass = db.getClasses(schoolId).find(item => item.id === selectedClassId);
+      const status = String(mysqlClassInfo?.status ?? jsonClass?.status ?? 'ACTIVE').toUpperCase();
+      if (status !== 'ACTIVE') {
+        return { ok: false, error: 'The selected class is archived or inactive and cannot accept new students.' };
+      }
+
+      const activeCombinations = db.getAcademicCollection<any>('combinations', schoolId)
+        .filter(item => item.status === 'ACTIVE');
+      const classCombinationId = mysqlClassInfo?.combination_id ?? jsonClass?.combinationId;
+      const requestedId = typeof body.combinationId === 'string' && body.combinationId.trim()
+        ? body.combinationId.trim() : classCombinationId;
+      let combination = requestedId
+        ? activeCombinations.find(item => item.id === requestedId)
+        : undefined;
+
+      const selectedText = String(
+        body.combination || mysqlClassInfo?.combination || jsonClass?.combination || ''
+      ).trim().toLowerCase();
+      if (!combination && selectedText) {
+        const matches = (value: unknown) => String(value || '').trim().toLowerCase();
+        combination = activeCombinations.find(item =>
+          [item.name, item.code, item.academicProgramme].map(matches).includes(selectedText)
+        ) ?? activeCombinations.find(item =>
+          [item.name, item.code, item.academicProgramme].some(value => matches(value).includes(selectedText))
+        );
+      }
+
+      if (!combination) {
+        const available = activeCombinations.map(item => item.name).join(', ') || 'no active combinations';
+        return {
+          ok: false,
+          error: `This combination is no longer available for new registration. Active combinations: ${available}.`
+        };
+      }
+      return {
+        ok: true,
+        combination,
+        className: mysqlClassInfo?.name ?? jsonClass?.name ?? ''
+      };
+    };
+
     if (!mysqlPool || !mysqlStatus.connected) {
       const schoolId = getScopedSchoolId(req);
-      const classId = body.classId || 'class-l4-sod-a';
-      const fallbackClass = db.getClasses(schoolId).find(cls => cls.id === classId) ?? db.getClasses(schoolId)[0];
+      const activeClasses = db.getActiveClasses(schoolId);
+      const classId = body.classId || activeClasses[0]?.id || '';
+      const academicCheck = validateRegistrationAcademics(classId);
+      if (!academicCheck.ok) {
+        return res.status(400).json({ error: academicCheck.error });
+      }
+      const fallbackClass = db.getClasses(schoolId).find(cls => cls.id === classId);
+      const selectedCombination = body.combination || academicCheck.combination.name || fallbackClass?.combination || '';
+      if (blockedRegistrationCombination(selectedCombination)) {
+        return res.status(400).json({
+          error: 'O-Level and Building Construction are not available for new student registration. Use Networking or another allowed combination.'
+        });
+      }
       const newStudent = {
         id: `std-${Date.now()}`,
         schoolId,
@@ -2121,7 +2285,10 @@ app.post('/api/students', requirePermission('students:write'), async (req: Reque
         dob: body.dob,
         classId: fallbackClass?.id ?? classId,
         className: fallbackClass?.name ?? 'Unknown Class',
-        combination: body.combination || fallbackClass?.combination || '',
+        combination: selectedCombination,
+        combinationId: academicCheck.combination.id,
+        educationLevel: academicCheck.combination.educationLevel,
+        academicProgramme: academicCheck.combination.academicProgramme,
         enrollmentStatus: 'ACTIVE',
         admissionDate: body.admissionDate || new Date().toISOString().split('T')[0],
         bloodGroup: body.bloodGroup || 'O+',
@@ -2149,10 +2316,14 @@ app.post('/api/students', requirePermission('students:write'), async (req: Reque
     }
 
     const schoolId = getScopedSchoolId(req);
-    const classId = body.classId || 'class-l4-sod-a';
+    const classId = body.classId;
+
+    if (!classId) {
+      return res.status(400).json({ error: 'Class selection is required' });
+    }
 
     const [classRows] = await mysqlPool.execute(
-      'SELECT name, combination FROM classes WHERE id = ? AND school_id = ?',
+      'SELECT name, combination, combination_id, status FROM classes WHERE id = ? AND school_id = ?',
       [classId, schoolId]
     );
 
@@ -2160,6 +2331,17 @@ app.post('/api/students', requirePermission('students:write'), async (req: Reque
 
     if (!classInfo) {
       return res.status(400).json({ error: 'Invalid class selected' });
+    }
+
+    const academicCheck = validateRegistrationAcademics(classId, classInfo);
+    if (!academicCheck.ok) {
+      return res.status(400).json({ error: academicCheck.error });
+    }
+    const selectedCombination = body.combination || academicCheck.combination.name || classInfo.combination || '';
+    if (blockedRegistrationCombination(selectedCombination)) {
+      return res.status(400).json({
+        error: 'O-Level and Building Construction are not available for new student registration. Use Networking or another allowed combination.'
+      });
     }
 
     const newStudent = {
@@ -2173,7 +2355,10 @@ app.post('/api/students', requirePermission('students:write'), async (req: Reque
       dob: body.dob,
       classId,
       className: classInfo.name,
-      combination: body.combination || classInfo.combination || '',
+      combination: selectedCombination,
+      combinationId: academicCheck.combination.id,
+      educationLevel: academicCheck.combination.educationLevel,
+      academicProgramme: academicCheck.combination.academicProgramme,
       enrollmentStatus: 'ACTIVE',
       admissionDate: body.admissionDate ||
         new Date().toISOString().split('T')[0],
@@ -2189,15 +2374,17 @@ app.post('/api/students', requirePermission('students:write'), async (req: Reque
       `INSERT INTO students (
         id, school_id, admission_number, first_name, last_name,
         gender, dob, class_id, class_name, combination,
+        combination_id, education_level, academic_programme,
         enrollment_status, admission_date, blood_group,
         allergies, medical_notes, photo_url, national_id, previous_school
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newStudent.id, newStudent.schoolId, newStudent.admissionNumber,
         newStudent.firstName, newStudent.lastName, newStudent.gender,
         newStudent.dob, newStudent.classId, newStudent.className,
-        newStudent.combination, newStudent.enrollmentStatus,
-        newStudent.admissionDate, newStudent.bloodGroup,
+        newStudent.combination, newStudent.combinationId,
+        newStudent.educationLevel, newStudent.academicProgramme,
+        newStudent.enrollmentStatus, newStudent.admissionDate, newStudent.bloodGroup,
         newStudent.allergies, newStudent.medicalNotes, newStudent.photoUrl,
         newStudent.nationalId, newStudent.previousSchool
       ]
@@ -2251,6 +2438,9 @@ app.patch('/api/students/:id', requirePermission('students:write'), async (req: 
         classId: body.classId ?? existing.classId,
         className: body.className ?? existing.className,
         combination: body.combination ?? existing.combination,
+        combinationId: body.combinationId ?? existing.combinationId,
+        educationLevel: body.educationLevel ?? existing.educationLevel,
+        academicProgramme: body.academicProgramme ?? existing.academicProgramme,
         enrollmentStatus: body.enrollmentStatus ?? existing.enrollmentStatus,
         admissionDate: body.admissionDate ?? existing.admissionDate,
         bloodGroup: body.bloodGroup ?? existing.bloodGroup,
@@ -2300,6 +2490,9 @@ app.patch('/api/students/:id', requirePermission('students:write'), async (req: 
       'dob',
       'classId',
       'combination',
+      'combinationId',
+      'educationLevel',
+      'academicProgramme',
       'enrollmentStatus',
       'admissionDate',
       'bloodGroup',
@@ -2317,6 +2510,9 @@ app.patch('/api/students/:id', requirePermission('students:write'), async (req: 
       dob: 'dob',
       classId: 'class_id',
       combination: 'combination',
+      combinationId: 'combination_id',
+      educationLevel: 'education_level',
+      academicProgramme: 'academic_programme',
       enrollmentStatus: 'enrollment_status',
       admissionDate: 'admission_date',
       bloodGroup: 'blood_group',
@@ -2739,6 +2935,9 @@ app.post('/api/attendance/:id/explain', (req: Request, res: Response) => {
   } catch (error) {
     return respondWithPortalError(res, error);
   }
+  if (existing.status !== 'ABSENT') {
+    return res.status(400).json({ error: 'Only absence records can be explained.' });
+  }
   const { explanation } = req.body;
   const updated = db.updateAttendanceExplanation(req.params.id, explanation);
   if (!updated) return res.status(404).json({ error: 'Record not found' });
@@ -2784,28 +2983,43 @@ app.post('/api/health-incidents', (req: Request, res: Response) => {
   } catch (error) {
     return respondWithSchoolAccessError(res, error, 'health incident');
   }
-  const refNum = `EMG-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const student = db.getStudentById(String(body.studentId));
+  if (!student) {
+    return res.status(404).json({ error: 'Student not found.' });
+  }
+  if (body.guardianId && !db.getGuardianLink(student.id, String(body.guardianId))) {
+    return res.status(400).json({ error: 'The selected guardian is not linked to this student.' });
+  }
+  const linkedGuardian = body.guardianId
+    ? db.getGuardiansForStudent(student.id).find(item => item.guardian.id === String(body.guardianId))?.guardian
+    : undefined;
+  if (body.guardianPhone && !linkedGuardian) {
+    return res.status(400).json({ error: 'Select a guardian linked to this student before sending an alert.' });
+  }
+  const refNum = `EMG-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const notRecorded = 'Not recorded';
 
   const newIncident: HealthIncident = {
-    id: `inc-${Date.now()}`,
+    id: `inc-${crypto.randomUUID()}`,
     schoolId: getScopedSchoolId(req),
     referenceNumber: refNum,
     studentId: body.studentId,
-    studentName: body.studentName,
-    studentClass: body.studentClass || 'Level 4 SOD A',
+    studentName: body.studentName || `${student.firstName} ${student.lastName}`.trim(),
+    // Clinical metadata is derived from the enrolment record, never guessed.
+    studentClass: student.className || notRecorded,
     date: body.date || new Date().toISOString().split('T')[0],
     time: body.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     category: body.category || 'ILLNESS',
     priority: body.priority || 'URGENT',
     symptoms: body.symptoms || '',
     observations: body.observations || '',
-    temperature: body.temperature || '38.5 °C',
-    pulse: body.pulse || '90 bpm',
-    actionsTaken: body.actionsTaken || 'Administered initial care in infirmary.',
+    temperature: sanitizeInput(body.temperature, 40) || notRecorded,
+    pulse: sanitizeInput(body.pulse, 40) || notRecorded,
+    actionsTaken: sanitizeInput(body.actionsTaken, 500) || notRecorded,
     responsibleStaffName: body.responsibleStaffName || actor.fullName,
-    guardianId: body.guardianId,
-    guardianName: body.guardianName,
-    guardianPhone: body.guardianPhone,
+    guardianId: linkedGuardian?.id,
+    guardianName: linkedGuardian?.fullName || '',
+    guardianPhone: linkedGuardian ? (sanitizeInput(body.guardianPhone, 40) || linkedGuardian.phone) : '',
     contactStatus: 'ATTEMPTED',
     parentAcknowledged: false,
     handoverArrangement: body.handoverArrangement,
@@ -2823,21 +3037,21 @@ app.post('/api/health-incidents', (req: Request, res: Response) => {
   };
 
   const created = db.createHealthIncident(newIncident);
-
-  if (body.guardianPhone) {
+  if (linkedGuardian) {
+    const schoolName = db.getSchool(created.schoolId)?.name || 'SchoolCare';
     db.queueNotification({
-      id: `msg-emg-${Date.now()}`,
+      id: `msg-emg-${crypto.randomUUID()}`,
       schoolId: created.schoolId,
-      recipientId: body.guardianId || 'grd-01',
-      recipientName: body.guardianName || 'Parent',
-      recipientPhone: body.guardianPhone,
+      recipientId: linkedGuardian.id,
+      recipientName: linkedGuardian.fullName,
+      recipientPhone: body.guardianPhone || linkedGuardian.phone,
       channel: 'WHATSAPP',
       category: 'EMERGENCY',
       priority: created.priority,
       titleEn: `[HEALTH ALERT ${refNum}] ${created.studentName}`,
-      titleRw: `[UBUTUMWA BW�?TUBUZIMA ${refNum}] ${created.studentName}`,
-      contentEn: `Urgent notice from ES Rubengera Infirmary: ${created.studentName} requires attention for ${created.symptoms}. Please review in SchoolCare.`,
-      contentRw: `Ubutumwa bwihutirwa buturutse mu buvuzi bwa ES Rubengera: ${created.studentName} akeneye kwitabwaho kubera ${created.symptoms}. Nyamuneka musuzume muri SchoolCare.`,
+      titleRw: `[UBUTUMWA BWIHUTIRWA ${refNum}] ${created.studentName}`,
+      contentEn: `Urgent notice from ${schoolName} infirmary: ${created.studentName} requires attention for ${created.symptoms}. Please review in SchoolCare.`,
+      contentRw: `Ubutumwa bwihutirwa buturutse mu buvuzi bwa ${schoolName}: ${created.studentName} akeneye kwitabwaho kubera ${created.symptoms}. Nyamuneka musuzume muri SchoolCare.`,
       status: 'QUEUED',
       createdAt: new Date().toISOString(),
       relatedEntityId: created.id
@@ -2905,7 +3119,14 @@ app.post('/api/health-incidents/:id/acknowledge', (req: Request, res: Response) 
 // --- Notifications Hub ---
 app.get('/api/notifications', (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
-  return res.json(db.getNotifications(schoolId));
+  const notifications = db.getNotifications(schoolId);
+  const allowedRecipients = portalNotificationRecipientIds(req.user, schoolId);
+  const allowedStudents = portalStudentIds(req.user);
+  return res.json(
+    notifications.filter(notification =>
+      isPortalNotificationVisible(notification, req.user, schoolId, allowedRecipients, allowedStudents)
+    )
+  );
 });
 
 app.post('/api/notifications/send', (req: Request, res: Response) => {
@@ -2927,10 +3148,11 @@ app.post('/api/notifications/send', (req: Request, res: Response) => {
   const channel = body.channel as NotificationChannel;
   const category = body.category as NotificationMessage['category'];
   const priority = body.priority as NotificationMessage['priority'];
+  const schoolId = getScopedSchoolId(req);
   const recipientId = typeof body.recipientId === 'string' ? body.recipientId.trim() : '';
-  const recipientName = typeof body.recipientName === 'string' ? body.recipientName.trim() : '';
-  const recipientPhone = typeof body.recipientPhone === 'string' ? body.recipientPhone.trim() : '';
-  const recipientEmail = typeof body.recipientEmail === 'string' ? body.recipientEmail.trim() : '';
+  const resolvedRecipient = recipientId
+    ? resolveNotificationRecipient(recipientId, schoolId, actor)
+    : null;
   const contentEn = typeof body.contentEn === 'string' ? body.contentEn.trim() : '';
   const contentRw = typeof body.contentRw === 'string' ? body.contentRw.trim() : '';
 
@@ -2940,23 +3162,23 @@ app.post('/api/notifications/send', (req: Request, res: Response) => {
   if (!allowedCategories.includes(category) || !allowedPriorities.includes(priority)) {
     return res.status(400).json({ error: 'Choose a supported message type and priority.' });
   }
-  if (!recipientId || !recipientName || (!contentEn && !contentRw)) {
-    return res.status(400).json({ error: 'A recipient and message body are required.' });
+  if (!resolvedRecipient || (!contentEn && !contentRw)) {
+    return res.status(400).json({ error: 'A valid recipient and message body are required.' });
   }
-  if (channel === 'EMAIL' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
-    return res.status(400).json({ error: 'A valid recipient email address is required.' });
+  if (channel === 'EMAIL' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resolvedRecipient.email || '')) {
+    return res.status(400).json({ error: 'A valid stored recipient email address is required.' });
   }
-  if ((channel === 'SMS' || channel === 'WHATSAPP') && !/^\+?[\d\s()-]{7,20}$/.test(recipientPhone)) {
-    return res.status(400).json({ error: 'A valid recipient phone number is required.' });
+  if ((channel === 'SMS' || channel === 'WHATSAPP') && !/^\+?[\d\s()-]{7,20}$/.test(resolvedRecipient.phone)) {
+    return res.status(400).json({ error: 'A valid stored recipient phone number is required.' });
   }
 
   const newMsg: NotificationMessage = {
     id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-    schoolId: getScopedSchoolId(req),
-    recipientId,
-    recipientName,
-    recipientPhone,
-    recipientEmail: recipientEmail || undefined,
+    schoolId,
+    recipientId: resolvedRecipient.id,
+    recipientName: resolvedRecipient.name,
+    recipientPhone: resolvedRecipient.phone,
+    recipientEmail: resolvedRecipient.email,
     channel,
     category,
     priority,
@@ -2984,9 +3206,15 @@ app.post('/api/notifications/send', (req: Request, res: Response) => {
 });
 
 app.post('/api/notifications/:id/acknowledge', (req: Request, res: Response) => {
+  const schoolId = getScopedSchoolId(req);
+  const allowedRecipients = portalNotificationRecipientIds(req.user, schoolId);
+  const allowedStudents = portalStudentIds(req.user);
   const notification = db
-    .getNotifications(getScopedSchoolId(req))
-    .find(item => item.id === req.params.id);
+    .getNotifications(schoolId)
+    .find(item =>
+      item.id === req.params.id &&
+      isPortalNotificationVisible(item, req.user, schoolId, allowedRecipients, allowedStudents)
+    );
   if (!notification) return res.status(404).json({ error: 'Notification not found' });
   try {
     assertSchoolRecordAccess(req, notification.schoolId, 'Notification');
@@ -3035,26 +3263,51 @@ app.post('/api/finance/payments', (req: Request, res: Response) => {
   } catch (error) {
     return respondWithSchoolAccessError(res, error, 'payment student');
   }
-  if (body.invoiceId) {
-    const invoice = db.getInvoices(getScopedSchoolId(req)).find(item => item.id === body.invoiceId);
-    if (!invoice) {
-      return res.status(403).json({ error: 'Invoice is not available in your school.' });
-    }
+  const schoolId = getScopedSchoolId(req);
+  if (!body.invoiceId) {
+    return res.status(400).json({ error: 'Select the invoice this payment settles.' });
   }
-  const receiptNo = `REC-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const invoice = db.getInvoices(schoolId).find(item => item.id === body.invoiceId);
+  if (!invoice) {
+    return res.status(403).json({ error: 'Invoice is not available in your school.' });
+  }
+  if (invoice.studentId !== body.studentId) {
+    return res.status(400).json({ error: 'This invoice does not belong to the selected student.' });
+  }
+  const amountRwf = Number(body.amountRwf);
+  if (!Number.isFinite(amountRwf) || amountRwf <= 0) {
+    return res.status(400).json({ error: 'Enter a positive payment amount.' });
+  }
+  if (amountRwf > invoice.balanceRwf) {
+    return res.status(400).json({
+      error: `Payment exceeds the outstanding balance of ${invoice.balanceRwf.toLocaleString()} RWF.`
+    });
+  }
+  const allowedMethods: Payment['method'][] = ['MTN_MOMO', 'AIRTEL_MONEY', 'BANK_TRANSFER', 'CASH'];
+  const method = body.method as Payment['method'];
+  if (!allowedMethods.includes(method)) {
+    return res.status(400).json({ error: 'Select a supported payment method.' });
+  }
+  const student = db.getStudents(schoolId).find(item => item.id === body.studentId);
+  const reference = sanitizeInput(body.reference, 120) || `PAY-${crypto.randomUUID()}`;
+  const receiptNo = `REC-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const existingPayments = db.getPayments(schoolId);
+  if (existingPayments.some(item => item.reference === reference || item.receiptNumber === receiptNo)) {
+    return res.status(409).json({ error: 'A payment with this reference already exists.' });
+  }
 
   const newPayment: Payment = {
-    id: `pay-${Date.now()}`,
-    schoolId: getScopedSchoolId(req),
+    id: `pay-${crypto.randomUUID()}`,
+    schoolId,
     invoiceId: body.invoiceId,
     receiptNumber: receiptNo,
     studentId: body.studentId,
-    studentName: body.studentName,
-    amountRwf: Number(body.amountRwf),
-    method: body.method || 'MTN_MOMO',
-    reference: body.reference || `MOMO-RW-${Date.now()}`,
-    payerName: body.payerName || actor.fullName,
-    payerPhone: body.payerPhone || '+250 788 000 000',
+    studentName: student ? `${student.firstName} ${student.lastName}` : sanitizeInput(body.studentName, 160),
+    amountRwf,
+    method,
+    reference,
+    payerName: sanitizeInput(body.payerName, 160) || actor.fullName,
+    payerPhone: sanitizeInput(body.payerPhone, 50),
     status: 'COMPLETED',
     date: new Date().toISOString().split('T')[0]
   };
@@ -3077,6 +3330,11 @@ app.post('/api/finance/payments', (req: Request, res: Response) => {
 // --- Academics & Report Cards ---
 app.get('/api/academics/classes', (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
+  // Attendance and other day-to-day selectors pass active=true so archived
+  // classes remain available for historical records but cannot be selected.
+  if (req.query.active === 'true') {
+    return res.json(db.getActiveClasses(schoolId));
+  }
   return res.json(db.getClasses(schoolId));
 });
 
@@ -3098,7 +3356,12 @@ app.get('/api/academics/report-cards', (req: Request, res: Response) => {
 });
 
 registerAcademicRoutes(app);
+registerCombinationRoutes(app);
 registerReportPrintingRoutes(app);
+registerAiRoutes(app);
+registerHeadteacherDashboardRoutes(app);
+registerHeadteacherAppointmentRoutes(app);
+registerStudentImportRoutes(app);
 
 // --- Staff, Timetable, Homework, Events, Audit ---
 app.get('/api/staff', (req: Request, res: Response) => {
@@ -3123,23 +3386,55 @@ app.get('/api/reports/analytics', (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   const term = (req.query.term as string) || 'Term 1';
 
-  const students = db.getStudents(schoolId);
-  const reportCards = db.getReportCards(schoolId);
-  const attendance = db.getAttendance(schoolId);
-  const health = db.getHealthIncidents(schoolId);
-  const invoices = db.getInvoices(schoolId);
-  const payments = db.getPayments(schoolId);
-  const messages = db.getNotifications(schoolId);
-  const classes = db.getClasses(schoolId);
-  const subjects = db.getSubjects(schoolId);
+  // `reports:read` grants access to the report, not to every underlying
+  // module. Each section is redacted unless the account can read that module.
+  const permissionCodes = new Set(
+    getEffectivePermissions(getActor(req)).map(permission => permission.replace(':', '.'))
+  );
+  const canRead = (code: string) => permissionCodes.has(code);
+  const canReadStudents = canRead('students.read');
+  const canReadAcademics = canRead('academics.read');
+  const canReadAttendance = canRead('attendance.read') && canReadStudents;
+  const canReadHealth = canRead('health.read') && canReadStudents;
+  const canReadFinance = canRead('finance.read');
+  const canReadCommunication = canRead('notifications.read');
+  const restrictedSections = [
+    !canReadAcademics && 'academics',
+    !canReadAttendance && 'attendance',
+    !canReadHealth && 'health',
+    !canReadFinance && 'finance',
+    !canReadCommunication && 'communication'
+  ].filter(Boolean) as string[];
+
+  const allStudents = db.getStudents(schoolId);
+  const allReportCards = db.getReportCards(schoolId);
+  const allAttendance = db.getAttendance(schoolId);
+  const allHealth = db.getHealthIncidents(schoolId);
+  const allInvoices = db.getInvoices(schoolId);
+  const allPayments = db.getPayments(schoolId);
+  const allMessages = db.getNotifications(schoolId);
+
+  // Without publish rights, analytics may only use report cards already made
+  // visible to the school community.
+  const visibleReportCards = canRead('reports.publish')
+    ? allReportCards
+    : allReportCards.filter(card => Boolean(card.publishedAt) && card.status !== 'DRAFT');
+  const students = canReadStudents ? allStudents : [];
+  const reportCards = canReadAcademics ? visibleReportCards : [];
+  const attendance = canReadAttendance ? allAttendance : [];
+  const health = canReadHealth ? allHealth : [];
+  const invoices = canReadFinance ? allInvoices : [];
+  const payments = canReadFinance ? allPayments : [];
+  const messages = canReadCommunication ? allMessages : [];
 
   // 1. Academic Aggregation
-  const totalEvaluated = reportCards.length || 1;
-  const overallAverage = Number(
-    (reportCards.reduce((acc, r) => acc + r.overallAverage, 0) / totalEvaluated).toFixed(1)
-  );
+  const evaluatedCount = reportCards.length;
+  const academicDenominator = evaluatedCount || 1;
+  const overallAverage = evaluatedCount > 0 ? Number(
+    (reportCards.reduce((acc, r) => acc + r.overallAverage, 0) / academicDenominator).toFixed(1)
+  ) : 0;
   const passedStudents = reportCards.filter(r => r.overallAverage >= 50).length;
-  const passRate = Number(((passedStudents / totalEvaluated) * 100).toFixed(1));
+  const passRate = evaluatedCount > 0 ? Number(((passedStudents / academicDenominator) * 100).toFixed(1)) : 0;
 
   const gradeDistribution = {
     A: reportCards.filter(r => r.overallAverage >= 80).length,
@@ -3150,12 +3445,13 @@ app.get('/api/reports/analytics', (req: Request, res: Response) => {
   };
 
   // 2. Attendance Aggregation
-  const totalAtt = attendance.length || 1;
+  const totalAtt = attendance.length;
+  const attendanceDenominator = totalAtt || 1;
   const presentCount = attendance.filter(a => a.status === 'PRESENT').length;
   const absentCount = attendance.filter(a => a.status === 'ABSENT').length;
   const lateCount = attendance.filter(a => a.status === 'LATE').length;
   const excusedCount = attendance.filter(a => a.status === 'EXCUSED' || a.status === 'SICK' || a.status === 'AUTHORIZED_LEAVE').length;
-  const attendanceRate = Number(((presentCount / totalAtt) * 100).toFixed(1));
+  const attendanceRate = totalAtt > 0 ? Number(((presentCount / attendanceDenominator) * 100).toFixed(1)) : 0;
 
   // Chronic absenteeism: students with at least 1 unexcused absence
   const chronicAbsentStudents = students.filter(s =>
@@ -3166,7 +3462,7 @@ app.get('/api/reports/analytics', (req: Request, res: Response) => {
   const urgentHealthCases = health.filter(h => h.priority === 'URGENT' || h.priority === 'EMERGENCY').length;
   const hospitalReferrals = health.filter(h => h.outcome === 'REFERRED_TO_HOSPITAL').length;
   const acknowledgedHealthAlerts = health.filter(h => h.parentAcknowledged).length;
-  const ackRate = health.length > 0 ? Number(((acknowledgedHealthAlerts / health.length) * 100).toFixed(1)) : 100;
+  const ackRate = health.length > 0 ? Number(((acknowledgedHealthAlerts / health.length) * 100).toFixed(1)) : 0;
 
   // 4. Financial Reconciliation Aggregation
   const totalBilledRwf = invoices.reduce((acc, i) => acc + i.totalAmountRwf, 0);
@@ -3184,14 +3480,15 @@ app.get('/api/reports/analytics', (req: Request, res: Response) => {
   // 5. Parent Communication Delivery Audit
   const totalDispatched = messages.length;
   const deliveredCount = messages.filter(m => m.status === 'DELIVERED' || m.status === 'ACKNOWLEDGED').length;
-  const deliverySuccessRate = totalDispatched > 0 ? Number(((deliveredCount / totalDispatched) * 100).toFixed(1)) : 100;
+  const deliverySuccessRate = totalDispatched > 0 ? Number(((deliveredCount / totalDispatched) * 100).toFixed(1)) : 0;
 
   return res.json({
     generatedAt: new Date().toISOString(),
     school: db.getSchool(schoolId),
     term,
+    restrictedSections,
     academics: {
-      totalEvaluated,
+      totalEvaluated: evaluatedCount,
       overallAverage,
       passRate,
       gradeDistribution,
@@ -3345,9 +3642,9 @@ app.get('/api/audit-logs', requirePermission('audit.review'), (req: Request, res
 });
 
 app.post('/api/demo/reset', requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req: Request, res: Response) => {
-  if (process.env.ALLOW_DEMO_RESET !== 'true') {
+  if (isProduction || process.env.ALLOW_DEMO_RESET !== 'true') {
     return res.status(403).json({
-      error: 'Demo reset is disabled. Set ALLOW_DEMO_RESET=true on the server only for a controlled demo environment.'
+      error: 'Demo reset is disabled in production and on any server without explicit demo opt-in.'
     });
   }
 
@@ -3461,7 +3758,7 @@ app.post(
       'Content-Disposition',
       `inline; filename="${safeFileName(active.record.originalFileName)}"`
     );
-    fs.createReadStream(active.filePath).pipe(res);
+    streamFileSafely(active.filePath, res);
   }
 );
 
@@ -3973,7 +4270,7 @@ app.get(
       'Content-Disposition',
       `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
     );
-    fs.createReadStream(filePath).pipe(res);
+    streamFileSafely(filePath, res);
   }
 );
 
@@ -3998,7 +4295,7 @@ app.get(
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'");
     res.setHeader('Content-Disposition', `inline; filename="${safeFileName(document.fileName)}"`);
-    fs.createReadStream(filePath).pipe(res);
+    streamFileSafely(filePath, res);
   }
 );
 
@@ -4021,13 +4318,26 @@ app.get('/api/health/database', requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN'), asyn
   return status.connected ? res.json(payload) : res.status(503).json(payload);
 });
 
-// Legacy endpoint kept for the existing Settings page (admin-only).
-app.get('/api/mysql/status', async (_req: Request, res: Response) => {
+// Legacy endpoint kept for the existing Settings page. School admins get the
+// same operational summary without infrastructure identifiers.
+app.get('/api/mysql/status', async (req: Request, res: Response) => {
   const status = await checkMysqlHealth();
-  return res.json(status);
+  if (req.user?.role === 'SUPER_ADMIN') return res.json(status);
+  return res.json({
+    connected: status.connected,
+    engine: status.connected ? 'MariaDB/MySQL' : '',
+    host: 'Hidden',
+    port: 0,
+    database: 'Hidden',
+    user: 'Hidden',
+    tableCount: status.tableCount,
+    mode: status.mode,
+    ...(status.connected ? {} : { error: 'Database is unavailable.' })
+  });
 });
 
-app.get('/api/mysql/export', (_req: Request, res: Response) => {
+// A full schema/data dump is a platform-level artifact, not a tenant export.
+app.get('/api/mysql/export', requireRole('SUPER_ADMIN'), (_req: Request, res: Response) => {
   const sqlPath = getExportSqlPath();
   if (!fs.existsSync(sqlPath)) {
     return res.status(404).json({ error: 'SQL export file not found' });
@@ -4041,6 +4351,16 @@ app.get('/api/mysql/export', (_req: Request, res: Response) => {
 // browser reports a confusing "Unexpected token '<'" while parsing JSON.
 app.use('/api', (req: Request, res: Response) => {
   res.status(404).json({ error: `Unknown API endpoint: ${req.method} ${req.originalUrl}` });
+});
+
+// Final safety net for errors forwarded by Express middleware/routes.
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('[SchoolCare] Unhandled request error:', err);
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
+  res.status(500).json({ error: 'An unexpected server error occurred.' });
 });
 
 // ==========================================
@@ -4067,8 +4387,8 @@ async function startServer() {
     });
   }
 
-  if (PORT !== Number(process.env.PORT) && !process.env.PORT) {
-    console.log(`Port 3000 was unavailable. SchoolCare is running on http://localhost:${PORT}`);
+  if (!process.env.PORT) {
+    console.log(`No PORT configured; SchoolCare is running on http://localhost:${PORT}`);
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
@@ -4107,5 +4427,6 @@ async function startServer() {
 if (process.env.SCHOOLCARE_SKIP_SERVER_START !== '1') {
   startServer().catch(err => {
     console.error('Failed to start server:', err);
+    process.exit(1);
   });
 }

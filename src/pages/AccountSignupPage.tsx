@@ -143,7 +143,9 @@ export const AccountSignupPage: React.FC<AccountSignupPageProps> = ({ mode, onBa
     try {
       const result = await api.getSignupStatus(request.id);
       const status = result.request.status;
-      setRequest(result.request);
+      // The public status endpoint intentionally omits the sign-in email; keep
+      // the value from the original submission in local UI state.
+      setRequest({ ...result.request, signInEmail: result.request.signInEmail || request.signInEmail });
       if (status === 'APPROVED') {
         setNotice(t('signupApprovedMessage'));
         const user = await login(email.trim(), password);

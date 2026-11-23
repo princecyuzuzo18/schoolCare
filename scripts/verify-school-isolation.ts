@@ -209,6 +209,50 @@ try {
       createdAt: new Date().toISOString()
     } as any);
 
+    const parentUser = db.getUserById('user-parent');
+    const linkedStudentId = parentUser?.linkedStudentIds?.[0] || '';
+    const linkedGuardian = linkedStudentId
+      ? db.getGuardiansForStudent(linkedStudentId)[0]?.guardian
+      : undefined;
+    const unrelatedGuardian = db.createGuardian({
+      id: 'guardian-unrelated-isolation',
+      schoolId: ownSchool,
+      fullName: 'Unrelated Guardian',
+      relationship: 'GUARDIAN',
+      phone: '+250 700 000 006',
+      preferredLanguage: 'en',
+      preferredChannel: 'SMS',
+      isVerified: true,
+      canPickup: false,
+      emergencyPriority: 2
+    } as any, ownStudent.id);
+
+    const makeNotification = (id: string, recipientId: string, recipientName: string, content: string) =>
+      db.queueNotification({
+        id,
+        schoolId: ownSchool,
+        recipientId,
+        recipientName,
+        recipientPhone: '+250 700 000 000',
+        channel: 'IN_APP',
+        category: 'GENERAL',
+        priority: 'ROUTINE',
+        titleEn: content,
+        titleRw: content,
+        contentEn: content,
+        contentRw: content,
+        status: 'QUEUED',
+        createdAt: new Date().toISOString()
+      } as any);
+
+    const parentNotification = makeNotification('notification-parent-isolation', 'user-parent', 'Parent', 'For parent');
+    const linkedNotification = linkedGuardian
+      ? makeNotification('notification-linked-isolation', linkedGuardian.id, linkedGuardian.fullName, 'For linked guardian')
+      : null;
+    const unrelatedNotification = makeNotification(
+      'notification-unrelated-isolation', unrelatedGuardian.id, unrelatedGuardian.fullName, 'For another family'
+    );
+
     const headCookie = sessionCookie(head.id);
     const otherCookie = sessionCookie('user-other-head');
 
@@ -250,6 +294,86 @@ try {
     });
     check('Cross-school notification acknowledgement is denied', notificationAck.status === 404 || notificationAck.status === 403, `status ${notificationAck.status}`);
 
+    const parentNotifications = await request('/api/notifications', { headers: { Cookie: sessionCookie('user-parent') } });
+    const parentNotificationIds = Array.isArray(parentNotifications.body)
+      ? parentNotifications.body.map((item: any) => item.id)
+      : [];
+    check(
+      'Parent notification hub includes the parent account and linked guardians',
+      parentNotifications.status === 200 &&
+        parentNotificationIds.includes(parentNotification.id) &&
+        (!linkedNotification || parentNotificationIds.includes(linkedNotification.id)),
+      JSON.stringify(parentNotificationIds)
+    );
+    check(
+      'Parent notification hub excludes other families',
+      !parentNotificationIds.includes(unrelatedNotification.id) &&
+        !parentNotificationIds.includes(otherNotification.id),
+      JSON.stringify(parentNotificationIds)
+    );
+
+    const staffNotifications = await request('/api/notifications', { headers: { Cookie: headCookie } });
+    const staffNotificationIds = Array.isArray(staffNotifications.body)
+      ? staffNotifications.body.map((item: any) => item.id)
+      : [];
+    check(
+      'Staff notification hub remains school-wide',
+      staffNotificationIds.includes(parentNotification.id) &&
+        staffNotificationIds.includes(unrelatedNotification.id) &&
+        !staffNotificationIds.includes(otherNotification.id),
+      JSON.stringify(staffNotificationIds)
+    );
+
+    const forgedRecipient = await request('/api/notifications/send', {
+      ...jsonPost({
+        recipientId: 'spoofed-recipient',
+        recipientName: 'Spoofed Name',
+        recipientPhone: '+250 700 000 111',
+        channel: 'SMS',
+        category: 'GENERAL',
+        priority: 'ROUTINE',
+        contentEn: 'Spoofed'
+      }, sessionCookie('user-nurse'))
+    });
+    check('Notification sender rejects unknown recipients', forgedRecipient.status === 400, `status ${forgedRecipient.status}`);
+
+    const crossSchoolRecipient = await request('/api/notifications/send', {
+      ...jsonPost({
+        recipientId: otherGuardian.id,
+        recipientName: otherGuardian.fullName,
+        recipientPhone: otherGuardian.phone,
+        channel: 'SMS',
+        category: 'GENERAL',
+        priority: 'ROUTINE',
+        contentEn: 'Cross-school'
+      }, sessionCookie('user-nurse'))
+    });
+    check(
+      'Notification sender rejects recipients from another school',
+      crossSchoolRecipient.status === 400,
+      `status ${crossSchoolRecipient.status}`
+    );
+
+    const resolvedRecipient = await request('/api/notifications/send', {
+      ...jsonPost({
+        recipientId: unrelatedGuardian.id,
+        recipientName: 'Forged Guardian Name',
+        recipientPhone: '+250 700 000 999',
+        channel: 'SMS',
+        category: 'GENERAL',
+        priority: 'ROUTINE',
+        contentEn: 'Valid recipient'
+      }, sessionCookie('user-nurse'))
+    });
+    const storedRecipient = db.getNotifications(ownSchool).find(item => item.id === resolvedRecipient.body?.id);
+    check(
+      'Notification sender uses stored recipient contact details',
+      resolvedRecipient.status === 201 &&
+        storedRecipient?.recipientName === unrelatedGuardian.fullName &&
+        storedRecipient?.recipientPhone === unrelatedGuardian.phone,
+      JSON.stringify({ status: resolvedRecipient.status, stored: storedRecipient?.recipientPhone })
+    );
+
     const payment = await request('/api/finance/payments', {
       ...jsonPost({ studentId: otherStudent.id, amountRwf: 1000, method: 'CASH' }, headCookie)
     });
@@ -268,6 +392,20 @@ try {
       body: JSON.stringify({ motto: 'Excellence in service' })
     });
     check('Own-school settings update is allowed', ownSchoolUpdate.status === 200, `status ${ownSchoolUpdate.status}`);
+
+    const identitySpoof = await request(`/api/schools/${ownSchool}`, {
+      method: 'PATCH',
+      headers: { Cookie: headCookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'school-hacked', code: 'HACK-001', motto: 'Own school' })
+    });
+    const schoolAfterSpoof = await request(`/api/schools/${ownSchool}`, { headers: { Cookie: headCookie } });
+    check(
+      'School identity fields are not editable through settings',
+      identitySpoof.status === 200 &&
+        schoolAfterSpoof.body?.id === ownSchool &&
+        schoolAfterSpoof.body?.code !== 'HACK-001',
+      JSON.stringify({ id: schoolAfterSpoof.body?.id, code: schoolAfterSpoof.body?.code })
+    );
 
     const spoofedList = await request('/api/students?schoolId=school-other-isolation-test', { headers: { Cookie: headCookie } });
     const spoofedIds = Array.isArray(spoofedList.body) ? spoofedList.body.map((s: any) => s.id) : [];
@@ -296,6 +434,32 @@ try {
     check('Attendance batch accepts in-school student', attendance.status === 200, `status ${attendance.status}`);
     check('Spoofed attendance schoolId is overwritten', ownAttendance?.schoolId === ownSchool && !otherAttendance,
       `own=${ownAttendance?.schoolId} other=${otherAttendance?.schoolId}`);
+
+    if (linkedStudentId) {
+      const presentRecordId = 'attendance-present-isolation';
+      db.saveAttendanceBatch([{
+        id: presentRecordId,
+        schoolId: ownSchool,
+        studentId: linkedStudentId,
+        studentName: 'Linked Student',
+        classId: 'class-isolation',
+        className: 'S3 A',
+        date: '2026-11-22',
+        status: 'PRESENT',
+        recordedByStaffId: head!.id,
+        recordedByName: head!.fullName,
+        parentNotified: false
+      } as any]);
+      const explanation = await request(`/api/portal/attendance/${presentRecordId}/explain`, {
+        ...jsonPost({ explanation: 'Trying to rewrite a present record' }, sessionCookie('user-parent'))
+      });
+      const afterExplanation = db.getAttendance(ownSchool).find(record => record.id === presentRecordId);
+      check(
+        'Parent explanation cannot convert a non-absence record to excused',
+        explanation.status === 400 && afterExplanation?.status === 'PRESENT' && !afterExplanation?.parentExplanation,
+        JSON.stringify({ status: explanation.status, storedStatus: afterExplanation?.status })
+      );
+    }
 
     const otherHeadList = await request('/api/students', { headers: { Cookie: otherCookie } });
     const otherHeadIds = Array.isArray(otherHeadList.body) ? otherHeadList.body.map((s: any) => s.id) : [];

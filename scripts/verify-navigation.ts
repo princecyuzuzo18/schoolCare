@@ -52,6 +52,18 @@ check(
   unreachableNavIds.join(', ')
 );
 
+// Delegated permission reductions must also hide tabs that the role normally
+// includes. Server authorization remains authoritative; this keeps the menu
+// consistent with what the API will actually allow.
+check(
+  'Role allowlist does not bypass a missing effective permission',
+  !isTabAllowedForRole('HEAD_TEACHER', 'settings', ['students:read'])
+);
+check(
+  'Role allowlist works when the effective permission is present',
+  isTabAllowedForRole('HEAD_TEACHER', 'settings', ['school:write'])
+);
+
 const missingTranslations: string[] = [];
 for (const item of NAV_ITEMS) {
   if (!item.labelKey) continue;
@@ -130,6 +142,33 @@ for (const role of ROLES) {
     quickNav.filter(item => !APP_ROUTES[item.id]).map(item => item.id).join(', ')
   );
 }
+
+const headteacherSections = getVisibleNavSections('HEAD_TEACHER');
+const expectedHeadteacherSections = [
+  'Dashboard',
+  'People Management',
+  'Academic Management',
+  'School Operations',
+  'Finance',
+  'Communication',
+  'Reports & Analytics',
+  'School Settings'
+];
+check(
+  'Headteacher sidebar uses the eight requested sections',
+  JSON.stringify(headteacherSections.map(section => section.label)) ===
+    JSON.stringify(expectedHeadteacherSections),
+  headteacherSections.map(section => section.label).join(' | ')
+);
+
+const headteacherVisibleIds = headteacherSections.flatMap(section => section.items).map(item => item.id);
+const headteacherTabs = ROLE_ALLOWED_TABS.HEAD_TEACHER.filter(id => id !== 'landing');
+const missingGroupedTabs = headteacherTabs.filter(id => !headteacherVisibleIds.includes(id));
+check(
+  'Grouping preserves every Headteacher page',
+  missingGroupedTabs.length === 0,
+  missingGroupedTabs.join(', ')
+);
 
 const failed = checks.filter(item => !item.passed);
 

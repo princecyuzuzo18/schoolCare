@@ -407,7 +407,15 @@ export function buildApplication(
 }
 
 export function trackingSecret(): string {
-  return process.env.ADMISSION_TRACKING_SECRET || 'schoolcare-admissions-local-secret';
+  const configured = process.env.ADMISSION_TRACKING_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    if (!configured || configured.length < 32) {
+      throw new Error('ADMISSION_TRACKING_SECRET must be at least 32 characters in production.');
+    }
+    return configured;
+  }
+  // Development/test fallback only. Production startup refuses to use it.
+  return configured || 'schoolcare-admissions-local-secret';
 }
 
 export function hashValue(value: string): string {
@@ -439,13 +447,17 @@ interface RateLimitOptions {
   windowMs: number;
   max: number;
   prefix: string;
+  /** Optional stable key override for endpoints without a public reference number. */
+  keyFrom?: (req: Request, prefix: string) => string;
 }
 
-export function createRateLimiter({ windowMs, max, prefix }: RateLimitOptions) {
+export function createRateLimiter({ windowMs, max, prefix, keyFrom }: RateLimitOptions) {
   const hits = new Map<string, { count: number; resetAt: number }>();
   return (req: Request, res: Response, next: NextFunction): void => {
     const now = Date.now();
-    const key = `${prefix}:${req.ip}:${cleanString(req.body?.referenceNumber, 60)}`;
+    const key = keyFrom
+      ? keyFrom(req, prefix)
+      : `${prefix}:${req.ip}:${cleanString(req.body?.referenceNumber, 60)}`;
     const current = hits.get(key);
     if (current && current.resetAt > now) {
       if (current.count >= max) {

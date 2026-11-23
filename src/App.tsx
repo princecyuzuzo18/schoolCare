@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar';
 import { EmergencyBanner } from './components/EmergencyBanner';
 import { HealthIncidentModal } from './components/HealthIncidentModal';
 import { AccessibilityProvider } from './contexts/AccessibilityContext';
+import AiAssistantLauncher from './components/AiAssistantLauncher';
 
 import { LandingPage } from './pages/LandingPage';
 import { AuthPage } from './pages/AuthPage';
@@ -361,6 +362,7 @@ const MainApp: React.FC = () => {
             tabIndex={-1}
             className="app-main min-w-0 flex-1 overflow-x-hidden min-h-[calc(100vh-4rem)] pb-20 md:pb-8 outline-none"
           >
+            <AiAssistantLauncher currentTab={currentTab} />
             {renderRoute(
               isTabAllowedForRole(role, currentTab, effectivePermissions) ? currentTab : defaultDashboard
             )}

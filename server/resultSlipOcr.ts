@@ -36,12 +36,17 @@ export async function extractAcademicPerformance(file: Express.Multer.File): Pro
   }
 
   const model = process.env.GEMINI_RESULT_SLIP_MODEL || 'gemini-1.5-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  // Keep the credential out of the URL so proxies and access logs cannot
+  // retain it. Google's API accepts the same key in the x-goog-api-key header.
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
       body: JSON.stringify({
         contents: [{
           parts: [
@@ -58,7 +63,8 @@ export async function extractAcademicPerformance(file: Express.Multer.File): Pro
     });
 
     if (!response.ok) {
-      console.warn('[Admissions OCR] Upstream error:', response.status, (await response.text()).slice(0, 300));
+      // Upstream bodies can echo request details; log only the HTTP status.
+      console.warn('[Admissions OCR] Upstream request failed with status', response.status);
       return { status: 'UNAVAILABLE', message: 'Automatic extraction could not read this document.' };
     }
 

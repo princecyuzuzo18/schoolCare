@@ -23,7 +23,7 @@ export const AttendancePage: React.FC = () => {
 
   const [classes, setClasses] = useState<AcademicClass[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
-  const [selectedDate, setSelectedDate] = useState<string>('2026-11-05');
+  const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [students, setStudents] = useState<Student[]>([]);
   const [attendanceMap, setAttendanceMap] = useState<Record<string, AttendanceStatus>>({});
   const [remarksMap, setRemarksMap] = useState<Record<string, string>>({});
@@ -36,7 +36,7 @@ export const AttendancePage: React.FC = () => {
   useEffect(() => {
     const init = async () => {
       try {
-        const cls = await api.getClasses();
+        const cls = await api.getActiveClasses();
         setClasses(cls);
         if (cls.length > 0) {
           setSelectedClassId(cls[0].id);

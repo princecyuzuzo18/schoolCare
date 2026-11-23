@@ -128,8 +128,12 @@ CREATE TABLE `classes` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO `classes` (`id`, `school_id`, `name`, `grade_level`, `stream`, `combination`, `room_number`, `student_count`, `class_teacher_name`) VALUES
+('class-l3-sod-a', 'school-es-rubengera-01', 'Level 3 SOD A', 'Level 3 RTB', 'A', 'Software Development (SOD)', 'ICT Lab', 0, 'Unassigned'),
 ('class-l4-sod-a', 'school-es-rubengera-01', 'Level 4 SOD A', 'Level 4 RTB', 'A', 'Software Development (SOD)', 'Lab 2 - ICT Building', 38, 'Patrick Nshimiyimana'),
 ('class-l5-sod-b', 'school-es-rubengera-01', 'Level 5 SOD B', 'Level 5 RTB', 'B', 'Software Development (SOD)', 'Lab 1 - Innovation Center', 35, 'Jean Damascene Kayitare'),
+('class-l3-nit-a', 'school-es-rubengera-01', 'Level 3 NIT A', 'Level 3 RTB', 'A', 'Networking (NIT)', 'ICT Lab', 0, 'Unassigned'),
+('class-l4-nit-a', 'school-es-rubengera-01', 'Level 4 NIT A', 'Level 4 RTB', 'A', 'Networking (NIT)', 'ICT Lab', 0, 'Unassigned'),
+('class-l5-nit-a', 'school-es-rubengera-01', 'Level 5 NIT A', 'Level 5 RTB', 'A', 'Networking (NIT)', 'ICT Lab', 0, 'Unassigned'),
 ('class-l4-cst', 'school-es-rubengera-01', 'Level 4 CST', 'Level 4 RTB', 'A', 'Building & Construction Technology', 'Workshop 3', 42, 'Alexis Manirakiza'),
 ('class-s3-a', 'school-es-rubengera-01', 'Senior 3 A', 'O-Level S3', 'A', 'General Science & Languages', 'Block B - Room 104', 45, 'Jeannette Mukarugwiza');
 

@@ -366,6 +366,80 @@ try {
   });
   check('Revoked staff-creation permission is denied immediately', afterRevoke.status === 403, `status ${afterRevoke.status}`);
 
+  // Analytics is reached through `reports:read`, but it must not leak the
+  // underlying academic, health or finance modules to every report reader.
+  const analyticsSchoolId = 'school-es-rubengera-01';
+  const publishedCard = db.upsertReportCard({
+    id: 'rc-analytics-published', schoolId: analyticsSchoolId,
+    studentId: 'student-analytics-published', studentName: 'Analytics Published',
+    admissionNumber: 'ANALYTICS-001', className: 'S3 A', combination: 'SOD',
+    academicYear: '2025 - 2026', term: 'Term 1', subjects: [],
+    overallAverage: 92, overallRank: 1, totalStudentsInClass: 1,
+    attendanceDaysPresent: 1, attendanceTotalDays: 1,
+    conductScore: '', classTeacherRemarks: '', headTeacherRemarks: '',
+    isApproved: true, status: 'APPROVED', publishedAt: new Date().toISOString()
+  } as any);
+  const unpublishedCard = db.upsertReportCard({
+    id: 'rc-analytics-unpublished', schoolId: analyticsSchoolId,
+    studentId: 'student-analytics-unpublished', studentName: 'Analytics Unpublished',
+    admissionNumber: 'ANALYTICS-002', className: 'S3 A', combination: 'SOD',
+    academicYear: '2025 - 2026', term: 'Term 1', subjects: [],
+    overallAverage: 55, overallRank: 2, totalStudentsInClass: 1,
+    attendanceDaysPresent: 1, attendanceTotalDays: 1,
+    conductScore: '', classTeacherRemarks: '', headTeacherRemarks: '',
+    isApproved: true, status: 'APPROVED'
+  } as any);
+
+  const restrictedAnalyticsUser = db.createUser({
+    id: 'user-reports-scope-test', schoolId: analyticsSchoolId,
+    email: 'reports.scope@schoolcare.rw', fullName: 'Reports Scope Test',
+    role: 'DISCIPLINE_OFFICER', phone: '+250 700 000 000',
+    preferredLanguage: 'en', isActive: true
+  } as any);
+  const restrictedAnalyticsCookie = sessionCookie(restrictedAnalyticsUser.id);
+
+  const accountantAnalytics = await request('/api/reports/analytics', { headers: { Cookie: sessionCookie('user-accountant') } });
+  const accountantTopIds = (accountantAnalytics.body?.academics?.topStudents || []).map((card: any) => card.id);
+  check(
+    'Accountant analytics cannot read academic or health module details',
+    accountantAnalytics.status === 200 && accountantTopIds.length === 0 &&
+      (accountantAnalytics.body?.health?.recentCases || []).length === 0 &&
+      accountantAnalytics.body?.attendance?.totalRecords === 0,
+    JSON.stringify({ status: accountantAnalytics.status, academics: accountantTopIds })
+  );
+  check(
+    'Accountant analytics still includes authorised finance data',
+    typeof accountantAnalytics.body?.finance?.totalBilledRwf === 'number',
+    JSON.stringify(accountantAnalytics.body?.finance || {})
+  );
+
+  const restrictedAnalytics = await request('/api/reports/analytics', { headers: { Cookie: restrictedAnalyticsCookie } });
+  const restrictedTopIds = (restrictedAnalytics.body?.academics?.topStudents || []).map((card: any) => card.id);
+  check(
+    'Report reader without publish rights sees only published report cards',
+    restrictedAnalytics.status === 200 && restrictedTopIds.includes(publishedCard.id) &&
+      !restrictedTopIds.includes(unpublishedCard.id),
+    JSON.stringify(restrictedTopIds)
+  );
+  check(
+    'Report reader cannot see finance or health sections without module permission',
+    (restrictedAnalytics.body?.health?.recentCases || []).length === 0 &&
+      restrictedAnalytics.body?.finance?.totalBilledRwf === 0 &&
+      (restrictedAnalytics.body?.restrictedSections || []).includes('finance') &&
+      (restrictedAnalytics.body?.restrictedSections || []).includes('health'),
+    JSON.stringify(restrictedAnalytics.body?.restrictedSections)
+  );
+
+  const adminAnalytics = await request('/api/reports/analytics', { headers: { Cookie: headCookie } });
+  const adminTopIds = (adminAnalytics.body?.academics?.topStudents || []).map((card: any) => card.id);
+  check(
+    'Full administrator analytics retains all report cards and modules',
+    adminAnalytics.status === 200 && adminTopIds.includes(publishedCard.id) &&
+      adminTopIds.includes(unpublishedCard.id) &&
+      adminAnalytics.body?.health?.totalIncidents > 0,
+    JSON.stringify({ topIds: adminTopIds, health: adminAnalytics.body?.health?.totalIncidents })
+  );
+
   const activity = await request('/api/staff/activity', { headers: { Cookie: headCookie } });
   check(
     'Headteacher can review staff activity',

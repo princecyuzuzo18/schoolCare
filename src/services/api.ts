@@ -42,6 +42,7 @@ import {
   StaffDirectoryItem,
   SignupRequestView,
   PortalDashboardView,
+  HeadteacherDashboardView,
   PublicContentArticle,
   PublicContentArticleInput,
   PublicContentGalleryImage,
@@ -58,7 +59,18 @@ import {
   StudentResult,
   CalculationResult,
   AcademicSubjectResult,
-  MissingAcademicRequirement
+  MissingAcademicRequirement,
+  AcademicCombination,
+  CombinationView,
+  CombinationStatus,
+  CreateCombinationInput,
+  AiStatus,
+  AiConversation,
+  AiChatResponse,
+  AiMessage,
+  AiSettings,
+  AiKnowledgeDocument,
+  AiUsageStats
 } from '../types';
 
 const API_BASE = '/api';
@@ -102,6 +114,37 @@ export interface AcademicDashboardView {
   term?: AcademicTerm;
 }
 
+export interface CombinationCatalogView {
+  years: AcademicYear[];
+  classes: AcademicClass[];
+  archivedClasses: AcademicClass[];
+  subjects: Subject[];
+  teachers: UserProfile[];
+}
+
+export interface CombinationStudentsView {
+  combination: { id: string; name: string; status: CombinationStatus };
+  studentCount: number;
+  students: Array<{
+    id: string;
+    admissionNumber: string;
+    fullName: string;
+    className: string;
+    combination: string;
+    enrollmentStatus: string;
+    archivedAt?: string;
+  }>;
+}
+
+export interface CombinationTeacherSummary {
+  id: string;
+  fullName: string;
+  role: string;
+  department: string;
+  combinations: Array<{ id: string; name: string; status: CombinationStatus }>;
+  subjects: Array<{ combinationId: string; combinationName: string; subjectId: string; subjectName: string }>;
+}
+
 export interface ReportPrintData {
   school?: School;
   academicYear?: AcademicYear;
@@ -127,6 +170,22 @@ export interface ResultSlipUploadResponse {
 }
 
 class ApiService {
+  /** Keep the shell's session-expired UX consistent across all transports. */
+  private notifySessionExpired(endpoint: string, status: number): void {
+    const publicEndpoints = [
+      '/auth/login', '/auth/me', '/auth/password-reset/request',
+      '/staff/invitations/activate', '/schools/me'
+    ];
+    if (
+      status === 401 &&
+      !publicEndpoints.includes(endpoint) &&
+      !endpoint.startsWith('/public/admissions/') &&
+      typeof window !== 'undefined'
+    ) {
+      window.dispatchEvent(new Event('schoolcare:session-expired'));
+    }
+  }
+
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const headers = {
       'Content-Type': 'application/json',
@@ -141,13 +200,7 @@ class ApiService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
-      if (
-        res.status === 401 &&
-        !['/auth/login', '/auth/me', '/auth/password-reset/request', '/staff/invitations/activate'].includes(endpoint) &&
-        !endpoint.startsWith('/public/admissions/')
-      ) {
-        window.dispatchEvent(new Event('schoolcare:session-expired'));
-      }
+      this.notifySessionExpired(endpoint, res.status);
       throw new ApiError(err.error || `HTTP ${res.status}`, res.status);
     }
 
@@ -174,6 +227,7 @@ class ApiService {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
+      this.notifySessionExpired(endpoint, res.status);
       throw new ApiError(err.error || `HTTP ${res.status}`, res.status);
     }
     const contentType = res.headers.get('content-type') || '';
@@ -192,6 +246,7 @@ class ApiService {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Network response was not ok' }));
+      this.notifySessionExpired(endpoint, res.status);
       throw new ApiError(err.error || `HTTP ${res.status}`, res.status);
     }
     return res.blob();
@@ -346,6 +401,11 @@ class ApiService {
 
   public async getPortalDashboard(): Promise<PortalDashboardView> {
     return this.request('/portal/dashboard');
+  }
+
+  /** Server-authoritative school-wide overview for the Headteacher workspace. */
+  public async getHeadteacherDashboard(): Promise<HeadteacherDashboardView> {
+    return this.request('/dashboard/headteacher');
   }
 
   public async explainPortalAbsence(recordId: string, explanation: string): Promise<unknown> {
@@ -633,8 +693,18 @@ class ApiService {
 
   // --- Schools ---
   public async getSchool(): Promise<School> {
-    const schools = await this.request<School[]>('/schools');
-    return schools[0];
+    // Authenticated users must see their own school's identity, not the first
+    // row of the public school directory. Anonymous visitors still need the
+    // public school details for the website and login screen.
+    try {
+      return await this.request<School>('/schools/me');
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        const schools = await this.request<School[]>('/schools');
+        return schools[0];
+      }
+      throw error;
+    }
   }
 
   public async updateSchool(id: string, updates: Partial<School>): Promise<School> {
@@ -660,6 +730,18 @@ class ApiService {
     return this.request<Student>('/students', {
       method: 'POST',
       body: JSON.stringify(data)
+    });
+  }
+
+  public async importStudents(csv: string): Promise<{
+    created: number;
+    rejected: number;
+    errors: Array<{ row: number; error: string }>;
+    students: Student[];
+  }> {
+    return this.request('/students/import', {
+      method: 'POST',
+      body: JSON.stringify({ csv })
     });
   }
 
@@ -785,6 +867,10 @@ class ApiService {
     return this.request<AcademicClass[]>('/academics/classes');
   }
 
+  public async getActiveClasses(): Promise<AcademicClass[]> {
+    return this.request<AcademicClass[]>('/academics/classes?active=true');
+  }
+
   public createClass(payload: Partial<AcademicClass>): Promise<AcademicClass> {
     return this.request<AcademicClass>('/academics/classes', { method: 'POST', body: JSON.stringify(payload) });
   }
@@ -799,6 +885,81 @@ class ApiService {
 
   public createSubject(payload: Partial<Subject>): Promise<Subject> {
     return this.request<Subject>('/academics/subjects', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  // --- Combination management ---
+  public getCombinations(filters: {
+    includeArchived?: boolean;
+    status?: CombinationStatus;
+    educationLevel?: string;
+    academicYear?: string;
+    search?: string;
+  } = {}): Promise<CombinationView[]> {
+    const params = new URLSearchParams();
+    if (filters.includeArchived !== undefined) params.append('includeArchived', String(filters.includeArchived));
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && key !== 'includeArchived') params.append(key, String(value));
+    });
+    return this.request<CombinationView[]>(`/combinations?${params.toString()}`);
+  }
+
+  public getActiveCombinations(): Promise<CombinationView[]> {
+    return this.request<CombinationView[]>('/combinations/active');
+  }
+
+  public getCombinationCatalog(): Promise<CombinationCatalogView> {
+    return this.request<CombinationCatalogView>('/combinations/catalog');
+  }
+
+  public getCombination(id: string): Promise<CombinationView> {
+    return this.request<CombinationView>(`/combinations/${encodeURIComponent(id)}`);
+  }
+
+  public getCombinationStudents(id: string): Promise<CombinationStudentsView> {
+    return this.request<CombinationStudentsView>(`/combinations/${encodeURIComponent(id)}/students`);
+  }
+
+  public getCombinationTeacherSummary(): Promise<CombinationTeacherSummary[]> {
+    return this.request<CombinationTeacherSummary[]>('/combinations/teacher-summary');
+  }
+
+  public createCombination(payload: CreateCombinationInput): Promise<CombinationView> {
+    return this.request<CombinationView>('/combinations', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  public updateCombination(id: string, payload: Partial<CreateCombinationInput>): Promise<CombinationView> {
+    return this.request<CombinationView>(`/combinations/${encodeURIComponent(id)}`, {
+      method: 'PATCH', body: JSON.stringify(payload)
+    });
+  }
+
+  public updateCombinationSubjects(id: string, subjects: AcademicCombination['subjects']): Promise<CombinationView> {
+    return this.request<CombinationView>(`/combinations/${encodeURIComponent(id)}/subjects`, {
+      method: 'POST', body: JSON.stringify({ subjects })
+    });
+  }
+
+  public assignCombinationTeachers(
+    id: string,
+    payload: { teacherIds: string[]; subjects?: AcademicCombination['subjects']; classTeacherId?: string }
+  ): Promise<CombinationView> {
+    return this.request<CombinationView>(`/combinations/${encodeURIComponent(id)}/teachers`, {
+      method: 'POST', body: JSON.stringify(payload)
+    });
+  }
+
+  public setCombinationStatus(
+    id: string,
+    action: 'ACTIVATE' | 'DEACTIVATE' | 'ARCHIVE' | 'RESTORE',
+    reason = ''
+  ): Promise<CombinationView & { dependentRecords?: { students: number; classes: number; subjects: number } }> {
+    return this.request(`/combinations/${encodeURIComponent(id)}/status`, {
+      method: 'POST', body: JSON.stringify({ action, reason })
+    });
+  }
+
+  public createCombinationSubject(payload: Partial<Subject>): Promise<Subject> {
+    return this.request<Subject>('/combinations/subjects', { method: 'POST', body: JSON.stringify(payload) });
   }
 
   public async getReportCards(studentId?: string): Promise<ReportCard[]> {
@@ -1030,12 +1191,93 @@ class ApiService {
     );
   }
 
-  // --- AI Assistant ---
-  public async askAssistant(message: string, context = ''): Promise<{ reply: string }> {
-    return this.request<{ reply: string }>('/ai/assistant', {
+  // --- SchoolCare AI Assistant ---
+  public async getAiStatus(): Promise<AiStatus> {
+    return this.request<AiStatus>('/ai/status');
+  }
+
+  public async listAiConversations(): Promise<AiConversation[]> {
+    return this.request<AiConversation[]>('/ai/conversations');
+  }
+
+  public async createAiConversation(title = 'New conversation', language?: LanguageCode): Promise<AiConversation> {
+    return this.request<AiConversation>('/ai/conversations', {
       method: 'POST',
-      body: JSON.stringify({ message, context })
+      body: JSON.stringify({ title, language })
     });
+  }
+
+  public async getAiConversation(id: string): Promise<AiConversation> {
+    return this.request<AiConversation>(`/ai/conversations/${encodeURIComponent(id)}`);
+  }
+
+  public async deleteAiConversation(id: string): Promise<{ deleted: boolean }> {
+    return this.request<{ deleted: boolean }>(`/ai/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  public async sendAiChat(input: {
+    message: string;
+    conversationId?: string;
+    language?: LanguageCode;
+  }): Promise<AiChatResponse> {
+    return this.request<AiChatResponse>('/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  public async regenerateAiResponse(messageId: string): Promise<{ message: AiMessage; language: LanguageCode }> {
+    return this.request<{ message: AiMessage; language: LanguageCode }>('/ai/regenerate', {
+      method: 'POST',
+      body: JSON.stringify({ messageId })
+    });
+  }
+
+  public async sendAiFeedback(messageId: string, helpful: boolean): Promise<{ saved: boolean }> {
+    return this.request<{ saved: boolean }>('/ai/feedback', {
+      method: 'POST',
+      body: JSON.stringify({ messageId, helpful })
+    });
+  }
+
+  public async getAiSettings(schoolId?: string): Promise<AiSettings> {
+    const query = schoolId ? `?schoolId=${encodeURIComponent(schoolId)}` : '';
+    return this.request<AiSettings>(`/ai/settings${query}`);
+  }
+
+  public async updateAiSettings(settings: Partial<AiSettings>, schoolId?: string): Promise<AiSettings> {
+    const query = schoolId ? `?schoolId=${encodeURIComponent(schoolId)}` : '';
+    return this.request<AiSettings>(`/ai/settings${query}`, {
+      method: 'PUT',
+      body: JSON.stringify(settings)
+    });
+  }
+
+  public async listAiKnowledge(includeArchived = false): Promise<AiKnowledgeDocument[]> {
+    return this.request<AiKnowledgeDocument[]>(`/ai/knowledge${includeArchived ? '?includeArchived=true' : ''}`);
+  }
+
+  public async uploadAiKnowledge(formData: FormData): Promise<AiKnowledgeDocument> {
+    return this.requestForm<AiKnowledgeDocument>('/ai/knowledge', formData);
+  }
+
+  public async updateAiKnowledge(id: string, patch: Partial<AiKnowledgeDocument>): Promise<AiKnowledgeDocument> {
+    return this.request<AiKnowledgeDocument>(`/ai/knowledge/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch)
+    });
+  }
+
+  public async deleteAiKnowledge(id: string): Promise<{ deleted: boolean }> {
+    return this.request<{ deleted: boolean }>(`/ai/knowledge/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  public async getAiUsage(days = 30): Promise<AiUsageStats> {
+    return this.request<AiUsageStats>(`/ai/usage?days=${Math.max(1, Math.min(365, days))}`);
+  }
+
+  public async purgeAiData(): Promise<{ conversations: number; usage: number }> {
+    return this.request<{ conversations: number; usage: number }>('/ai/maintenance/purge', { method: 'POST' });
   }
 
   // --- Public admissions (no account required) ---
@@ -1085,6 +1327,7 @@ class ApiService {
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve(payload as unknown as ResultSlipUploadResponse);
         } else {
+          this.notifySessionExpired('/public/admissions/result-slips', xhr.status);
           reject(new ApiError(String(payload.error || 'The result slip could not be uploaded.'), xhr.status));
         }
       };

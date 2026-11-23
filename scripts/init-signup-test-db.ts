@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import mysql, { type RowDataPacket } from 'mysql2/promise';
 import dotenv from 'dotenv';
+import { listMigrationFiles } from './migrationFiles';
 
 dotenv.config();
 
@@ -53,7 +54,7 @@ async function applyMigrations(connection: mysql.Connection): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
-  const files = fs.readdirSync(MIGRATIONS_DIR).filter(name => name.endsWith('.sql')).sort();
+  const files = listMigrationFiles(MIGRATIONS_DIR);
   let applied = 0;
   let skipped = 0;
 

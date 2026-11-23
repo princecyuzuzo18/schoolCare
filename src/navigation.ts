@@ -12,6 +12,7 @@ import {
   HeartPulse,
   Home,
   KeyRound,
+  Layers,
   LayoutDashboard,
   Lightbulb,
   Mail,
@@ -37,7 +38,15 @@ export type NavSectionId =
   | 'care'
   | 'operations'
   | 'insights'
-  | 'system';
+  | 'system'
+  | 'head-dashboard'
+  | 'head-people'
+  | 'head-academics'
+  | 'head-operations'
+  | 'head-finance'
+  | 'head-communication'
+  | 'head-reports'
+  | 'head-settings';
 
 export interface NavItem {
   id: string;
@@ -71,6 +80,14 @@ export const NAV_ITEMS: readonly NavItem[] = [
     icon: LayoutDashboard,
     section: 'overview',
     description: 'Role-based school overview'
+  },
+  {
+    id: 'approval-center',
+    label: 'Approval Center',
+    labelKey: 'navApprovalCenter',
+    icon: ClipboardList,
+    section: 'overview',
+    description: 'Central queue for all school-level approvals'
   },
   {
     id: 'parent-portal',
@@ -110,6 +127,15 @@ export const NAV_ITEMS: readonly NavItem[] = [
     icon: ClipboardList,
     section: 'academics',
     description: 'Years, terms, assignments, grading and marks approval'
+  },
+  {
+    id: 'combination-management',
+    label: 'Combination Management',
+    labelKey: 'navCombinationManagement',
+    icon: Layers,
+    section: 'academics',
+    description: 'Combinations, classes, subjects, teachers and student intake',
+    permissionKey: 'combinations.write'
   },
   {
     id: 'report-printing',
@@ -288,6 +314,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     id: 'ai-assistant',
     label: 'AI Assistant',
+    labelKey: 'aiTitle',
     icon: Sparkles,
     section: 'insights',
     description: 'AI-powered school assistant'
@@ -345,7 +372,15 @@ const SECTION_LABELS: Record<NavSectionId, string> = {
   care: 'Care & Communication',
   operations: 'Operations',
   insights: 'Insights',
-  system: 'System'
+  system: 'System',
+  'head-dashboard': 'Dashboard',
+  'head-people': 'People Management',
+  'head-academics': 'Academic Management',
+  'head-operations': 'School Operations',
+  'head-finance': 'Finance',
+  'head-communication': 'Communication',
+  'head-reports': 'Reports & Analytics',
+  'head-settings': 'School Settings'
 };
 
 const SECTION_ORDER: NavSectionId[] = [
@@ -357,6 +392,70 @@ const SECTION_ORDER: NavSectionId[] = [
   'insights',
   'system'
 ];
+
+/**
+ * The Headteacher workspace uses eight purpose-built sections. Existing tab
+ * IDs, routes and API endpoints are preserved and simply grouped here.
+ */
+const HEADTEACHER_SECTION_ORDER: NavSectionId[] = [
+  'head-dashboard',
+  'head-people',
+  'head-academics',
+  'head-operations',
+  'head-finance',
+  'head-communication',
+  'head-reports',
+  'head-settings'
+];
+
+const HEADTEACHER_SECTION_LABELS: Record<string, string> = {
+  'head-dashboard': 'Dashboard',
+  'head-people': 'People Management',
+  'head-academics': 'Academic Management',
+  'head-operations': 'School Operations',
+  'head-finance': 'Finance',
+  'head-communication': 'Communication',
+  'head-reports': 'Reports & Analytics',
+  'head-settings': 'School Settings'
+};
+
+const HEADTEACHER_ITEM_SECTIONS: Record<string, NavSectionId> = {
+  dashboard: 'head-dashboard',
+  'approval-center': 'head-dashboard',
+  students: 'head-people',
+  guardians: 'head-people',
+  staff: 'head-people',
+  'staff-management': 'head-people',
+  admissions: 'head-people',
+  'signup-requests': 'head-people',
+  permissions: 'head-people',
+  academics: 'head-academics',
+  'academic-admin': 'head-academics',
+  'combination-management': 'head-academics',
+  timetable: 'head-academics',
+  exams: 'head-academics',
+  'marking-guides': 'head-academics',
+  'report-printing': 'head-academics',
+  teaching: 'head-academics',
+  attendance: 'head-operations',
+  discipline: 'head-operations',
+  health: 'head-operations',
+  events: 'head-operations',
+  documents: 'head-operations',
+  meetings: 'head-operations',
+  collaboration: 'head-operations',
+  'partner-schools': 'head-operations',
+  innovations: 'head-operations',
+  finance: 'head-finance',
+  inventory: 'head-finance',
+  communication: 'head-communication',
+  'sms-email': 'head-communication',
+  'public-site': 'head-communication',
+  reports: 'head-reports',
+  audit: 'head-reports',
+  'ai-assistant': 'head-reports',
+  settings: 'head-settings'
+};
 
 export const NAV_ITEM_MAP: Readonly<Record<string, NavItem>> = NAV_ITEMS.reduce(
   (map, item) => {
@@ -370,13 +469,19 @@ export function getVisibleNavSections(
   role: UserRole | null | undefined,
   effectivePermissions?: readonly string[]
 ): NavSection[] {
-  return SECTION_ORDER.map(sectionId => ({
+  const isHeadteacher = role === 'HEAD_TEACHER';
+  const order = isHeadteacher ? HEADTEACHER_SECTION_ORDER : SECTION_ORDER;
+  const labels = isHeadteacher ? HEADTEACHER_SECTION_LABELS : SECTION_LABELS;
+
+  return order.map(sectionId => ({
     id: sectionId,
-    label: SECTION_LABELS[sectionId],
-    items: NAV_ITEMS.filter(
-      item =>
-        item.section === sectionId && isTabAllowedForRole(role, item.id, effectivePermissions)
-    )
+    label: labels[sectionId] ?? SECTION_LABELS[sectionId],
+    items: NAV_ITEMS.filter(item => {
+      const itemSection = isHeadteacher
+        ? (HEADTEACHER_ITEM_SECTIONS[item.id] ?? 'head-operations')
+        : item.section;
+      return itemSection === sectionId && isTabAllowedForRole(role, item.id, effectivePermissions);
+    })
   })).filter(section => section.items.length > 0);
 }
 
@@ -392,9 +497,9 @@ export function getNavItem(id: string): NavItem | undefined {
 }
 
 const QUICK_NAV_PREFERENCES: Record<UserRole, string[]> = {
-  SUPER_ADMIN: ['dashboard', 'health', 'attendance', 'finance'],
-  SCHOOL_ADMIN: ['dashboard', 'health', 'attendance', 'finance'],
-  HEAD_TEACHER: ['dashboard', 'academic-admin', 'report-printing', 'staff-management'],
+  SUPER_ADMIN: ['dashboard', 'combination-management', 'health', 'finance'],
+  SCHOOL_ADMIN: ['dashboard', 'combination-management', 'health', 'finance'],
+  HEAD_TEACHER: ['dashboard', 'students', 'academic-admin', 'combination-management'],
   DEPUTY_HEAD: ['dashboard', 'report-printing', 'reports', 'attendance'],
   TEACHER: ['dashboard', 'academics', 'attendance', 'timetable'],
   NURSE: ['dashboard', 'health', 'events', 'reports'],

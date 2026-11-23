@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Student, AcademicClass } from '../types';
+import React, { useEffect, useRef, useState } from 'react';
+import { Student, AcademicClass, CombinationView } from '../types';
 import { api } from '../services/api';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -27,12 +27,20 @@ export const StudentsPage: React.FC = () => {
 
   const [students, setStudents] = useState<Student[]>([]);
   const [classes, setClasses] = useState<AcademicClass[]>([]);
+  const [activeCombinations, setActiveCombinations] = useState<CombinationView[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>('all');
   const [selectedCombination, setSelectedCombination] = useState<string>('all');
   const [selectedLevel, setSelectedLevel] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    created: number;
+    rejected: number;
+    errors: Array<{ row: number; error: string }>;
+  } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Student ID card modal
   const [activeCardStudent, setActiveCardStudent] = useState<Student | null>(null);
@@ -43,9 +51,9 @@ export const StudentsPage: React.FC = () => {
   const [newLastName, setNewLastName] = useState('');
   const [newGender, setNewGender] = useState<'M' | 'F'>('M');
   const [newDob, setNewDob] = useState('2008-05-10');
-  const [newClassId, setNewClassId] = useState('class-l4-sod-a');
-  const [newCombination, setNewCombination] = useState('Software Development (SOD)');
-  const [newLevel, setNewLevel] = useState('Level 4 RTB');
+  const [newClassId, setNewClassId] = useState('');
+  const [newCombination, setNewCombination] = useState('');
+  const [newLevel, setNewLevel] = useState('');
   const [newBloodGroup, setNewBloodGroup] = useState('O+');
   const [newMedicalNotes, setNewMedicalNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -53,12 +61,14 @@ export const StudentsPage: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [stu, cls] = await Promise.all([
+      const [stu, cls, combinations] = await Promise.all([
         api.getStudents(selectedClassId === 'all' ? undefined : selectedClassId, search),
-        api.getClasses()
+        api.getClasses(),
+        api.getActiveCombinations().catch(() => [] as CombinationView[])
       ]);
       setStudents(stu);
       setClasses(cls);
+      setActiveCombinations(combinations);
     } catch (err) {
       console.error(err);
     } finally {
@@ -69,6 +79,63 @@ export const StudentsPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [selectedClassId, search]);
+
+  const getClassLevel = (classItem: AcademicClass | undefined) => classItem?.grade || '';
+  const isRegistrationCombination = (combination: string) => {
+    const value = combination.toLowerCase();
+    return !value.includes('o-level')
+      && !value.includes('o level')
+      && !value.includes('senior 3')
+      && !value.includes('building')
+      && !value.includes('construction')
+      && !value.includes('cst');
+  };
+
+  // Only active classes and active managed combinations may be used for a new
+  // registration. Archived CST/O-Level records remain available in the registry.
+  const activeClassPool = classes.filter(classItem =>
+    (classItem.status ?? 'ACTIVE') === 'ACTIVE' && isRegistrationCombination(classItem.combination)
+  );
+  const registrationCombinations = activeCombinations.length > 0
+    ? activeCombinations
+        .map(combination => ({
+          id: combination.id,
+          name: combination.name,
+          educationLevel: combination.educationLevel,
+          academicProgramme: combination.academicProgramme,
+          subjects: combination.subjectDetails.map(subject => subject.name),
+          classes: activeClassPool.filter(classItem =>
+            combination.classIds.includes(classItem.id) ||
+            classItem.combination === combination.name ||
+            classItem.combination === combination.academicProgramme
+          )
+        }))
+        .filter(combination => combination.classes.length > 0)
+    : [...new Set(activeClassPool.map(classItem => classItem.combination))].map(name => ({
+        id: name,
+        name,
+        educationLevel: '',
+        academicProgramme: name,
+        subjects: [] as string[],
+        classes: activeClassPool.filter(classItem => classItem.combination === name)
+      }));
+  const registrationClasses = [...new Map(
+    registrationCombinations.flatMap(combination => combination.classes).map(classItem => [classItem.id, classItem])
+  ).values()];
+
+  useEffect(() => {
+    if (registrationCombinations.length === 0) return;
+    const currentCombination = registrationCombinations.some(item => item.id === newCombination)
+      ? registrationCombinations.find(item => item.id === newCombination)!
+      : registrationCombinations[0];
+    const nextLevels = [...new Set(currentCombination.classes.map(getClassLevel))].filter(Boolean).sort();
+    const nextLevel = nextLevels.includes(newLevel) ? newLevel : (nextLevels[0] || '');
+    const nextClass = currentCombination.classes.find(item => getClassLevel(item) === nextLevel)
+      || currentCombination.classes[0];
+    if (currentCombination.id !== newCombination) setNewCombination(currentCombination.id);
+    if (nextLevel !== newLevel) setNewLevel(nextLevel);
+    if (nextClass && nextClass.id !== newClassId) setNewClassId(nextClass.id);
+  }, [classes, activeCombinations, newClassId, newCombination, newLevel]);
 
   const handleArchive = async (student: Student) => {
     const reason = window.prompt(t('archiveReasonPrompt'));
@@ -96,7 +163,6 @@ export const StudentsPage: React.FC = () => {
     }
   };
 
-  const getClassLevel = (classItem: AcademicClass | undefined) => classItem?.grade || '';
   const visibleStudents = students.filter(student => {
     const level = getClassLevel(classes.find(classItem => classItem.id === student.classId));
     return (selectedCombination === 'all' || student.combination === selectedCombination)
@@ -112,11 +178,12 @@ export const StudentsPage: React.FC = () => {
       .filter(classItem => selectedCombination === 'all' || classItem.combination === selectedCombination)
       .map(getClassLevel)
   )].filter(Boolean).sort();
+  const currentRegistrationCombination = registrationCombinations.find(item => item.id === newCombination);
   const levelOptions = [...new Set(
-    classes.filter(classItem => classItem.combination === newCombination).map(getClassLevel)
-  )];
-  const matchingClasses = classes.filter(
-    classItem => classItem.combination === newCombination && getClassLevel(classItem) === newLevel
+    (currentRegistrationCombination?.classes ?? []).map(getClassLevel)
+  )].filter(Boolean).sort();
+  const matchingClasses = (currentRegistrationCombination?.classes ?? []).filter(
+    classItem => getClassLevel(classItem) === newLevel
   );
 
   const handleCreateStudent = async (e: React.FormEvent) => {
@@ -126,6 +193,7 @@ export const StudentsPage: React.FC = () => {
     try {
       setIsSubmitting(true);
       const cls = classes.find(c => c.id === newClassId);
+      const selectedCombination = activeCombinations.find(item => item.id === newCombination);
       await api.createStudent({
         firstName: newFirstName,
         lastName: newLastName,
@@ -133,7 +201,10 @@ export const StudentsPage: React.FC = () => {
         dob: newDob,
         classId: newClassId,
         className: cls?.name || 'Class',
-        combination: cls?.combination || 'TVET RTB',
+        combination: selectedCombination?.name || cls?.combination || 'TVET RTB',
+        combinationId: selectedCombination?.id,
+        educationLevel: selectedCombination?.educationLevel,
+        academicProgramme: selectedCombination?.academicProgramme,
         bloodGroup: newBloodGroup,
         allergies: newMedicalNotes || 'None recorded'
       });
@@ -152,11 +223,12 @@ export const StudentsPage: React.FC = () => {
 
   const handleExportCsv = () => {
     const rows = [
-      ['Admission No', 'First Name', 'Last Name', 'Gender', 'Class', 'Combination', 'Status', 'Blood Group'],
+      ['Admission No', 'First Name', 'Last Name', 'DOB', 'Gender', 'Class', 'Combination', 'Status', 'Blood Group'],
       ...visibleStudents.map(s => [
         s.admissionNumber,
         s.firstName,
         s.lastName,
+        s.dob,
         s.gender,
         s.className,
         s.combination,
@@ -173,6 +245,26 @@ export const StudentsPage: React.FC = () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleImportCsv = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      setImporting(true);
+      setImportResult(null);
+      const csv = await file.text();
+      const result = await api.importStudents(csv);
+      setImportResult({ created: result.created, rejected: result.rejected, errors: result.errors });
+      setNotice(`Imported ${result.created} student(s)${result.rejected ? `; ${result.rejected} row(s) rejected` : ''}.`);
+      await loadData();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Unable to import students.');
+    } finally {
+      setImporting(false);
+    }
   };
 
   return (
@@ -194,6 +286,25 @@ export const StudentsPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={handleImportCsv}
+            aria-label="Import students from CSV"
+          />
+          {hasPermission('students.write') && (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importing}
+              className="px-3.5 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-xs flex items-center gap-1.5 transition disabled:opacity-60"
+            >
+              <Upload className="w-4 h-4" />
+              <span>{importing ? 'Importing…' : 'Import CSV'}</span>
+            </button>
+          )}
           <button
             onClick={handleExportCsv}
             className="px-3.5 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-xs flex items-center gap-1.5 transition"
@@ -215,6 +326,17 @@ export const StudentsPage: React.FC = () => {
       {notice && (
         <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-semibold text-blue-800">
           {notice}
+        </div>
+      )}
+
+      {importResult && importResult.rejected > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          <p className="font-bold">Rows that need attention:</p>
+          <ul className="mt-1 list-disc pl-4">
+            {importResult.errors.slice(0, 10).map(error => (
+              <li key={error.row}>Row {error.row}: {error.error}</li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -457,19 +579,17 @@ export const StudentsPage: React.FC = () => {
                   <select
                     value={newCombination}
                     onChange={e => {
-                      const combination = e.target.value;
-                      const nextClass = classes.find(classItem => classItem.combination === combination && getClassLevel(classItem) === newLevel)
-                        || classes.find(classItem => classItem.combination === combination);
-                      setNewCombination(combination);
-                      if (nextClass) {
-                        setNewLevel(getClassLevel(nextClass));
-                        setNewClassId(nextClass.id);
-                      }
+                      const combinationId = e.target.value;
+                      const nextCombination = registrationCombinations.find(item => item.id === combinationId);
+                      const nextClass = nextCombination?.classes[0];
+                      setNewCombination(combinationId);
+                      setNewLevel(nextClass ? getClassLevel(nextClass) : '');
+                      setNewClassId(nextClass?.id || '');
                     }}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
                   >
-                    {combinationOptions.map(combination => (
-                      <option key={combination} value={combination}>{combination}</option>
+                    {registrationCombinations.map(combination => (
+                      <option key={combination.id} value={combination.id}>{combination.name}</option>
                     ))}
                   </select>
                 </div>
@@ -479,7 +599,7 @@ export const StudentsPage: React.FC = () => {
                     value={newLevel}
                     onChange={e => {
                       const level = e.target.value;
-                      const nextClass = classes.find(classItem => classItem.combination === newCombination && getClassLevel(classItem) === level);
+                      const nextClass = (currentRegistrationCombination?.classes ?? []).find(item => getClassLevel(item) === level);
                       setNewLevel(level);
                       if (nextClass) setNewClassId(nextClass.id);
                     }}
@@ -501,6 +621,15 @@ export const StudentsPage: React.FC = () => {
                   </select>
                 </div>
               </div>
+              {currentRegistrationCombination && (
+                <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+                  <span className="font-bold">Programme:</span>{' '}
+                  {currentRegistrationCombination.academicProgramme || currentRegistrationCombination.educationLevel || '—'}
+                  {currentRegistrationCombination.subjects.length > 0 && (
+                    <> • <span className="font-bold">Subjects:</span> {currentRegistrationCombination.subjects.join(', ')}</>
+                  )}
+                </p>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

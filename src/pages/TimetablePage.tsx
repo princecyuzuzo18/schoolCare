@@ -25,7 +25,7 @@ export const TimetablePage: React.FC = () => {
       try {
         setLoading(true);
         const [cls, tt, hw] = await Promise.all([
-          api.getClasses(),
+          api.getActiveClasses(),
           api.getTimetable(selectedClassId),
           api.getHomework(selectedClassId)
         ]);

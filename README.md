@@ -47,8 +47,14 @@ A comprehensive Secondary School Management & Parent Communication Platform buil
    - Switch between English and Ikinyarwanda; the selected language is restored after refresh.
 
 8. **Authenticated Role-Based Access**
-   - School accounts use their assigned role: Super Admin, School Admin, Head Teacher, Deputy Head, Teacher, Nurse, Accountant, Parent, or Student.
+   - School accounts use their assigned role: Super Admin, School Admin, Head Teacher, Deputy Head, Teacher, Nurse, Accountant, Discipline Officer, School IT, Animateur, Parent, or Student.
    - API requests use server-managed sessions and enforce role permissions.
+
+9. **SchoolCare AI Assistant**
+   - Role-aware, bilingual (English / Ikinyarwanda) assistant with conversation memory, source citations, and a floating launcher.
+   - Uses only backend-verified, school-isolated data; never invents records, exposes secrets, or performs writes.
+   - Optional Gemini integration; gracefully unavailable without a server-side API key.
+   - See [`AI_ASSISTANT.md`](./AI_ASSISTANT.md) for setup, security design, and verification.
 
 ---
 
@@ -68,7 +74,8 @@ A comprehensive Secondary School Management & Parent Communication Platform buil
 
 ```bash
 npm run lint            # TypeScript check
-npm test                # includes 57 academic workflow/security checks
+npm test                # full suite (security, isolation, academics, hardening, AI assistant)
+npm run test:ai         # AI assistant suite only (no real API key needed)
 npm run test:academics  # academic workflow only
 npm run test:db         # database schema and migration history
 npm run build           # production client bundle

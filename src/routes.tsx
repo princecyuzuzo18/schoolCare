@@ -3,6 +3,7 @@ import type { HealthIncident } from './types';
 
 import { LandingPage } from './pages/LandingPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { ApprovalCenterPage } from './pages/ApprovalCenterPage';
 import { ParentPortalPage } from './pages/ParentPortalPage';
 import { StudentPortalPage } from './pages/StudentPortalPage';
 import { HealthCenterPage } from './pages/HealthCenterPage';
@@ -12,6 +13,7 @@ import { StudentsPage } from './pages/StudentsPage';
 import { GuardiansPage } from './pages/GuardiansPage';
 import { TeacherAcademicsPage } from './pages/TeacherAcademicsPage';
 import { AcademicAdminPage } from './pages/AcademicAdminPage';
+import { CombinationManagementPage } from './pages/CombinationManagementPage';
 import { ReportPrintingPage } from './pages/ReportPrintingPage';
 import { FinancePage } from './pages/FinancePage';
 import { StaffPage } from './pages/StaffPage';
@@ -51,6 +53,11 @@ export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
     render: ({ onNavigate, onOpenIncidentModal }) => (
       <DashboardPage onNavigate={onNavigate} onOpenIncidentModal={onOpenIncidentModal} />
     )
+  },
+  'approval-center': {
+    id: 'approval-center',
+    title: 'Approval Center',
+    render: ({ onNavigate }) => <ApprovalCenterPage onNavigate={onNavigate} />
   },
   'parent-portal': {
     id: 'parent-portal',
@@ -96,6 +103,11 @@ export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
     id: 'academic-admin',
     title: 'Academic Administration',
     render: () => <AcademicAdminPage />
+  },
+  'combination-management': {
+    id: 'combination-management',
+    title: 'Combination Management',
+    render: ({ onNavigate }) => <CombinationManagementPage onNavigate={onNavigate} />
   },
   'report-printing': {
     id: 'report-printing',

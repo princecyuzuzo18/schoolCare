@@ -41,7 +41,14 @@ export const ReportCardSheet: React.FC<ReportCardSheetProps> = ({ card, school, 
       <div className="mt-4 grid gap-3 text-xs sm:grid-cols-4">
         <Info label="Student name" value={card.studentName} />
         <Info label="Admission number" value={card.admissionNumber} />
-        <Info label="Class / combination" value={[card.className, card.combination].filter(Boolean).join(' - ')} />
+        <Info
+          label="Class / combination"
+          value={[card.className, card.combination, card.programme].filter(Boolean).join(' - ')}
+        />
+        <Info
+          label="Level / programme"
+          value={[card.educationLevel, card.academicLevel].filter(Boolean).join(' - ') || '-'}
+        />
         <Info label="Issue date" value={card.issueDate || '-'} />
       </div>
 

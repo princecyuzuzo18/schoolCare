@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
-  const { school, refreshSchool } = useAuth();
+  const { school, refreshSchool, role } = useAuth();
   const { t } = useLanguage();
 
   const [name, setName] = useState(school?.name || 'ES RUBENGERA RTB');
@@ -85,7 +85,7 @@ export const SettingsPage: React.FC = () => {
   };
 
   const copyEnvSnippet = () => {
-    const snippet = `DB_HOST="localhost"\nDB_PORT="3306"\nDB_USER="root"\nDB_PASSWORD=""\nDB_NAME="schoolcare_db"`;
+    const snippet = `DB_HOST="127.0.0.1"\nDB_PORT="3306"\nDB_USER="schoolcare_user"\nDB_PASSWORD="<set-a-long-random-password>"\nDB_NAME="schoolcare_db"\nNODE_ENV="production"`;
     navigator.clipboard.writeText(snippet);
     setCopiedEnv(true);
     setTimeout(() => setCopiedEnv(false), 2500);
@@ -295,28 +295,30 @@ export const SettingsPage: React.FC = () => {
               </div>
             </div>
 
-            {/* 1-Click SQL Dump Download */}
-            <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-blue-900 text-xs flex items-center gap-1.5">
-                  <Download className="w-4 h-4 text-blue-700" />
-                  <span>Download SQL Dump for XAMPP</span>
-                </span>
-                <span className="text-[10px] font-mono bg-blue-200 text-blue-900 px-1.5 py-0.5 rounded font-bold">
-                  .sql (16 tables)
-                </span>
+            {/* 1-Click SQL Dump Download — platform super-admin only */}
+            {role === 'SUPER_ADMIN' && (
+              <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-blue-900 text-xs flex items-center gap-1.5">
+                    <Download className="w-4 h-4 text-blue-700" />
+                    <span>Download SQL Dump for XAMPP</span>
+                  </span>
+                  <span className="text-[10px] font-mono bg-blue-200 text-blue-900 px-1.5 py-0.5 rounded font-bold">
+                    .sql (schema + seed)
+                  </span>
+                </div>
+                <p className="text-[11px] text-blue-800 leading-relaxed">
+                  Download the complete <strong className="text-blue-950 font-mono">schoolcare_db.sql</strong> schema for import into phpMyAdmin. Production backups must use <strong>db:backup</strong> because the JSON store and uploads are authoritative too.
+                </p>
+                <button
+                  onClick={handleDownloadSql}
+                  className="w-full mt-1 py-2 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download schoolcare_db.sql</span>
+                </button>
               </div>
-              <p className="text-[11px] text-blue-800 leading-relaxed">
-                Download the complete <strong className="text-blue-950 font-mono">schoolcare_db.sql</strong> schema with all 16 tables, foreign keys, and ES RUBENGERA RTB records for 1-click import into phpMyAdmin.
-              </p>
-              <button
-                onClick={handleDownloadSql}
-                className="w-full mt-1 py-2 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Download className="w-4 h-4" />
-                <span>Download schoolcare_db.sql</span>
-              </button>
-            </div>
+            )}
 
             {/* XAMPP & phpMyAdmin Step-by-Step Instructions */}
             <div className="space-y-2 pt-1">
@@ -325,22 +327,24 @@ export const SettingsPage: React.FC = () => {
                   <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
                   <span>How to Import into XAMPP phpMyAdmin</span>
                 </span>
-                <button
-                  onClick={copyEnvSnippet}
-                  className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 font-semibold cursor-pointer"
-                >
-                  {copiedEnv ? (
-                    <>
-                      <Check className="w-3 h-3 text-emerald-600" />
-                      <span className="text-emerald-700">Copied .env</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3 h-3" />
-                      <span>Copy .env config</span>
-                    </>
-                  )}
-                </button>
+                {role === 'SUPER_ADMIN' && (
+                  <button
+                    onClick={copyEnvSnippet}
+                    className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 font-semibold cursor-pointer"
+                  >
+                    {copiedEnv ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-600" />
+                        <span className="text-emerald-700">Copied .env template</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3" />
+                        <span>Copy .env template</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
 
               <ol className="list-decimal list-inside space-y-1.5 text-[11px] text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-200">

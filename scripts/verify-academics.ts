@@ -208,6 +208,19 @@ try {
     publish.status === 200 && publish.body.published >= cards.length,
     `published=${publish.body?.published}`);
 
+  const regenerate = await request('/api/academics/reports/generate', post('', {
+    yearId: year.id, termId: term.id, classIds: [classId]
+  }, head));
+  check('Published reports can be regenerated from approved marks',
+    regenerate.status === 200 && regenerate.body.generated >= cards.length,
+    `status=${regenerate.status} generated=${regenerate.body?.generated}`);
+  const afterRegenerate = await request(`/api/academics/reports/cards?yearId=${year.id}&termId=${term.id}`, { headers: { Cookie: head } });
+  const regeneratedCards = (afterRegenerate.body as any[]).filter(card => cards.some(original => original.id === card.id));
+  check('Regenerating a report card does not silently unpublish it',
+    afterRegenerate.status === 200 && regeneratedCards.length >= cards.length &&
+      regeneratedCards.every(card => Boolean(card.publishedAt)),
+    `published=${regeneratedCards.filter(card => Boolean(card.publishedAt)).length}/${regeneratedCards.length}`);
+
   const parentAfter = await request('/api/academics/reports/cards', { headers: { Cookie: parent } });
   check('Parents see only their published, linked children reports',
     parentAfter.status === 200 && parentAfter.body.length > 0 && parentAfter.body.every((card: any) =>

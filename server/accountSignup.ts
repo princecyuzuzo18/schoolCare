@@ -349,7 +349,7 @@ function hashComparison(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function rowToView(row: SignupRow): SignupRequestView {
+function rowToView(row: SignupRow, includeSignInEmail = true): SignupRequestView {
   const verificationSent =
     row.status === 'VERIFIED' || row.status === 'APPROVED' || Boolean(row.code_hash);
   let message = 'Your request is pending approval. You can sign in after the school approves it.';
@@ -367,7 +367,9 @@ function rowToView(row: SignupRow): SignupRequestView {
     fullName: row.full_name,
     phone: maskContact(row.phone),
     email: row.email ? maskContact(row.email) : null,
-    signInEmail: row.email || '',
+    // The generic status endpoint is public and addressed by a request ID that
+    // may be shared. Do not reveal the full sign-in email there.
+    signInEmail: includeSignInEmail ? (row.email || '') : '',
     admissionNumber: row.admission_number,
     status: row.status,
     contactType: row.contact_type,
@@ -501,6 +503,11 @@ async function insertSignupRequest(values: {
 
 export async function getSignupRequestView(requestId: string): Promise<SignupRequestView> {
   return rowToView(await getRequestRow(clean(requestId, 100)));
+}
+
+/** For the unauthenticated status-by-ID endpoint: never returns the sign-in address. */
+export async function getPublicSignupRequestView(requestId: string): Promise<SignupRequestView> {
+  return rowToView(await getRequestRow(clean(requestId, 100)), false);
 }
 
 async function getRequestStudentIds(requestId: string): Promise<string[]> {
@@ -757,7 +764,9 @@ export async function resendSignupCode(requestId: string): Promise<SignupRequest
   if (!sent) {
     throw new SignupError('The verification message could not be sent. Contact the school.', 503);
   }
-  return rowToView(await getRequestRow(id));
+  // Resend is public and addressed only by the request ID; never return the
+  // full sign-in address here.
+  return rowToView(await getRequestRow(id), false);
 }
 
 export async function listSignupRequests(schoolId: string): Promise<SignupRequestView[]> {
@@ -766,7 +775,7 @@ export async function listSignupRequests(schoolId: string): Promise<SignupReques
     `SELECT * FROM account_signup_requests WHERE school_id = ? ORDER BY created_at DESC`,
     [schoolId]
   );
-  return rows.map(rowToView);
+  return rows.map(row => rowToView(row));
 }
 
 async function createOrReuseJsonUser(params: {

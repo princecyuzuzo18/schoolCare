@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
+import type { CombinationView } from '../types';
 import {
   FileText,
   Printer,
@@ -32,6 +33,7 @@ export const ReportsPage: React.FC = () => {
   const [reportType, setReportType] = useState<ReportType>('ACADEMIC');
   const [selectedTerm, setSelectedTerm] = useState<string>('Term 1');
   const [selectedClass, setSelectedClass] = useState<string>('ALL');
+  const [activeCombinations, setActiveCombinations] = useState<CombinationView[]>([]);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -50,6 +52,12 @@ export const ReportsPage: React.FC = () => {
   useEffect(() => {
     fetchAnalytics();
   }, [selectedTerm]);
+
+  useEffect(() => {
+    api.getActiveCombinations()
+      .then(setActiveCombinations)
+      .catch(() => setActiveCombinations([]));
+  }, []);
 
   const handlePrint = () => {
     window.print();
@@ -105,9 +113,8 @@ export const ReportsPage: React.FC = () => {
       rows = [
         ['Communication Audit', 'Value'],
         ['Total Dispatched', String(data.communication.totalDispatched)],
-        ['Verified Delivered', String(data.communication.deliveredCount)],
-        ['Carrier Delivery Success Rate', `${data.communication.deliverySuccessRate}%`],
-        ['Carrier Verification Stamp', data.communication.carrierVerification]
+        ['Delivered / Acknowledged', String(data.communication.deliveredCount)],
+        ['Recorded Delivery Rate', `${data.communication.deliverySuccessRate}%`]
       ];
     }
 
@@ -166,6 +173,16 @@ export const ReportsPage: React.FC = () => {
         </div>
       </div>
 
+      {Array.isArray(data?.restrictedSections) && data.restrictedSections.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Some sections are hidden because your account lacks permission to read the underlying module data:
+            {' '}{data.restrictedSections.join(', ')}.
+          </span>
+        </div>
+      )}
+
       {/* Scope Selectors & Report Type Tabs */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
         {/* Report Focus Tabs */}
@@ -218,10 +235,10 @@ export const ReportsPage: React.FC = () => {
               onChange={e => setSelectedClass(e.target.value)}
               className="px-2.5 py-1.5 rounded-xl border border-slate-200 font-semibold text-slate-800 bg-white"
             >
-              <option value="ALL">All RTB Trades & O-Level</option>
-              <option value="SOD">Software Development (SOD)</option>
-              <option value="CST">Building & Construction (CST)</option>
-              <option value="S3">Senior 3 O-Level</option>
+              <option value="ALL">All Active Combinations</option>
+              {activeCombinations.map(combination => (
+                <option key={combination.id} value={combination.code}>{combination.name}</option>
+              ))}
             </select>
           </div>
         </div>
@@ -275,7 +292,7 @@ export const ReportsPage: React.FC = () => {
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-[10px] font-bold uppercase text-slate-500">Students Evaluated</span>
                 <p className="text-2xl font-black text-slate-900 mt-1">{data.academics.totalEvaluated}</p>
-                <p className="text-[11px] text-slate-500">TVET SOD, CST & General</p>
+                <p className="text-[11px] text-slate-500">Active TVET combinations</p>
               </div>
 
               <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
@@ -600,58 +617,56 @@ export const ReportsPage: React.FC = () => {
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-[10px] font-bold uppercase text-slate-500">Total Notifications</span>
                 <p className="text-3xl font-black text-slate-900 mt-1">{data.communication.totalDispatched}</p>
-                <p className="text-[11px] text-slate-500">Across SMS, WhatsApp, In-App</p>
+                <p className="text-[11px] text-slate-500">Messages recorded in school records</p>
               </div>
 
               <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
-                <span className="text-[10px] font-bold uppercase text-emerald-800">Carrier Verified Delivered</span>
+                <span className="text-[10px] font-bold uppercase text-emerald-800">Delivered / Acknowledged</span>
                 <p className="text-3xl font-black text-emerald-800 mt-1">{data.communication.deliveredCount}</p>
-                <p className="text-[11px] text-emerald-700">Delivery Success: {data.communication.deliverySuccessRate}%</p>
+                <p className="text-[11px] text-emerald-700">Recorded delivery rate: {data.communication.deliverySuccessRate}%</p>
               </div>
 
               <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
-                <span className="text-[10px] font-bold uppercase text-blue-800">Integrity Standard</span>
-                <p className="text-lg font-black text-blue-950 mt-1">100% Real Callback</p>
-                <p className="text-[11px] text-blue-700">Zero fabricated delivery receipts</p>
+                <span className="text-[10px] font-bold uppercase text-blue-800">Status Source</span>
+                <p className="text-lg font-black text-blue-950 mt-1">School Records</p>
+                <p className="text-[11px] text-blue-700">Counts reflect stored message status only</p>
               </div>
             </div>
 
             <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-xl text-xs space-y-1 text-blue-900">
               <p className="font-bold flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4 text-blue-700" />
-                <span>Rwandan Telecom Carrier Verification:</span>
+                <span>Delivery reporting:</span>
               </p>
               <p className="text-slate-700 leading-relaxed">
-                All SMS notifications are dispatched via approved local aggregator with direct SS7 DLR routing to MTN Rwanda and Airtel Rwanda subscriber handsets. WhatsApp notifications utilize verified Meta Cloud API webhooks with HMAC-SHA256 signature verification.
+                These figures summarize notification records stored by SchoolCare. They are not carrier
+                delivery receipts and should be reconciled with the configured messaging provider before
+                external use.
               </p>
             </div>
           </div>
         )}
 
-        {/* Official Executive Sign-off Block */}
+        {/* Signature placeholders: only authorized signatories may sign the printed copy. */}
         <div className="pt-8 border-t-2 border-slate-300 grid grid-cols-3 gap-6 text-center text-xs">
           <div>
-            <p className="font-bold text-slate-800">Prepared by Academic Dean</p>
-            <p className="text-[11px] text-slate-600 font-semibold mt-1">Claire Mukamana</p>
+            <p className="font-bold text-slate-800">Prepared by</p>
             <p className="text-[10px] text-slate-600 mt-8 border-t border-slate-300 pt-1">
-              Date & Dean Signature
+              Name, role, date & signature
             </p>
           </div>
 
           <div>
-            <div className="w-20 h-20 mx-auto rounded-full border-2 border-dashed border-blue-800 flex flex-col items-center justify-center text-[10px] font-black text-blue-900 uppercase rotate-6">
-              <span>ES RUBENGERA</span>
-              <span className="text-[8px] text-blue-700">★ RTB ★</span>
-              <span className="text-[7px]">OFFICIAL SEAL</span>
-            </div>
-            <p className="text-[10px] text-slate-600 mt-2 font-medium">Official Institution Seal</p>
+            <p className="font-bold text-slate-800">{school?.name || 'School'}</p>
+            <p className="text-[10px] text-slate-600 mt-8 border-t border-slate-300 pt-1">
+              Official seal (affix when signed)
+            </p>
           </div>
 
           <div>
-            <p className="font-bold text-slate-800">Approved by Head Teacher</p>
-            <p className="text-[11px] text-slate-600 font-semibold mt-1">Jean Bosco Mugiraneza</p>
+            <p className="font-bold text-slate-800">Approved by</p>
             <p className="text-[10px] text-slate-600 mt-8 border-t border-slate-300 pt-1">
-              Directeur d’Établissement
+              Name, role, date & signature
             </p>
           </div>
         </div>

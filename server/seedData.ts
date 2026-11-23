@@ -22,7 +22,8 @@ import {
   AcademicTerm,
   AssessmentCategory,
   GradingScale,
-  AcademicSettings
+  AcademicSettings,
+  AcademicCombination
 } from '../src/types';
 
 export const initialSchool: School = {
@@ -153,125 +154,133 @@ export const initialUsers: UserProfile[] = [
 
 export const initialClasses: AcademicClass[] = [
   {
-    id: 'class-l3-sod-a',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Level 3 SOD A',
-    grade: 'Level 3 RTB',
-    stream: 'A',
-    combination: 'Software Development (SOD)',
-    classTeacherName: 'Unassigned',
-    room: 'ICT Lab',
-    studentCount: 0
+    id: 'class-l3-sod-a', schoolId: 'school-es-rubengera-01', name: 'Level 3 SOD A', grade: 'Level 3 RTB',
+    stream: 'A', combination: 'Software Development (SOD)', classTeacherName: 'Unassigned',
+    room: 'ICT Lab', studentCount: 0, status: 'ACTIVE', combinationId: 'comb-sod'
   },
   {
-    id: 'class-l4-sod-a',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Level 4 SOD A',
-    grade: 'Level 4 RTB',
-    stream: 'A',
-    combination: 'Software Development (SOD)',
-    classTeacherName: 'Patrick Nshimiyimana',
-    room: 'Lab 2 - ICT Building',
-    studentCount: 38
+    id: 'class-l4-sod-a', schoolId: 'school-es-rubengera-01', name: 'Level 4 SOD A', grade: 'Level 4 RTB',
+    stream: 'A', combination: 'Software Development (SOD)', classTeacherName: 'Patrick Nshimiyimana',
+    room: 'Lab 2 - ICT Building', studentCount: 38, status: 'ACTIVE', combinationId: 'comb-sod'
   },
   {
-    id: 'class-l5-sod-b',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Level 5 SOD B',
-    grade: 'Level 5 RTB',
-    stream: 'B',
-    combination: 'Software Development (SOD)',
-    classTeacherName: 'Jean Damascene Kayitare',
-    room: 'Lab 1 - Innovation Center',
-    studentCount: 35
+    id: 'class-l5-sod-b', schoolId: 'school-es-rubengera-01', name: 'Level 5 SOD B', grade: 'Level 5 RTB',
+    stream: 'B', combination: 'Software Development (SOD)', classTeacherName: 'Jean Damascene Kayitare',
+    room: 'Lab 1 - Innovation Center', studentCount: 35, status: 'ACTIVE', combinationId: 'comb-sod'
   },
   {
-    id: 'class-l3-nit-a',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Level 3 NIT A',
-    grade: 'Level 3 RTB',
-    stream: 'A',
-    combination: 'Networking (NIT)',
-    classTeacherName: 'Unassigned',
-    room: 'ICT Lab',
-    studentCount: 0
+    id: 'class-l3-nit-a', schoolId: 'school-es-rubengera-01', name: 'Level 3 NIT A', grade: 'Level 3 RTB',
+    stream: 'A', combination: 'Networking (NIT)', classTeacherName: 'Unassigned',
+    room: 'ICT Lab', studentCount: 0, status: 'ACTIVE', combinationId: 'comb-nit'
   },
   {
-    id: 'class-l4-nit-a',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Level 4 NIT A',
-    grade: 'Level 4 RTB',
-    stream: 'A',
-    combination: 'Networking (NIT)',
-    classTeacherName: 'Unassigned',
-    room: 'ICT Lab',
-    studentCount: 0
+    id: 'class-l4-nit-a', schoolId: 'school-es-rubengera-01', name: 'Level 4 NIT A', grade: 'Level 4 RTB',
+    stream: 'A', combination: 'Networking (NIT)', classTeacherName: 'Unassigned',
+    room: 'ICT Lab', studentCount: 0, status: 'ACTIVE', combinationId: 'comb-nit'
   },
   {
-    id: 'class-l5-nit-a',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Level 5 NIT A',
-    grade: 'Level 5 RTB',
-    stream: 'A',
-    combination: 'Networking (NIT)',
-    classTeacherName: 'Unassigned',
-    room: 'ICT Lab',
-    studentCount: 0
+    id: 'class-l5-nit-a', schoolId: 'school-es-rubengera-01', name: 'Level 5 NIT A', grade: 'Level 5 RTB',
+    stream: 'A', combination: 'Networking (NIT)', classTeacherName: 'Unassigned',
+    room: 'ICT Lab', studentCount: 0, status: 'ACTIVE', combinationId: 'comb-nit'
   },
   {
-    id: 'class-l3-accounting-a',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Level 3 Accounting A',
-    grade: 'Level 3 RTB',
-    stream: 'A',
-    combination: 'Accounting',
-    classTeacherName: 'Unassigned',
-    room: 'Classroom TBD',
-    studentCount: 0
+    // Legacy IDs retained so historical student/mark links remain intact.
+    id: 'class-l3-accounting-a', schoolId: 'school-es-rubengera-01', name: 'Y1 Accounting', grade: 'Y1 Accounting',
+    stream: 'A', combination: 'Accounting', classTeacherName: 'Unassigned',
+    room: 'Classroom TBD', studentCount: 0, status: 'ACTIVE', combinationId: 'comb-accounting'
   },
   {
-    id: 'class-l4-accounting-a',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Level 4 Accounting A',
-    grade: 'Level 4 RTB',
-    stream: 'A',
-    combination: 'Accounting',
-    classTeacherName: 'Unassigned',
-    room: 'Classroom TBD',
-    studentCount: 0
+    id: 'class-l4-accounting-a', schoolId: 'school-es-rubengera-01', name: 'Y2 Accounting', grade: 'Y2 Accounting',
+    stream: 'A', combination: 'Accounting', classTeacherName: 'Unassigned',
+    room: 'Classroom TBD', studentCount: 0, status: 'ACTIVE', combinationId: 'comb-accounting'
   },
   {
-    id: 'class-l5-accounting-a',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Level 5 Accounting A',
-    grade: 'Level 5 RTB',
-    stream: 'A',
-    combination: 'Accounting',
-    classTeacherName: 'Unassigned',
-    room: 'Classroom TBD',
-    studentCount: 0
+    id: 'class-l5-accounting-a', schoolId: 'school-es-rubengera-01', name: 'Y3 Accounting', grade: 'Y3 Accounting',
+    stream: 'A', combination: 'Accounting', classTeacherName: 'Unassigned',
+    room: 'Classroom TBD', studentCount: 0, status: 'ACTIVE', combinationId: 'comb-accounting'
   },
   {
-    id: 'class-l4-cst',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Level 4 CST',
-    grade: 'Level 4 RTB',
-    stream: 'A',
-    combination: 'Building & Construction Technology',
-    classTeacherName: 'Alexis Manirakiza',
-    room: 'Workshop 3',
-    studentCount: 42
+    // Archived, not deleted: existing CST learners keep their records.
+    id: 'class-l4-cst', schoolId: 'school-es-rubengera-01', name: 'Level 4 CST', grade: 'Level 4 RTB',
+    stream: 'A', combination: 'Building & Construction Technology', classTeacherName: 'Alexis Manirakiza',
+    room: 'Workshop 3', studentCount: 42, status: 'ARCHIVED', combinationId: 'comb-cst-archived'
   },
   {
-    id: 'class-s3-a',
-    schoolId: 'school-es-rubengera-01',
-    name: 'Senior 3 A',
-    grade: 'O-Level S3',
-    stream: 'A',
-    combination: 'General Science & Languages',
-    classTeacherName: 'Jeannette Mukarugwiza',
-    room: 'Block B - Room 104',
-    studentCount: 45
+    // Archived, not deleted: existing S3 learners keep their records.
+    id: 'class-s3-a', schoolId: 'school-es-rubengera-01', name: 'Senior 3 A', grade: 'O-Level S3',
+    stream: 'A', combination: 'General Science & Languages', classTeacherName: 'Jeannette Mukarugwiza',
+    room: 'Block B - Room 104', studentCount: 45, status: 'ARCHIVED', combinationId: 'comb-general-science-archived'
+  }
+];
+
+/**
+ * Default combination catalogue. Discontinued options are seeded as ARCHIVED
+ * so historical students keep their programme while registration only sees
+ * ACTIVE combinations.
+ */
+export const initialCombinations: AcademicCombination[] = [
+  {
+    id: 'comb-sod', schoolId: 'school-es-rubengera-01', name: 'Software Development (SOD)', code: 'SOD',
+    educationLevel: 'TVET RTB', academicProgramme: 'Software Development',
+    description: 'Software development and database pathways.', academicYear: '2025 - 2026', status: 'ACTIVE',
+    subjects: [
+      { subjectId: 'subj-web-dev', isRequired: true, teacherIds: [] },
+      { subjectId: 'subj-db-design', isRequired: true, teacherIds: [] },
+      { subjectId: 'subj-math', isRequired: true, teacherIds: [] },
+      { subjectId: 'subj-english', isRequired: false, teacherIds: [] }
+    ],
+    classIds: ['class-l3-sod-a', 'class-l4-sod-a', 'class-l5-sod-b'], teacherIds: [],
+    department: 'Software Development', createdAt: '2025-09-01T00:00:00Z', updatedAt: '2025-09-01T00:00:00Z'
+  },
+  {
+    id: 'comb-nit', schoolId: 'school-es-rubengera-01', name: 'Networking (NIT)', code: 'NIT',
+    educationLevel: 'TVET RTB', academicProgramme: 'Networking',
+    description: 'Computer networking and infrastructure pathway.', academicYear: '2025 - 2026', status: 'ACTIVE',
+    subjects: [
+      { subjectId: 'subj-web-dev', isRequired: true, teacherIds: [] },
+      { subjectId: 'subj-math', isRequired: true, teacherIds: [] }
+    ],
+    classIds: ['class-l3-nit-a', 'class-l4-nit-a', 'class-l5-nit-a'], teacherIds: [],
+    department: 'Software Development', createdAt: '2025-09-01T00:00:00Z', updatedAt: '2025-09-01T00:00:00Z'
+  },
+  {
+    id: 'comb-accounting', schoolId: 'school-es-rubengera-01', name: 'Accounting', code: 'ACC',
+    educationLevel: 'TVET RTB', academicProgramme: 'Accounting',
+    description: 'Y1, Y2 and Y3 Accounting programme.', academicYear: '2025 - 2026', status: 'ACTIVE',
+    subjects: [
+      { subjectId: 'subj-math', isRequired: true, teacherIds: [] },
+      { subjectId: 'subj-entrepreneurship', isRequired: true, teacherIds: [] },
+      { subjectId: 'subj-english', isRequired: false, teacherIds: [] }
+    ],
+    classIds: ['class-l3-accounting-a', 'class-l4-accounting-a', 'class-l5-accounting-a'], teacherIds: [],
+    department: 'Business & Management', createdAt: '2025-09-01T00:00:00Z', updatedAt: '2025-09-01T00:00:00Z'
+  },
+  {
+    id: 'comb-cst-archived', schoolId: 'school-es-rubengera-01', name: 'Building & Construction (CST)', code: 'CST',
+    educationLevel: 'TVET RTB', academicProgramme: 'Building & Construction',
+    description: 'Discontinued combination; historical records only.', academicYear: '2025 - 2026', status: 'ARCHIVED',
+    subjects: [{ subjectId: 'subj-math', isRequired: true, teacherIds: [] }],
+    classIds: ['class-l4-cst'], teacherIds: [], department: 'Construction',
+    createdAt: '2025-09-01T00:00:00Z', updatedAt: '2025-09-01T00:00:00Z'
+  },
+  {
+    id: 'comb-general-science-archived', schoolId: 'school-es-rubengera-01', name: 'General Science', code: 'GSC',
+    educationLevel: 'O-Level', academicProgramme: 'General Science',
+    description: 'Discontinued O-Level combination; historical records only.', academicYear: '2025 - 2026', status: 'ARCHIVED',
+    subjects: [{ subjectId: 'subj-math', isRequired: true, teacherIds: [] }],
+    classIds: ['class-s3-a'], teacherIds: [], department: 'Science',
+    createdAt: '2025-09-01T00:00:00Z', updatedAt: '2025-09-01T00:00:00Z'
+  },
+  {
+    id: 'comb-languages-archived', schoolId: 'school-es-rubengera-01', name: 'Languages', code: 'LAN',
+    educationLevel: 'O-Level', academicProgramme: 'Languages',
+    description: 'Discontinued O-Level combination; historical records only.', academicYear: '2025 - 2026', status: 'ARCHIVED',
+    subjects: [
+      { subjectId: 'subj-english', isRequired: true, teacherIds: [] },
+      { subjectId: 'subj-kinyarwanda', isRequired: true, teacherIds: [] }
+    ],
+    classIds: ['class-s3-a'], teacherIds: [], department: 'Languages',
+    createdAt: '2025-09-01T00:00:00Z', updatedAt: '2025-09-01T00:00:00Z'
   }
 ];
 

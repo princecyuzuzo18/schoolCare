@@ -6,22 +6,22 @@ export const ROLE_DASHBOARD_MAP = ROLE_DASHBOARD_TABS;
 export { getRoleDashboardTab };
 
 const ALL_ADMIN_TABS = [
-  'landing','dashboard','parent-portal','student-portal','health','attendance','communication','students','guardians','academics','academic-admin','report-printing','finance','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'
+  'landing','dashboard','approval-center','parent-portal','student-portal','health','attendance','communication','students','guardians','academics','academic-admin','combination-management','report-printing','finance','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'
 ];
 
 export const ROLE_ALLOWED_TABS: Record<UserRole, string[]> = {
   SUPER_ADMIN: ALL_ADMIN_TABS,
   SCHOOL_ADMIN: ALL_ADMIN_TABS,
-  HEAD_TEACHER: ['landing','dashboard','attendance','communication','students','guardians','academics','academic-admin','report-printing','staff','staff-management','permissions','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'],
-  DEPUTY_HEAD: ['landing','dashboard','attendance','communication','students','academics','timetable','events','reports','report-printing','exams','teaching'],
-  TEACHER: ['landing','dashboard','attendance','students','academics','timetable','events','reports','exams','marking-guides','teaching'],
-  NURSE: ['landing','dashboard','health','events','reports'],
-  ACCOUNTANT: ['landing','dashboard','finance','events','reports','inventory'],
-  DISCIPLINE_OFFICER: ['landing','dashboard','attendance','students','guardians','discipline','events','reports','communication'],
+  HEAD_TEACHER: ['landing','dashboard','approval-center','health','attendance','communication','students','guardians','academics','academic-admin','combination-management','report-printing','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'],
+  DEPUTY_HEAD: ['landing','dashboard','attendance','communication','students','academics','timetable','events','reports','report-printing','exams','teaching','admissions','ai-assistant'],
+  TEACHER: ['landing','dashboard','attendance','students','academics','timetable','events','reports','exams','marking-guides','teaching','ai-assistant'],
+  NURSE: ['landing','dashboard','health','events','reports','ai-assistant'],
+  ACCOUNTANT: ['landing','dashboard','finance','events','reports','inventory','ai-assistant'],
+  DISCIPLINE_OFFICER: ['landing','dashboard','attendance','students','guardians','discipline','events','reports','communication','ai-assistant'],
   SCHOOL_IT: ['landing','dashboard','students','staff','reports','events','ai-assistant'],
-  ANIMATEUR: ['landing','dashboard','events','students','communication','attendance','reports'],
-  PARENT: ['landing','parent-portal','events','reports'],
-  STUDENT: ['landing','student-portal','events','reports']
+  ANIMATEUR: ['landing','dashboard','events','students','communication','attendance','reports','ai-assistant'],
+  PARENT: ['landing','parent-portal','events','reports','ai-assistant'],
+  STUDENT: ['landing','student-portal','events','reports','ai-assistant']
 };
 
 /**
@@ -30,6 +30,7 @@ export const ROLE_ALLOWED_TABS: Record<UserRole, string[]> = {
  */
 export const TAB_PERMISSION_REQUIREMENTS: Record<string, string> = {
   dashboard: 'dashboard.view',
+  'approval-center': 'dashboard.view',
   health: 'health.read',
   attendance: 'attendance.read',
   communication: 'notifications.read',
@@ -38,6 +39,7 @@ export const TAB_PERMISSION_REQUIREMENTS: Record<string, string> = {
   guardians: 'guardians.read',
   academics: 'academics.read',
   'academic-admin': 'academics.write',
+  'combination-management': 'combinations.write',
   'report-printing': 'reports.generate',
   finance: 'finance.read',
   inventory: 'finance.read',
@@ -50,9 +52,15 @@ export const TAB_PERMISSION_REQUIREMENTS: Record<string, string> = {
   settings: 'school.write',
   reports: 'reports.read',
   discipline: 'discipline.read',
-  events: 'notifications.read',
-  admissions: 'students.read'
+  events: 'notifications.read'
 };
+
+// Admissions uses role-based access on the server (see MODULE_ACCESS.admissions),
+// not the generic permission matrix. Keep the UI mirror aligned so a delegated
+// students.read account does not see a tab the API will reject.
+const ADMISSIONS_READ_ROLES = new Set<UserRole>([
+  'SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD'
+]);
 
 export function getRoleDashboard(role?: UserRole | null): string {
   return getRoleDashboardTab(role);
@@ -70,21 +78,28 @@ export function isTabAllowedForRole(
     return false;
   }
 
+  const requiredPermission = TAB_PERMISSION_REQUIREMENTS[tab];
+  // A tab with an explicit permission requirement must respect delegated
+  // permission reductions even when the role normally includes that tab.
+  // Callers that do not supply permissions keep the legacy role-only behavior.
+  if (requiredPermission && effectivePermissions !== undefined) {
+    const hasPermission = effectivePermissions.some(
+      permission => permission === requiredPermission || permission.replace(':', '.') === requiredPermission
+    );
+    if (!hasPermission) return false;
+  }
+
   const allowedTabs = ROLE_ALLOWED_TABS[role] ?? [getRoleDashboard(role)];
   if (allowedTabs.includes(tab)) {
     return true;
   }
 
-  if (!effectivePermissions || effectivePermissions.length === 0) {
-    return false;
+  // Role-only tab: generic permissions must not expose it.
+  if (tab === 'admissions') {
+    return ADMISSIONS_READ_ROLES.has(role);
   }
-  const requiredPermission = TAB_PERMISSION_REQUIREMENTS[tab];
-  return Boolean(
-    requiredPermission &&
-      effectivePermissions.some(
-        permission => permission === requiredPermission || permission.replace(':', '.') === requiredPermission
-      )
-  );
+
+  return false;
 }
 
 export function resolveRequestedTab(

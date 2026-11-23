@@ -34,7 +34,7 @@ export const FinancePage: React.FC = () => {
   const [paymentAmount, setPaymentAmount] = useState('35000');
   const [paymentMethod, setPaymentMethod] = useState<'MTN_MOMO' | 'AIRTEL_MONEY' | 'BANK_TRANSFER' | 'CASH'>('MTN_MOMO');
   const [payerName, setPayerName] = useState('');
-  const [payerPhone, setPayerPhone] = useState('+250 788 888 707');
+  const [payerPhone, setPayerPhone] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Active receipt view modal
@@ -76,6 +76,15 @@ export const FinancePage: React.FC = () => {
   const handleSubmitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedInvoice) return;
+    const amount = Number(paymentAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert('Enter a positive payment amount.');
+      return;
+    }
+    if (amount > selectedInvoice.balanceRwf) {
+      alert(`Amount exceeds the outstanding balance of ${selectedInvoice.balanceRwf.toLocaleString()} RWF.`);
+      return;
+    }
 
     try {
       setIsSubmitting(true);
@@ -83,11 +92,10 @@ export const FinancePage: React.FC = () => {
         invoiceId: selectedInvoice.id,
         studentId: selectedInvoice.studentId,
         studentName: selectedInvoice.studentName,
-        amountRwf: Number(paymentAmount),
+        amountRwf: amount,
         method: paymentMethod,
         payerName: payerName || 'Guardian',
-        payerPhone: payerPhone,
-        reference: `${paymentMethod.substring(0, 4)}-${Date.now().toString().slice(-6)}`
+        payerPhone: payerPhone
       });
 
       confetti({ particleCount: 70, spread: 60, origin: { y: 0.6 } });
@@ -327,6 +335,9 @@ export const FinancePage: React.FC = () => {
                 <label className="block font-bold text-slate-700 mb-1">Amount Paid (RWF) *</label>
                 <input
                   type="number"
+                  min="1"
+                  max={selectedInvoice?.balanceRwf}
+                  step="1"
                   value={paymentAmount}
                   onChange={e => setPaymentAmount(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-bold text-sm"

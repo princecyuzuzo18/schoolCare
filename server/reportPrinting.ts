@@ -203,11 +203,16 @@ export function registerReportPrintingRoutes(app: Express): void {
       academicYear: year,
       term,
       settings: getSettings(schoolId),
-      cards: cards.map(card => ({
-        ...card,
-        attendance: attendanceSummary(schoolId, card.classId ?? '', term),
-        distribution: distributions.find(item => item.reportCardId === card.id)?.status ?? 'NOT_GENERATED'
-      })),
+      cards: cards.map(card => {
+        const attendance = attendanceSummary(schoolId, card.classId ?? '', term, card.studentId);
+        return {
+          ...card,
+          // Per-student values are shared by the HTML sheet and PDF export.
+          attendanceDaysPresent: attendance.present,
+          attendanceTotalDays: attendance.total,
+          distribution: distributions.find(item => item.reportCardId === card.id)?.status ?? 'NOT_GENERATED'
+        };
+      }),
       total: cards.length
     });
   }));
@@ -230,12 +235,19 @@ export function registerReportPrintingRoutes(app: Express): void {
     }
     const distribution = db.getAcademicCollection<ReportDistribution>('reportDistributions', schoolId)
       .find(item => item.reportCardId === card.id);
+    const term = db.getAcademicCollection<AcademicTerm>('terms', schoolId)
+      .find(item => item.name === card.term);
+    const attendance = attendanceSummary(schoolId, card.classId ?? '', term, card.studentId);
     res.json({
-      card,
+      card: {
+        ...card,
+        attendanceDaysPresent: attendance.present,
+        attendanceTotalDays: attendance.total
+      },
       school: db.getSchool(schoolId),
       settings: getSettings(schoolId),
       distribution: distribution?.status ?? 'NOT_GENERATED',
-      attendance: attendanceSummary(schoolId, card.classId ?? '')
+      attendance
     });
   }));
 

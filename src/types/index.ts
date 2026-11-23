@@ -70,6 +70,10 @@ export interface Student {
   classId: string;
   className: string;
   combination: string; // e.g. "Software Development (SOD)", "Accounting", "Senior 3"
+  /** Link to the managed combination record when the student was registered through it. */
+  combinationId?: string;
+  educationLevel?: string;
+  academicProgramme?: string;
   enrollmentStatus: 'ACTIVE' | 'TRANSFERRED' | 'GRADUATED' | 'SUSPENDED';
   admissionDate: string;
   bloodGroup?: string;
@@ -249,13 +253,18 @@ export interface NotificationMessage {
 export interface AcademicClass {
   id: string;
   schoolId: string;
-  name: string; // "Level 4 SOD A"
+  name: string; // "Level 4 SOD A", "Y1 Accounting"
   grade: string;
   stream: string;
   combination: string;
   classTeacherName: string;
   room: string;
   studentCount: number;
+  /** Lifecycle state. Archived classes remain available for historical records. */
+  status?: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  archivedAt?: string;
+  archivedBy?: string;
+  combinationId?: string;
 }
 
 export interface Subject {
@@ -352,6 +361,10 @@ export interface ReportCard {
   promotionDecision?: string;
   sourceSubmissionIds?: string[];
   status?: 'DRAFT' | 'APPROVED' | 'PUBLISHED';
+  /** Academic context snapshot captured when the card is generated. */
+  programme?: string;
+  educationLevel?: string;
+  academicLevel?: string;
 }
 
 export interface FeeStructure {
@@ -1218,7 +1231,70 @@ export interface ReportDistribution {
   updatedAt: string;
 }
 
+// ============================================================
+// COMBINATION MANAGEMENT (school-scoped academic programmes)
+// Additive: existing free-text `combination` fields remain valid.
+// ============================================================
+
+export type CombinationStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+
+export interface CombinationSubject {
+  subjectId: string;
+  isRequired: boolean;
+  teacherIds: string[];
+}
+
+export interface AcademicCombination {
+  id: string;
+  schoolId: string;
+  name: string;
+  code: string;
+  educationLevel: string;
+  academicProgramme: string;
+  description?: string;
+  academicYear: string;
+  status: CombinationStatus;
+  subjects: CombinationSubject[];
+  classIds: string[];
+  teacherIds: string[];
+  classTeacherId?: string;
+  department?: string;
+  maxCapacity?: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
+}
+
+export interface CombinationView extends AcademicCombination {
+  studentCount: number;
+  classes: Array<{ id: string; name: string; grade: string; status?: string }>;
+  subjectDetails: Array<CombinationSubject & { name: string; code: string; department: string; teacherNames: string[] }>;
+  teacherDetails: Array<{ id: string; fullName: string; role: string }>;
+  classTeacher?: { id: string; fullName: string };
+}
+
+export interface CreateCombinationInput {
+  name: string;
+  code: string;
+  educationLevel: string;
+  academicProgramme: string;
+  description?: string;
+  academicYear: string;
+  status?: CombinationStatus;
+  subjects?: CombinationSubject[];
+  classIds?: string[];
+  teacherIds?: string[];
+  classTeacherId?: string;
+  department?: string;
+  maxCapacity?: number;
+  notes?: string;
+}
+
 export type AcademicCollectionKey =
+  | 'combinations'
   | 'academicYears'
   | 'terms'
   | 'classSubjectAssignments'
@@ -1229,4 +1305,161 @@ export type AcademicCollectionKey =
   | 'markSubmissions'
   | 'reportDistributions'
   | 'academicSettings';
+
+// --- SchoolCare AI Assistant ---
+export type AiIntent =
+  | 'general'
+  | 'student_count'
+  | 'attendance_summary'
+  | 'academic_summary'
+  | 'my_results'
+  | 'announcements'
+  | 'finance_summary'
+  | 'knowledge';
+
+export interface AiSource {
+  title: string;
+  kind: 'DATABASE' | 'DOCUMENT';
+  detail?: string;
+}
+
+export interface AiMessage {
+  id: string;
+  conversationId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  sources: AiSource[];
+  language: LanguageCode;
+  createdAt: string;
+  feedback?: 'helpful' | 'not_helpful';
+}
+
+export interface AiConversation {
+  id: string;
+  title: string;
+  language: LanguageCode;
+  createdAt: string;
+  updatedAt: string;
+  messages?: AiMessage[];
+  feedback?: Record<string, 'helpful' | 'not_helpful'>;
+}
+
+export interface AiStatus {
+  provider: string;
+  model: string;
+  enabled: boolean;
+  available: boolean;
+  reason?: string;
+  defaultLanguage: LanguageCode;
+  rateLimitPerHour: number;
+  retentionDays: number;
+  suggestions: string[];
+  capabilities: number;
+}
+
+export interface AiSettings {
+  schoolId: string;
+  isEnabled: boolean;
+  model: string;
+  defaultLanguage: LanguageCode;
+  rateLimitPerHour: number;
+  retentionDays: number;
+  allowedRoles: UserRole[] | null;
+  permittedTools: AiIntent[] | null;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface AiKnowledgeDocument {
+  id: string;
+  schoolId: string;
+  title: string;
+  category: string;
+  visibility: 'SCHOOL' | 'SHARED';
+  fileName: string;
+  mimeType: string;
+  content: string;
+  status: 'PROCESSING' | 'READY' | 'ARCHIVED';
+  uploadedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AiChatResponse {
+  conversationId: string;
+  messages: AiMessage[];
+  language: LanguageCode;
+  intent: AiIntent;
+  notice?: string;
+}
+
+export interface AiUsageStats {
+  days: number;
+  rows: Array<{
+    status: 'OK' | 'ERROR';
+    action: string;
+    errorCode: string | null;
+    count: number;
+    averageLatencyMs: number;
+  }>;
+  errors: Array<{
+    id: string | number;
+    action: string;
+    errorCode: string | null;
+    model: string;
+    createdAt: string;
+  }>;
+}
+
+/** A single item in the central Headteacher Approval Center. */
+export interface HeadteacherApprovalItem {
+  id: string;
+  type: 'ADMISSION' | 'MARKS' | 'REPORT_CARD' | 'SIGNUP' | 'STAFF_REQUEST' | 'FINANCE';
+  title: string;
+  detail: string;
+  status: string;
+  createdAt: string;
+  tab: string;
+  permission: string;
+}
+
+/** Server-authoritative summary used by the Headteacher dashboard. */
+export interface HeadteacherDashboardView {
+  generatedAt: string;
+  schoolId: string;
+  schoolName: string;
+  currentTerm: string | null;
+  totals: {
+    students: number;
+    staff: number;
+    parents: number;
+    activeClasses: number;
+    archivedStudents: number;
+  };
+  attendance: {
+    date: string;
+    total: number;
+    present: number;
+    absent: number;
+    late: number;
+    rate: number | null;
+  };
+  academics: {
+    evaluated: number;
+    average: number | null;
+    passRate: number | null;
+    gradeDistribution: Record<string, number>;
+  };
+  approvals: {
+    total: number;
+    byType: Record<string, number>;
+    items: HeadteacherApprovalItem[];
+  };
+  activities: AuditLogEntry[];
+  notifications: NotificationMessage[];
+  events: SchoolEvent[];
+  health: { urgent: number; total: number } | null;
+  finance: { billed: number; collected: number; outstanding: number } | null;
+  discipline: { openRecords: number } | null;
+}
 

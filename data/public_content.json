@@ -37,6 +37,16 @@
   ],
   "gallery": [
     {
+      "id": "public-gallery-smart-class",
+      "src": "/public-assets/smart-class.webp",
+      "alt": "Smart students learning in a smart classroom at ES Rubengera RTB",
+      "caption": "Smart students in a smart classroom, using modern learning tools in a clean, focused environment at ES Rubengera RTB.",
+      "category": "Smart Learning",
+      "approved": true,
+      "createdAt": "2026-11-22T14:37:00.000Z",
+      "createdBy": "admin"
+    },
+    {
       "id": "public-gallery-es0",
       "src": "/public-assets/es0.webp",
       "alt": "Students at ES Rubengera RTB",
@@ -177,5 +187,5 @@
       "createdBy": "system-public-site"
     }
   ],
-  "updatedAt": "2026-11-21T14:14:00.000Z"
+  "updatedAt": "2026-11-22T14:37:00.000Z"
 }

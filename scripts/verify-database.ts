@@ -1,5 +1,8 @@
 import mysql, { type RowDataPacket } from 'mysql2/promise';
 import dotenv from 'dotenv';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 dotenv.config();
 
@@ -69,7 +72,9 @@ async function main(): Promise<void> {
            'academic_years','terms','class_subject_assignments',
            'class_teacher_assignments','assessment_categories','grading_scales',
            'academic_settings','student_marks','mark_submissions',
-           'report_cards','report_card_subjects','report_distributions'
+           'report_cards','report_card_subjects','report_distributions',
+           'combinations','combination_subjects','combination_classes',
+           'combination_teachers','schema_migrations'
          )`
     );
     const tableNames = new Set(tableRows.map(row => String(row.tableName)));
@@ -103,19 +108,23 @@ async function main(): Promise<void> {
     check('Stored credentials use scrypt hashes', Number(invalidHashes[0].count) === 0);
 
     const [migrationRows] = await connection.query<RowDataPacket[]>(
-      "SELECT version FROM schema_migrations WHERE version = '003_staff_governance'"
+      'SELECT version FROM schema_migrations'
     );
-    check('Staff governance migration is recorded', migrationRows.length === 1);
-
-    const [signupMigrationRows] = await connection.query<RowDataPacket[]>(
-      "SELECT version FROM schema_migrations WHERE version = '004_parent_student_signup'"
-    );
-    check('Parent/student sign-up migration is recorded', signupMigrationRows.length === 1);
-
-    const [academicMigrationRows] = await connection.query<RowDataPacket[]>(
-      "SELECT version FROM schema_migrations WHERE version = '005_academic_marks_report_cards'"
-    );
-    check('Academic marks/report card migration is recorded', academicMigrationRows.length === 1);
+    const appliedMigrations = new Set(migrationRows.map(row => String(row.version)));
+    const requiredMigrations = [
+      '001_public_admissions',
+      '002_senior3_results',
+      '003_staff_governance',
+      '004_parent_student_signup',
+      '005_academic_marks_report_cards',
+      '005_record_lifecycle',
+      '006_combination_management',
+      '007_complete_active_classes',
+      '008_student_combination_context'
+    ];
+    for (const version of requiredMigrations) {
+      check(`Migration ${version} is recorded`, appliedMigrations.has(version));
+    }
 
     const [signupColumns] = await connection.query<RowDataPacket[]>(
       `SELECT COLUMN_NAME AS columnName FROM information_schema.COLUMNS

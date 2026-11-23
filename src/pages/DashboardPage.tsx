@@ -13,7 +13,8 @@ import {
   StaffMember,
   AcademicClass,
   AuditLogEntry,
-  UserRole
+  UserRole,
+  HeadteacherDashboardView
 } from '../types';
 import type { TranslationKey } from '../i18n';
 import {
@@ -40,6 +41,7 @@ import {
   UserPlus,
   UserSquare2,
   KeyRound,
+  Layers,
   Settings,
   ClipboardCheck
 } from 'lucide-react';
@@ -50,6 +52,7 @@ const CONTROL_CENTER_ACTIONS: WorkspaceAction[] = [
   { tab: 'guardians', labelKey: 'quickAddParent', icon: UserSquare2, tone: 'emerald' },
   { tab: 'permissions', labelKey: 'quickManagePermissions', icon: KeyRound, tone: 'blue' },
   { tab: 'academic-admin', labelKey: 'quickManageClasses', icon: ClipboardCheck, tone: 'indigo' },
+  { tab: 'combination-management', labelKey: 'quickManageCombinations', icon: Layers, tone: 'blue' },
   { tab: 'reports', labelKey: 'quickViewReports', icon: BarChart3, tone: 'amber' },
   { tab: 'settings', labelKey: 'quickSchoolSettings', icon: Settings, tone: 'emerald' }
 ];
@@ -81,16 +84,19 @@ interface WorkspaceAction {
 
 const ROLE_ACTIONS: Partial<Record<UserRole, WorkspaceAction[]>> = {
   SUPER_ADMIN: [
+    { tab: 'combination-management', labelKey: 'quickManageCombinations', icon: Layers, tone: 'blue' },
     { tab: 'staff-management', labelKey: 'staffManagementAction', icon: UserCog, tone: 'indigo' },
     { tab: 'permissions', labelKey: 'permissionsAction', icon: ShieldCheck, tone: 'blue' },
     { tab: 'audit', labelKey: 'auditReviewAction', icon: ClipboardList, tone: 'emerald' }
   ],
   SCHOOL_ADMIN: [
+    { tab: 'combination-management', labelKey: 'quickManageCombinations', icon: Layers, tone: 'blue' },
     { tab: 'staff-management', labelKey: 'staffManagementAction', icon: UserCog, tone: 'indigo' },
     { tab: 'permissions', labelKey: 'permissionsAction', icon: ShieldCheck, tone: 'blue' },
     { tab: 'audit', labelKey: 'auditReviewAction', icon: ClipboardList, tone: 'emerald' }
   ],
   HEAD_TEACHER: [
+    { tab: 'combination-management', labelKey: 'quickManageCombinations', icon: Layers, tone: 'blue' },
     { tab: 'staff-management', labelKey: 'staffManagementAction', icon: UserCog, tone: 'indigo' },
     { tab: 'permissions', labelKey: 'permissionsAction', icon: ShieldCheck, tone: 'blue' },
     { tab: 'audit', labelKey: 'auditReviewAction', icon: ClipboardList, tone: 'emerald' }
@@ -132,6 +138,177 @@ const TONE_CLASSES: Record<WorkspaceAction['tone'], string> = {
   amber: 'bg-amber-50 text-amber-800 border-amber-100'
 };
 
+interface HeadteacherOverviewProps {
+  summary: HeadteacherDashboardView;
+  onNavigate: (tab: string) => void;
+}
+
+const HeadteacherOverview: React.FC<HeadteacherOverviewProps> = ({ summary, onNavigate }) => {
+  const { totals, attendance, academics, approvals, events, notifications, activities } = summary;
+  const peopleCards = [
+    { label: 'Students', value: totals.students, tab: 'students', icon: Users, tone: 'bg-blue-50 text-blue-700' },
+    { label: 'Staff', value: totals.staff, tab: 'staff', icon: UserCog, tone: 'bg-indigo-50 text-indigo-700' },
+    { label: 'Parents', value: totals.parents, tab: 'guardians', icon: UserSquare2, tone: 'bg-emerald-50 text-emerald-700' },
+    { label: 'Active Classes', value: totals.activeClasses, tab: 'academic-admin', icon: GraduationCap, tone: 'bg-amber-50 text-amber-700' }
+  ];
+
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-bold text-slate-900">Headteacher Overview</h2>
+          <p className="text-[11px] text-slate-500">
+            Live school-wide snapshot · {summary.schoolName}
+            {summary.currentTerm ? ` · ${summary.currentTerm}` : ''}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onNavigate('approval-center')}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+        >
+          <ClipboardList className="h-3.5 w-3.5" />
+          Approval Center
+          <span className="rounded-full bg-blue-600 px-1.5 text-[10px] text-white">{approvals.total}</span>
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {peopleCards.map(card => {
+          const Icon = card.icon;
+          return (
+            <button
+              key={card.label}
+              type="button"
+              onClick={() => onNavigate(card.tab)}
+              className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-xs transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+            >
+              <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${card.tone}`}>
+                <Icon className="h-4 w-4" />
+              </div>
+              <p className="mt-2 text-2xl font-black text-slate-900">{card.value}</p>
+              <p className="text-[11px] font-semibold text-slate-500">{card.label}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-slate-900">Academic Performance</h3>
+            <BarChart3 className="h-4 w-4 text-blue-600" />
+          </div>
+          <p className="mt-3 text-3xl font-black text-slate-900">
+            {academics.average === null ? '—' : `${academics.average}%`}
+          </p>
+          <p className="text-[11px] text-slate-500">
+            Average across {academics.evaluated} evaluated report cards
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold">
+            <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">
+              Pass {academics.passRate === null ? '—' : `${academics.passRate}%`}
+            </span>
+            {Object.entries(academics.gradeDistribution)
+              .filter(([, count]) => count > 0)
+              .map(([grade, count]) => (
+                <span key={grade} className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
+                  {grade}: {count}
+                </span>
+              ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-slate-900">Today's Attendance</h3>
+            <UserCheck className="h-4 w-4 text-emerald-600" />
+          </div>
+          <p className="mt-3 text-3xl font-black text-slate-900">
+            {attendance.rate === null ? '—' : `${attendance.rate}%`}
+          </p>
+          <p className="text-[11px] text-slate-500">
+            {attendance.present} present · {attendance.absent} absent · {attendance.late} late
+          </p>
+          <button
+            type="button"
+            onClick={() => onNavigate('attendance')}
+            className="mt-3 text-[11px] font-semibold text-blue-600 hover:text-blue-800"
+          >
+            Open attendance →
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-slate-900">Pending Approvals</h3>
+            <ClipboardList className="h-4 w-4 text-amber-600" />
+          </div>
+          <p className="mt-3 text-3xl font-black text-slate-900">{approvals.total}</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {Object.entries(approvals.byType).map(([type, count]) => (
+              <span key={type} className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">
+                {type.replaceAll('_', ' ')}: {count}
+              </span>
+            ))}
+            {approvals.total === 0 && (
+              <span className="text-[11px] text-slate-500">No approvals waiting.</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-slate-900">Upcoming Events</h3>
+            <CalendarCheck className="h-4 w-4 text-blue-600" />
+          </div>
+          <div className="mt-3 space-y-2">
+            {events.map(event => (
+              <div key={event.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                <span className="text-[11px] font-semibold text-slate-800">{event.titleEn}</span>
+                <span className="text-[10px] text-slate-500">
+                  {new Date(event.date).toLocaleDateString()}
+                </span>
+              </div>
+            ))}
+            {events.length === 0 && <p className="text-[11px] text-slate-500">No upcoming events.</p>}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-slate-900">Recent Activity & Notifications</h3>
+            <MessageSquare className="h-4 w-4 text-indigo-600" />
+          </div>
+          <div className="mt-3 space-y-2">
+            {activities.slice(0, 3).map(activity => (
+              <div key={activity.id} className="rounded-lg bg-slate-50 px-3 py-2">
+                <p className="text-[11px] font-semibold text-slate-800">
+                  {activity.action.replaceAll('_', ' ')}
+                </p>
+                <p className="text-[10px] text-slate-500">
+                  {activity.userName} · {new Date(activity.timestamp).toLocaleString()}
+                </p>
+              </div>
+            ))}
+            {notifications.slice(0, 2).map(message => (
+              <div key={message.id} className="rounded-lg bg-blue-50 px-3 py-2">
+                <p className="text-[11px] font-semibold text-slate-800">{message.titleEn}</p>
+                <p className="text-[10px] text-slate-500">{message.channel} · {message.status}</p>
+              </div>
+            ))}
+            {activities.length === 0 && notifications.length === 0 && (
+              <p className="text-[11px] text-slate-500">No recent activity.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
 export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpenIncidentModal }) => {
   const { role, currentUser, school } = useAuth();
   const { t } = useLanguage();
@@ -145,7 +322,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
   const [payments, setPayments] = useState<Payment[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [headteacherSummary, setHeadteacherSummary] = useState<HeadteacherDashboardView | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Archived classes remain in records but are not offered as active options.
+  const activeClasses = classes.filter(classItem => (classItem.status ?? 'ACTIVE') === 'ACTIVE');
 
   const now = new Date();
   const todayStr = [
@@ -171,7 +352,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
       api.getInvoices(),
       api.getPayments(),
       api.getStaff(),
-      api.getAuditLogs()
+      api.getAuditLogs(),
+      api.getHeadteacherDashboard()
     ]);
 
     const value = <T,>(index: number): T | null =>
@@ -188,6 +370,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
     setPayments(value<Payment[]>(6) ?? []);
     setStaff(value<StaffMember[]>(7) ?? []);
     setAuditLogs(value<AuditLogEntry[]>(8) ?? []);
+    setHeadteacherSummary(value<HeadteacherDashboardView>(9));
 
     for (const result of results) {
       if (result.status === 'rejected') {
@@ -259,6 +442,21 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {isSchoolAdministrator && (
+            <button
+              onClick={() => onNavigate('approval-center')}
+              className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs border border-slate-200 shadow-sm transition-colors flex items-center gap-2"
+            >
+              <ClipboardList className="w-4 h-4 text-blue-600" />
+              <span>Approval Center</span>
+              {headteacherSummary && headteacherSummary.approvals.total > 0 && (
+                <span className="ml-1 rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                  {headteacherSummary.approvals.total}
+                </span>
+              )}
+            </button>
+          )}
+
           {role === 'NURSE' && (
             <button
               onClick={() => onOpenIncidentModal()}
@@ -361,6 +559,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
         </section>
       )}
 
+      {/* Server-authoritative Headteacher overview */}
+      {isSchoolAdministrator && headteacherSummary && (
+        <HeadteacherOverview summary={headteacherSummary} onNavigate={onNavigate} />
+      )}
+
       {/* KPI Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Students */}
@@ -379,8 +582,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
             </div>
             <p className="text-3xl font-bold tracking-tight text-slate-900 mt-3">{students.length}</p>
             <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-500">
-              <span className="text-emerald-600 font-semibold">{classes.length} Classes</span>
-              <span>• TVET SOD, CST & O-Level</span>
+              <span className="text-emerald-600 font-semibold">{activeClasses.length} Active classes</span>
+              <span>• Current TVET programmes</span>
             </div>
           </button>
         )}
@@ -661,7 +864,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
             </div>
 
             <div className="space-y-2.5">
-              {classes.map(c => (
+              {activeClasses.map(c => (
                 <div
                   key={c.id}
                   className="p-3 rounded-xl border border-slate-200 hover:bg-slate-50 transition flex items-center justify-between"

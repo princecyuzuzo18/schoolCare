@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { getVisibleNavSections, type NavItem } from '../navigation';
-import { Search, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Search, X } from 'lucide-react';
 
 interface SidebarProps {
   currentTab: string;
@@ -11,9 +11,10 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate, urgentIncidentCount }) => {
-  const { role, effectivePermissions } = useAuth();
+  const { role, effectivePermissions, school } = useAuth();
   const { t } = useLanguage();
   const [query, setQuery] = useState('');
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
 
   const sections = useMemo(
     () => getVisibleNavSections(role, effectivePermissions),
@@ -86,47 +87,68 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate, urgent
       </div>
 
       <nav aria-label="Primary navigation" className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
-        {filteredSections.map(section => (
-          <div key={section.id}>
-            <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">
-              {section.label}
-            </p>
-            <div className="space-y-1">
-              {section.items.map(item => {
-                const Icon = item.icon;
-                const isActive = currentTab === item.id;
-                const showUrgentBadge = item.id === 'health' && urgentIncidentCount > 0;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onNavigate(item.id)}
-                    aria-current={isActive ? 'page' : undefined}
-                    title={item.description}
-                    className={`group relative flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1 ${
-                      isActive
-                        ? 'bg-blue-50 font-semibold text-blue-800 shadow-xs ring-1 ring-inset ring-blue-100'
-                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                    }`}
-                  >
-                    {isActive && (
-                      <span className="absolute inset-y-2 left-0 w-1 rounded-full bg-blue-600" aria-hidden="true" />
-                    )}
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <Icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-blue-600' : 'text-slate-500 group-hover:text-slate-700'}`} />
-                      <span className="truncate">{getLabel(item)}</span>
-                    </span>
-                    {showUrgentBadge && (
-                      <span className="ml-2 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white ring-2 ring-white">
-                        {urgentIncidentCount}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+        {filteredSections.map(section => {
+          const hasActiveItem = section.items.some(item => item.id === currentTab);
+          const isCollapsed = !query && !hasActiveItem && Boolean(collapsedSections[section.id]);
+          return (
+            <div key={section.id}>
+              <button
+                type="button"
+                onClick={() =>
+                  setCollapsedSections(previous => ({
+                    ...previous,
+                    [section.id]: !previous[section.id]
+                  }))
+                }
+                aria-expanded={!isCollapsed}
+                className="flex w-full items-center justify-between px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400 transition-colors hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              >
+                <span>{section.label}</span>
+                {isCollapsed ? (
+                  <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                )}
+              </button>
+              {!isCollapsed && (
+                <div className="space-y-1">
+                  {section.items.map(item => {
+                    const Icon = item.icon;
+                    const isActive = currentTab === item.id;
+                    const showUrgentBadge = item.id === 'health' && urgentIncidentCount > 0;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => onNavigate(item.id)}
+                        aria-current={isActive ? 'page' : undefined}
+                        title={item.description}
+                        className={`group relative flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1 ${
+                          isActive
+                            ? 'bg-blue-50 font-semibold text-blue-800 shadow-xs ring-1 ring-inset ring-blue-100'
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                        }`}
+                      >
+                        {isActive && (
+                          <span className="absolute inset-y-2 left-0 w-1 rounded-full bg-blue-600" aria-hidden="true" />
+                        )}
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          <Icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-blue-600' : 'text-slate-500 group-hover:text-slate-700'}`} />
+                          <span className="truncate">{getLabel(item)}</span>
+                        </span>
+                        {showUrgentBadge && (
+                          <span className="ml-2 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white ring-2 ring-white">
+                            {urgentIncidentCount}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {filteredSections.length === 0 && (
           <div className="rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center">
@@ -144,7 +166,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate, urgent
           </span>
         </div>
         <p className="mt-0.5 text-[10px] text-slate-600">
-          Term 2 Academic Session Active
+          {school?.currentTerm ? `${school.currentTerm} Academic Session Active` : 'Academic session active'}
         </p>
       </div>
     </aside>
