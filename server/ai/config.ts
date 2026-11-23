@@ -21,16 +21,43 @@ function positiveInt(value: string | undefined, fallback: number, min: number, m
   return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 }
 
-export const AI_DEFAULT_MODEL = 'gemini-flash-latest';
+/** Stable, current model recommended by Google for new low-cost projects. */
+export const AI_DEFAULT_MODEL = 'gemini-3.5-flash-lite';
+const SUPPORTED_PROVIDER_ALIASES = new Set(['gemini', 'google-gemini', 'google_genai']);
+
+export function normalizeAiProvider(value: string | undefined): string {
+  const provider = (value || 'gemini').trim().toLowerCase().slice(0, 40);
+  if (SUPPORTED_PROVIDER_ALIASES.has(provider)) return 'gemini';
+  return provider || 'gemini';
+}
+
+export function configuredModel(): string {
+  const model = process.env.GEMINI_MODEL || process.env.AI_MODEL || AI_DEFAULT_MODEL;
+  return model.trim().slice(0, 100) || AI_DEFAULT_MODEL;
+}
+
+export function modelSource(): 'GEMINI_MODEL' | 'AI_MODEL' | 'default' {
+  if ((process.env.GEMINI_MODEL || '').trim()) return 'GEMINI_MODEL';
+  if ((process.env.AI_MODEL || '').trim()) return 'AI_MODEL';
+  return 'default';
+}
 
 /**
  * Getters are deliberate: server.ts calls dotenv.config() after static imports
  * are evaluated, so environment-derived values must be read at request time.
  */
 export const aiConfig = {
-  provider: 'google-gemini' as const,
+  get provider(): string {
+    return normalizeAiProvider(process.env.AI_PROVIDER);
+  },
+  get providerSupported(): boolean {
+    return aiConfig.provider === 'gemini';
+  },
   get model(): string {
-    return (process.env.AI_MODEL || AI_DEFAULT_MODEL).trim().slice(0, 100);
+    return configuredModel();
+  },
+  get modelSource(): ReturnType<typeof modelSource> {
+    return modelSource();
   },
   get enabledFlag(): boolean {
     return (process.env.AI_ENABLED ?? 'true').trim().toLowerCase() !== 'false';
@@ -57,6 +84,9 @@ export const aiConfig = {
 
 export function aiAvailability(): { available: boolean; reason?: string } {
   if (!aiConfig.enabledFlag) return { available: false, reason: 'AI is disabled by configuration.' };
+  if (!aiConfig.providerSupported) {
+    return { available: false, reason: `Unsupported AI provider "${aiConfig.provider}". Only Gemini is configured.` };
+  }
   if (!aiConfig.hasKey) {
     return { available: false, reason: 'GEMINI_API_KEY is not configured on the server.' };
   }

@@ -192,7 +192,7 @@ export async function listMessages(schoolId: string, userId: string, conversatio
   const rows = await query<DbRow>(
     'SELECT id, conversation_id, school_id, user_id, role, content, sources, language, created_at ' +
       'FROM ai_messages WHERE conversation_id = ? AND school_id = ? AND user_id = ? ' +
-      'ORDER BY created_at DESC, id DESC LIMIT ?',
+      'ORDER BY seq DESC LIMIT ?',
     [conversationId, schoolId, userId, Math.max(1, Math.min(100, limit))]
   );
   return rows.map(message).reverse();

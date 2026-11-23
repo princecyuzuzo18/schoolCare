@@ -51,9 +51,37 @@ try {
   delete process.env.GEMINI_API_KEY;
   const { db } = await import('../server/database');
   const { createSession } = await import('../server/sessions');
-  const { __setAiGeneratorForTests, AiProviderError } = await import('../server/ai/provider');
-  const { isRealGeminiKey } = await import('../server/ai/config');
+  const { __setAiGeneratorForTests, AiProviderError, classifyProviderError } = await import('../server/ai/provider');
+  const { isRealGeminiKey, aiConfig, aiAvailability } = await import('../server/ai/config');
   clearTestGenerator = () => __setAiGeneratorForTests(null);
+
+  process.env.AI_PROVIDER = 'google-gemini';
+  process.env.GEMINI_MODEL = 'gemini-3.5-flash-lite';
+  process.env.AI_MODEL = 'gemini-flash-latest';
+  check(
+    'GEMINI_MODEL and AI_PROVIDER are supported configuration names',
+    aiConfig.provider === 'gemini' &&
+      aiConfig.model === 'gemini-3.5-flash-lite' &&
+      aiConfig.modelSource === 'GEMINI_MODEL',
+    `provider=${aiConfig.provider}, model=${aiConfig.model}, source=${aiConfig.modelSource}`
+  );
+  process.env.AI_PROVIDER = 'unsupported-provider';
+  check(
+    'Unsupported AI provider is rejected instead of silently switching providers',
+    !aiAvailability().available && aiConfig.provider === 'unsupported-provider',
+    aiAvailability().reason
+  );
+  process.env.AI_PROVIDER = 'gemini';
+
+  check(
+    'Upstream errors are classified without exposing raw provider messages',
+    classifyProviderError(new Error('{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"quota exceeded"}}')).code === 'QUOTA_EXCEEDED' &&
+      classifyProviderError(new Error('{"error":{"code":401,"status":"UNAUTHENTICATED","message":"API key not valid"}}')).code === 'INVALID_KEY' &&
+      classifyProviderError(new Error('fetch failed')).code === 'NETWORK_ERROR' &&
+      classifyProviderError(new Error('models/gemini-old is not found')).code === 'MODEL_UNAVAILABLE' &&
+      classifyProviderError(new Error('{"error":{"code":503,"status":"UNAVAILABLE","message":"high demand"}}')).code === 'UNAVAILABLE',
+    '429/401/network/404/503 mapped to safe codes'
+  );
 
   check(
     'Gemini key validation accepts real prefixes and rejects placeholders',
@@ -103,6 +131,9 @@ try {
     const last = request.messages[request.messages.length - 1]?.content || '';
     if (last.includes('TRIGGER_PROVIDER_ERROR')) {
       throw new AiProviderError('UNAVAILABLE', 'Simulated upstream failure.');
+    }
+    if (last.includes('TRIGGER_QUOTA_ERROR')) {
+      throw new AiProviderError('QUOTA_EXCEEDED', 'Simulated free-tier quota exhaustion.');
     }
     return `TEST_REPLY (${request.language}): ${last.replace(/<[^>]*>/g, '').slice(0, 60)}`;
   };
@@ -196,6 +227,13 @@ try {
     statusResults[8]?.body?.suggestions?.length > 0 && statusResults[10]?.body?.suggestions?.length > 0,
     brief(statusResults[10]?.body?.suggestions)
   );
+  check(
+    'Status reports the configured Gemini provider and model',
+    statusResults[0]?.body?.provider === 'gemini' &&
+      statusResults[0]?.body?.model === 'gemini-3.5-flash-lite' &&
+      statusResults[0]?.body?.modelSource === 'GEMINI_MODEL',
+    brief({ provider: statusResults[0]?.body?.provider, model: statusResults[0]?.body?.model })
+  );
 
   // --- Core chat + language + authorized facts ---
   const headCookie = cookies.HEAD_TEACHER;
@@ -241,6 +279,34 @@ try {
       followUpPrompt.messages.some(message => message.content.includes('How many students are registered?')) &&
       followUpPrompt.messages.some(message => message.content.startsWith('TEST_REPLY')),
     brief(followUpPrompt?.messages.map(message => message.role))
+  );
+
+  // --- Optional Smart Insights (verified aggregates, no decisions) ---
+  const insights = await request('/api/ai/chat', jsonPost({
+    message: 'Give me smart school insights', language: 'en'
+  }, headCookie));
+  const insightsPrompt = generationRequests[generationRequests.length - 1];
+  check(
+    'Leadership smart insights use verified aggregates and forbid automatic decisions',
+    insights.status === 200 &&
+      insights.body.intent === 'insights' &&
+      insightsPrompt.systemInstruction.includes('generatedFrom') &&
+      insightsPrompt.systemInstruction.includes('pendingAdministrativeTasks') &&
+      insightsPrompt.systemInstruction.includes('No admission, grade, discipline or publication decision has been made'),
+    brief(insightsPrompt?.systemInstruction.slice(0, 260))
+  );
+
+  const parentInsights = await request('/api/ai/chat', jsonPost({
+    message: 'Give me smart school insights', language: 'en'
+  }, cookies.PARENT));
+  const parentInsightsPrompt = generationRequests[generationRequests.length - 1];
+  check(
+    'Parents cannot access school-wide smart insights',
+    parentInsights.status === 200 &&
+      parentInsights.body.intent === 'general' &&
+      !parentInsightsPrompt.systemInstruction.includes('generatedFrom') &&
+      !parentInsightsPrompt.systemInstruction.includes('attendanceLast30Days'),
+    brief(parentInsights.body.intent)
   );
 
   // --- Parent / student record scope ---
@@ -326,6 +392,18 @@ try {
     'Failed turn is not persisted as messages',
     beforeFailure.body.messages?.length === afterFailure.body.messages?.length,
     `${beforeFailure.body.messages?.length} -> ${afterFailure.body.messages?.length}`
+  );
+
+  const quota = await request('/api/ai/chat', jsonPost({
+    message: 'TRIGGER_QUOTA_ERROR', conversationId, language: 'en'
+  }, headCookie));
+  check(
+    'Free-tier quota exhaustion returns a 429 with renewal guidance',
+    quota.status === 429 &&
+      quota.body.code === 'QUOTA_EXCEEDED' &&
+      /quota|limits/i.test(quota.body.error || '') &&
+      !/AIza|MY_GEMINI_API_KEY/.test(JSON.stringify(quota.body)),
+    brief(quota.body)
   );
 
   __setAiGeneratorForTests(null);

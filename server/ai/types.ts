@@ -8,6 +8,7 @@ export type AiIntent =
   | 'my_results'
   | 'announcements'
   | 'finance_summary'
+  | 'insights'
   | 'knowledge';
 
 export interface AiActorContext {

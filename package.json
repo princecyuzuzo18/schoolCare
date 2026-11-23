@@ -27,6 +27,7 @@
     "test:combinations": "tsx scripts/verify-combinations.ts",
     "test:hardening": "tsx scripts/verify-hardening.ts",
     "test:ai": "tsx scripts/verify-ai-assistant.ts",
+    "test:gemini": "tsx scripts/verify-gemini-connection.ts",
     "test:headteacher": "tsx scripts/verify-headteacher-dashboard.ts",
     "test:signup": "tsx scripts/verify-signup.ts",
     "test:signup:init": "tsx scripts/init-signup-test-db.ts",

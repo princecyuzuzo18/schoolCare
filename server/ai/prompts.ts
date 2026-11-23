@@ -34,7 +34,10 @@ export function detectLanguage(text: string, fallback: LanguageCode = 'en'): Lan
   return fallback === 'rw' && rwScore === 0 && enScore === 0 ? 'rw' : 'en';
 }
 
+const INSIGHT_ROLES: UserRole[] = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD'];
+
 const INTENT_PATTERNS: Array<{ intent: AiIntent; pattern: RegExp }> = [
+  { intent: 'insights', pattern: /\b(smart insights|school insights|school overview|performance overview|pending approvals|outstanding tasks|missing marks|ubwenge bw'ishuri|ibitekerezo by'ishuri|ibyemezo bitegereje|imirimo itarangiye|amanota yabuze)\b/i },
   { intent: 'student_count', pattern: /\b(how many students|number of students|student count|total students|registered learners|abanyeshuri banga|abanyeshuri bose|abanyeshuri bari|umubare w'abanyeshuri)\b/i },
   { intent: 'attendance_summary', pattern: /\b(attendance|absent|present|late|roll call|kwitabira|kubura|kwiga|kutaza|ababuze|abitabiriye)\b/i },
   { intent: 'my_results', pattern: /\b(my (latest )?(result|results|report card|marks|average)|my child('s)? (result|results|report|marks|performance)|amanota yanjye|ibizamini byanjye|raporo y'umwana|umwana wanjye)\b/i },
@@ -47,6 +50,7 @@ const INTENT_PATTERNS: Array<{ intent: AiIntent; pattern: RegExp }> = [
 export function detectIntent(text: string, role: UserRole): AiIntent {
   const raw = (text || '').trim();
   for (const { intent, pattern } of INTENT_PATTERNS) {
+    if (intent === 'insights' && !INSIGHT_ROLES.includes(role)) continue;
     if (pattern.test(raw)) {
       if (intent === 'academic_summary' && (role === 'PARENT' || role === 'STUDENT')) return 'my_results';
       return intent;
@@ -60,20 +64,20 @@ const ROLE_CAPABILITIES: Record<UserRole, { label: string; capabilities: string[
     label: 'Platform Super Admin',
     capabilities: [
       'platform-wide configuration guidance', 'role and permission guidance', 'security and multi-school isolation guidance',
-      'general educational content'
+      'verified smart-school insights', 'general educational content'
     ]
   },
   SCHOOL_ADMIN: {
     label: 'School Administrator',
-    capabilities: ['school statistics', 'administrative reports', 'announcement drafts', 'staff process guidance', 'school policies']
+    capabilities: ['school statistics', 'verified smart-school insights', 'administrative reports', 'announcement drafts', 'staff process guidance', 'school policies']
   },
   HEAD_TEACHER: {
     label: 'Headteacher',
-    capabilities: ['school statistics', 'attendance summaries', 'academic summaries', 'staff meeting agendas', 'announcement and management report drafts']
+    capabilities: ['school statistics', 'verified smart-school insights', 'attendance summaries', 'academic summaries', 'staff meeting agendas', 'announcement and management report drafts']
   },
   DEPUTY_HEAD: {
     label: 'Deputy Headteacher',
-    capabilities: ['academic summaries', 'class comparisons', 'missing marks identification', 'assessment planning', 'academic improvement advice']
+    capabilities: ['academic summaries', 'verified smart-school insights', 'class comparisons', 'missing marks identification', 'assessment planning', 'academic improvement advice']
   },
   TEACHER: {
     label: 'Teacher',
@@ -111,20 +115,20 @@ const ROLE_CAPABILITIES: Record<UserRole, { label: string; capabilities: string[
 
 const SUGGESTIONS: Record<UserRole, { en: string[]; rw: string[] }> = {
   SUPER_ADMIN: {
-    en: ['Explain how SchoolCare multi-school isolation works.', 'How should I configure AI access for a school?', 'Give me cybersecurity guidance for school accounts.', 'Explain the platform role model.'],
-    rw: ['Sobanura uburyo SchoolCare itandukanya amashuri.', 'Nigute nagena uburenganzira bwa AI ku ishuri?', 'Mpa inama z’umutekano wa mudasobwa.', 'Sobanura uburyo bwa platform.']
+    en: ['Give me smart school insights.', 'Explain how SchoolCare multi-school isolation works.', 'How should I configure AI access for a school?', 'Give me cybersecurity guidance for school accounts.'],
+    rw: ['Mpa ubwenge bw’ishuri bushingiye ku makuru yemewe.', 'Sobanura uburyo SchoolCare itandukanya amashuri.', 'Nigute nagena uburenganzira bwa AI ku ishuri?', 'Mpa inama z’umutekano wa mudasobwa.']
   },
   SCHOOL_ADMIN: {
-    en: ['How many students are currently registered?', 'Summarize school attendance.', 'Help me draft a school announcement.', 'Summarize academic performance by class.'],
-    rw: ['Abanyeshuri banga bariyanditse muri iki gihe?', 'Sobanura imyitabiriye y’ishuri.', 'Mfasha kwandika itangazo ry’ishuri.', 'Sobanura imitsindire mu masomo kuri buri cyiciro.']
+    en: ['Give me smart school insights.', 'How many students are currently registered?', 'Summarize school attendance.', 'Help me draft a school announcement.'],
+    rw: ['Mpa ubwenge bw’ishuri bushingiye ku makuru yemewe.', 'Abanyeshuri banga bariyanditse muri iki gihe?', 'Sobanura imyitabiriye y’ishuri.', 'Mfasha kwandika itangazo ry’ishuri.']
   },
   HEAD_TEACHER: {
-    en: ['How many students are currently registered?', 'Summarize school attendance.', 'Prepare a school management report.', 'Help me prepare a staff meeting agenda.', 'Summarize academic performance by class.'],
-    rw: ['Abanyeshuri banga bariyanditse muri iki gihe?', 'Sobanura imyitabiriye y’ishuri.', 'Tegura raporo y’imicungire y’ishuri.', 'Mfasha kwitegura inama y’abakozi.', 'Sobanura imitsindire mu masomo kuri buri cyiciro.']
+    en: ['Give me smart school insights.', 'How many students are currently registered?', 'Summarize school attendance.', 'Prepare a school management report.', 'Help me prepare a staff meeting agenda.'],
+    rw: ['Mpa ubwenge bw’ishuri bushingiye ku makuru yemewe.', 'Abanyeshuri banga bariyanditse muri iki gihe?', 'Sobanura imyitabiriye y’ishuri.', 'Tegura raporo y’imicungire y’ishuri.', 'Mfasha kwitegura inama y’abakozi.']
   },
   DEPUTY_HEAD: {
-    en: ['Summarize academic performance by class.', 'Which subjects may need additional support?', 'Help me identify missing marks.', 'Prepare an examination plan.'],
-    rw: ['Sobanura imitsindire mu masomo kuri buri cyiciro.', 'Ni izihe masomo zikeneye ubufasha?', 'Mfasha kumenya amanota yabuze.', 'Tegura gahunda y’ibizamini.']
+    en: ['Give me smart school insights.', 'Summarize academic performance by class.', 'Which subjects may need additional support?', 'Help me identify missing marks.'],
+    rw: ['Mpa ubwenge bw’ishuri bushingiye ku makuru yemewe.', 'Sobanura imitsindire mu masomo kuri buri cyiciro.', 'Ni izihe masomo zikeneye ubufasha?', 'Mfasha kumenya amanota yabuze.']
   },
   TEACHER: {
     en: ['Prepare a Mathematics lesson about fractions.', 'Create five questions about photosynthesis.', 'Create a marking guide for an examination.', 'Summarize attendance for my class.', 'Help me prepare revision exercises.'],
@@ -201,7 +205,8 @@ export function buildSystemInstruction(options: {
     '9. If a student raises a serious safety concern, respond supportively and direct them to a trusted adult or the appropriate school support person.',
     '10. Clearly distinguish verified information from general educational guidance. Cite official document titles when you use them.',
     '11. Ask one short clarification question when essential information is missing. Use headings, lists and short paragraphs for long answers.',
-    '12. If a request is outside your role, say that you cannot access or perform it and point to the appropriate school department or page.'
+    '12. If a request is outside your role, say that you cannot access or perform it and point to the appropriate school department or page.',
+    '13. Smart insights are observations for human review only. Never make automatic admission, grade, discipline or publication decisions, and never imply that a decision has been executed.'
   ];
 
   if (dataContext) {

@@ -1315,6 +1315,7 @@ export type AiIntent =
   | 'my_results'
   | 'announcements'
   | 'finance_summary'
+  | 'insights'
   | 'knowledge';
 
 export interface AiSource {
@@ -1346,7 +1347,9 @@ export interface AiConversation {
 
 export interface AiStatus {
   provider: string;
+  providerSupported?: boolean;
   model: string;
+  modelSource?: 'GEMINI_MODEL' | 'AI_MODEL' | 'default';
   enabled: boolean;
   available: boolean;
   reason?: string;

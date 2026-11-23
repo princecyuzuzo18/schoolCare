@@ -1,6 +1,7 @@
 import { db } from '../database';
+import { listSignupRequests } from '../accountSignup';
 import type { UserRole } from '../../src/types';
-import type { AiActorContext, AiDataContext, AiIntent } from './types';
+import type { AiActorContext, AiDataContext, AiIntent, AiSource } from './types';
 
 const LEADERSHIP: UserRole[] = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD'];
 
@@ -238,6 +239,105 @@ async function buildAnnouncements(schoolId: string): Promise<AiDataContext> {
 }
 
 /**
+ * Optional Smart Insights: verified aggregates for authorized administrators.
+ * The model may explain these numbers but never makes decisions from them.
+ */
+async function buildInsights(actor: AiActorContext, schoolId: string): Promise<AiDataContext> {
+  if (!isLeadership(actor.role)) {
+    return {
+      intent: 'insights',
+      facts: {},
+      sources: [],
+      notice: 'School-wide smart insights are available only to authorized school administrators.'
+    };
+  }
+
+  const sources: AiSource[] = [{ title: 'SchoolCare verified dashboard aggregates', kind: 'DATABASE' }];
+  const facts: Record<string, unknown> = {};
+
+  if (can(actor, 'attendance.read')) {
+    const records = db.getAttendance(schoolId).filter(record => {
+      const date = String(record.date || '');
+      return date >= new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+    });
+    const byStatus = countBy(records, record => record.status);
+    facts.attendanceLast30Days = {
+      records: records.length,
+      present: byStatus.PRESENT ?? 0,
+      absent: byStatus.ABSENT ?? 0,
+      late: byStatus.LATE ?? 0
+    };
+    sources.push({ title: 'SchoolCare daily attendance register', kind: 'DATABASE' });
+  }
+
+  if (can(actor, 'academics.read')) {
+    const markSubmissions = db.getAcademicCollection<{ status?: string }>('markSubmissions', schoolId);
+    const cards = db.getReportCards(schoolId);
+    facts.academicPipeline = {
+      markSubmissionsAwaitingReview: markSubmissions.filter(item =>
+        item.status === 'SUBMITTED' || item.status === 'UNDER_REVIEW'
+      ).length,
+      approvedCardsNotPublished: cards.filter(card => card.isApproved && !card.publishedAt).length,
+      reportCardsWithoutAverage: cards.filter(card => !Number.isFinite(card.overallAverage)).length
+    };
+    sources.push({ title: 'SchoolCare academic mark submissions', kind: 'DATABASE' });
+    sources.push({ title: 'SchoolCare report cards', kind: 'DATABASE' });
+  }
+
+  const pending: Record<string, number> = {};
+  if (can(actor, 'students.write')) {
+    pending.admissions = db.getAdmissions(schoolId).filter(item =>
+      item.status === 'SUBMITTED' || item.status === 'UNDER_REVIEW'
+    ).length;
+  }
+  if (can(actor, 'invitations.manage')) {
+    try {
+      const requests = await listSignupRequests(schoolId);
+      pending.accountRequests = requests.filter(item =>
+        item.status === 'PENDING' || item.status === 'VERIFIED'
+      ).length;
+    } catch {
+      sources.push({ title: 'Account requests unavailable', kind: 'DATABASE', detail: 'excluded from totals' });
+    }
+  }
+  if (can(actor, 'staff.read')) {
+    pending.staffInvitations = db.getStaffInvitations(schoolId).filter(item =>
+      !item.consumedAt && !item.revokedAt
+    ).length;
+  }
+  if (can(actor, 'finance.write')) {
+    pending.overdueInvoices = db.getInvoices(schoolId).filter(item => item.status === 'OVERDUE').length;
+  }
+  if (Object.keys(pending).length) facts.pendingAdministrativeTasks = pending;
+
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const recent = db.getAuditLogs(schoolId).filter(entry => {
+    const stamp = String((entry as any).createdAt ?? (entry as any).timestamp ?? (entry as any).date ?? '');
+    return stamp >= since;
+  });
+  facts.activityLast7Days = {
+    events: recent.length,
+    byAction: Object.fromEntries(
+      Object.entries(countBy(recent, entry => String((entry as any).action || 'OTHER')))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+    )
+  };
+  sources.push({ title: 'SchoolCare audit log (aggregated only)', kind: 'DATABASE' });
+
+  return {
+    intent: 'insights',
+    facts: compactFacts({
+      scope: 'your school and your effective permissions only',
+      generatedFrom: 'verified backend aggregates',
+      ...facts
+    }),
+    sources,
+    notice: 'These are observations for human review. No admission, grade, discipline or publication decision has been made.'
+  };
+}
+
+/**
  * Build the only school data the model is allowed to see. Every branch uses
  * backend authorization and school-scoped, parameterized service functions.
  * The model never receives raw tables, credentials or unrestricted queries.
@@ -255,6 +355,7 @@ export async function buildAuthorizedDataContext(options: {
     case 'my_results': return buildMyResults(actor, schoolId, studentIds);
     case 'academic_summary': return buildAcademicSummary(actor, schoolId);
     case 'finance_summary': return buildFinance(actor, schoolId);
+    case 'insights': return buildInsights(actor, schoolId);
     case 'announcements': return buildAnnouncements(schoolId);
     case 'knowledge':
     case 'general':

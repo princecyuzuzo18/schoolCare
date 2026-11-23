@@ -20,7 +20,7 @@ const ALL_ROLES: UserRole[] = [
   'ACCOUNTANT', 'DISCIPLINE_OFFICER', 'SCHOOL_IT', 'ANIMATEUR', 'PARENT', 'STUDENT'
 ];
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
-const INTENTS: AiIntent[] = ['general', 'student_count', 'attendance_summary', 'academic_summary', 'my_results', 'announcements', 'finance_summary', 'knowledge'];
+const INTENTS: AiIntent[] = ['general', 'student_count', 'attendance_summary', 'academic_summary', 'my_results', 'announcements', 'finance_summary', 'insights', 'knowledge'];
 
 let lastMessageIdTime = 0;
 /** Time-ordered IDs keep chat history in order even when timestamps share a second. */
@@ -57,7 +57,16 @@ function safeError(res: Response, error: unknown): Response {
     return res.status(503).json({ error: error.message });
   }
   if (error instanceof AiProviderError) {
-    const status = error.code === 'NOT_CONFIGURED' || error.code === 'DISABLED' ? 503 : error.code === 'TIMEOUT' ? 504 : 502;
+    const status =
+      error.code === 'NOT_CONFIGURED' || error.code === 'DISABLED' ||
+      error.code === 'UNSUPPORTED_PROVIDER' || error.code === 'MODEL_UNAVAILABLE'
+        ? 503
+        : error.code === 'QUOTA_EXCEEDED'
+          ? 429
+          : error.code === 'TIMEOUT'
+            ? 504
+            : 502;
+    if (error.code === 'QUOTA_EXCEEDED') res.setHeader('Retry-After', '3600');
     return res.status(status).json({ error: error.message, code: error.code });
   }
   console.error('[AI] Unexpected request error:', error instanceof Error ? error.message.slice(0, 200) : 'unknown');
@@ -120,7 +129,9 @@ export function registerAiRoutes(app: Express): void {
     const user = _req.user;
     return res.json({
       provider: aiConfig.provider,
+      providerSupported: aiConfig.providerSupported,
       model: aiConfig.model,
+      modelSource: aiConfig.modelSource,
       enabled: aiConfig.enabledFlag,
       available: availability.available,
       reason: availability.reason,

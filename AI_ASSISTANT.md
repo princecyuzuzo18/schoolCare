@@ -12,7 +12,8 @@ A role-aware, bilingual (English / Ikinyarwanda) assistant embedded in SchoolCar
 - Conversation list, new chat, delete chat, follow-up questions, copy, regenerate, and thumbs up/down feedback.
 - English/Kinyarwanda auto-detection and a manual language selector.
 - Source citations for database facts and official documents.
-- Loading, unavailable, rate-limited, and error states — no fabricated answers.
+- Optional Smart Insights for authorized administrators, built only from verified backend aggregates.
+- Loading, unavailable, rate-limited, quota-exceeded, and error states — no fabricated answers.
 - Per-user/per-school rate limiting, retention purge, and audit logging.
 
 ---
@@ -23,7 +24,9 @@ Copy `.env.example` to `.env` and set the AI section:
 
 ```dotenv
 GEMINI_API_KEY="MY_GEMINI_API_KEY"   # placeholder = assistant unavailable
-AI_MODEL="gemini-flash-latest"
+AI_PROVIDER="gemini"
+GEMINI_MODEL="gemini-3.5-flash-lite" # preferred; wins over AI_MODEL
+AI_MODEL="gemini-3.5-flash-lite"     # legacy fallback
 AI_ENABLED="true"
 AI_DEFAULT_LANGUAGE="en"             # en or rw
 AI_TIMEOUT_MS="25000"
@@ -31,12 +34,14 @@ AI_RATE_LIMIT_PER_HOUR="60"
 AI_RETENTION_DAYS="180"
 ```
 
+See [`docs/GEMINI_SETUP.md`](./docs/GEMINI_SETUP.md) for free-tier verification, live connection testing, and troubleshooting.
+
 Rules:
 
 1. `GEMINI_API_KEY` must be a real Google Gemini key. Placeholders and short/invalid values are rejected.
 2. The key is read **only on the server**. It is never sent to the browser or stored in the database.
 3. `AI_ENABLED=false` or a missing/invalid key makes `/api/ai/chat` return HTTP 503 with `code: DISABLED` or `code: NOT_CONFIGURED`. The UI shows an “unavailable” state. It never fakes a reply.
-4. `AI_MODEL` defaults to `gemini-flash-latest`. The installed SDK is `@google/genai`; the old raw REST path is not used.
+4. `GEMINI_MODEL` is preferred and `AI_MODEL` is a legacy fallback; both default to `gemini-3.5-flash-lite`. The installed SDK is `@google/genai`; the old raw REST path is not used. Only `AI_PROVIDER=gemini` is supported.
 5. Values are read at request time, so changing `.env` requires a server restart.
 
 ### Database migration
@@ -114,7 +119,8 @@ All routes require an authenticated session.
 
 ```bash
 npm run lint       # TypeScript check
-npm run test:ai    # dedicated AI suite
+npm run test:ai    # dedicated offline AI suite (no key or quota)
+npm run test:gemini # optional live connection test (uses your key)
 npm test           # full suite, now includes test:ai
 npm run build      # production client bundle
 ```

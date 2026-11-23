@@ -53,8 +53,8 @@ A comprehensive Secondary School Management & Parent Communication Platform buil
 9. **SchoolCare AI Assistant**
    - Role-aware, bilingual (English / Ikinyarwanda) assistant with conversation memory, source citations, and a floating launcher.
    - Uses only backend-verified, school-isolated data; never invents records, exposes secrets, or performs writes.
-   - Optional Gemini integration; gracefully unavailable without a server-side API key.
-   - See [`AI_ASSISTANT.md`](./AI_ASSISTANT.md) for setup, security design, and verification.
+   - Optional free-tier Gemini integration; gracefully unavailable without a server-side API key.
+   - See [`AI_ASSISTANT.md`](./AI_ASSISTANT.md) and [`docs/GEMINI_SETUP.md`](./docs/GEMINI_SETUP.md) for setup, free-tier checks, security design, and verification.
 
 ---
 
@@ -76,6 +76,7 @@ A comprehensive Secondary School Management & Parent Communication Platform buil
 npm run lint            # TypeScript check
 npm test                # full suite (security, isolation, academics, hardening, AI assistant)
 npm run test:ai         # AI assistant suite only (no real API key needed)
+npm run test:gemini     # optional live Gemini connection test (uses your key)
 npm run test:academics  # academic workflow only
 npm run test:db         # database schema and migration history
 npm run build           # production client bundle

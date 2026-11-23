@@ -7,7 +7,7 @@ import { useLanguage } from '../i18n/LanguageContext';
 import { api, ApiError } from '../services/api';
 import AiChat from '../components/AiChat';
 import type {
-  AiIntent, AiKnowledgeDocument, AiSettings, AiUsageStats, LanguageCode, UserRole
+  AiIntent, AiKnowledgeDocument, AiSettings, AiStatus, AiUsageStats, LanguageCode, UserRole
 } from '../types';
 
 const KNOWLEDGE_MANAGERS: UserRole[] = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD'];
@@ -18,7 +18,7 @@ const ALL_ROLES: UserRole[] = [
 ];
 const INTENTS: AiIntent[] = [
   'general', 'student_count', 'attendance_summary', 'academic_summary', 'my_results',
-  'announcements', 'finance_summary', 'knowledge'
+  'announcements', 'finance_summary', 'insights', 'knowledge'
 ];
 type Tab = 'chat' | 'knowledge' | 'settings';
 
@@ -226,17 +226,19 @@ function SettingsPanel() {
   const { t } = useLanguage();
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [usage, setUsage] = useState<AiUsageStats | null>(null);
+  const [serviceStatus, setServiceStatus] = useState<AiStatus | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
     let active = true;
-    Promise.allSettled([api.getAiSettings(), api.getAiUsage(30)]).then(([settingsResult, usageResult]) => {
+    Promise.allSettled([api.getAiSettings(), api.getAiUsage(30), api.getAiStatus()]).then(([settingsResult, usageResult, statusResult]) => {
       if (!active) return;
       if (settingsResult.status === 'fulfilled') setSettings(settingsResult.value);
       else setError(messageOf(settingsResult.reason, t('aiErrorGeneric')));
       if (usageResult.status === 'fulfilled') setUsage(usageResult.value);
+      if (statusResult.status === 'fulfilled') setServiceStatus(statusResult.value);
     });
     return () => { active = false; };
   }, [t]);
@@ -298,6 +300,22 @@ function SettingsPanel() {
         {notice && (
           <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">{notice}</div>
         )}
+        {serviceStatus && (
+          <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-slate-700">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold text-blue-900">{t('aiSettingsServiceStatus')}</span>
+              <span className={serviceStatus.available ? 'font-medium text-emerald-700' : 'font-medium text-amber-700'}>
+                {serviceStatus.available ? t('aiAvailable') : serviceStatus.reason || t('aiUnavailable')}
+              </span>
+            </div>
+            <dl className="mt-2 grid gap-1 sm:grid-cols-3">
+              <div><dt className="font-medium text-slate-500">{t('aiSettingsProvider')}</dt><dd>{serviceStatus.provider}</dd></div>
+              <div><dt className="font-medium text-slate-500">{t('aiSettingsModel')}</dt><dd>{serviceStatus.model}</dd></div>
+              <div><dt className="font-medium text-slate-500">{t('aiSettingsModelSource')}</dt><dd>{serviceStatus.modelSource || 'default'}</dd></div>
+            </dl>
+            <p className="mt-2 text-[11px] text-slate-500">{t('aiSettingsQuotaHint')}</p>
+          </div>
+        )}
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="flex items-center gap-2 text-xs font-medium text-slate-700 sm:col-span-2">
             <input
@@ -314,7 +332,7 @@ function SettingsPanel() {
               value={settings.model}
               onChange={event => patch({ model: event.target.value })}
               maxLength={100}
-              placeholder="gemini-flash-latest"
+              placeholder="gemini-3.5-flash-lite"
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
           </label>
