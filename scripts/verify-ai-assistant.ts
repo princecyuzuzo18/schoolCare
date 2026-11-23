@@ -47,10 +47,22 @@ try {
   closeMysqlPoolFn = closeMysqlPool;
   testPool = getMysqlPool();
   const { app } = await import('../server');
+  // server.ts loads .env during import; clear it again so the suite never calls Gemini.
+  delete process.env.GEMINI_API_KEY;
   const { db } = await import('../server/database');
   const { createSession } = await import('../server/sessions');
   const { __setAiGeneratorForTests, AiProviderError } = await import('../server/ai/provider');
+  const { isRealGeminiKey } = await import('../server/ai/config');
   clearTestGenerator = () => __setAiGeneratorForTests(null);
+
+  check(
+    'Gemini key validation accepts real prefixes and rejects placeholders',
+    isRealGeminiKey('AIza'.padEnd(40, 'a')) &&
+      isRealGeminiKey('AQ.A'.padEnd(40, 'b')) &&
+      !isRealGeminiKey('MY_GEMINI_API_KEY') &&
+      !isRealGeminiKey(''),
+    'AIza/AQ.A accepted, placeholder rejected'
+  );
 
   server = app.listen(0);
   await new Promise<void>(resolve => server!.once('listening', resolve));

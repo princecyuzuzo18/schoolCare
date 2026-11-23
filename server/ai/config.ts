@@ -1,11 +1,19 @@
 import type { LanguageCode } from '../../src/types';
 
-/** Placeholders must never be mistaken for a configured provider. */
+/**
+ * Placeholders must never be mistaken for a configured provider, but valid key
+ * prefixes change over time (AIza..., AQ.A..., etc.). Accept any sufficiently
+ * long, whitespace-free value that is not an obvious placeholder; the provider
+ * itself is the final authority and reports invalid keys as an upstream error.
+ */
 export function isRealGeminiKey(value: string | undefined): boolean {
   if (!value) return false;
   const key = value.trim().replace(/^['"]|['"]$/g, '');
-  if (key === 'MY_GEMINI_API_KEY' || key.length < 30) return false;
-  return /^AIza[0-9A-Za-z_-]{30,}$/.test(key);
+  if (key.length < 20 || /\s/.test(key)) return false;
+  if (/^(my[_-]?gemini[_-]?api[_-]?key|change[_-]?me|your[_-]?api[_-]?key|replace[_-]?me)$/i.test(key)) {
+    return false;
+  }
+  return true;
 }
 
 function positiveInt(value: string | undefined, fallback: number, min: number, max: number): number {
