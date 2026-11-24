@@ -3,12 +3,15 @@ import type { NextFunction, Request, Response } from 'express';
 import type {
   AcademicPerformanceData,
   AdmissionApplication,
+  AdmissionDocumentCategory,
   ApplicationStatus,
   ApplicationType,
+  PreviousAcademicBackground,
   ResultSlipVerificationStatus,
   Senior3ResultsRecord
 } from '../src/types';
 import { db } from './database';
+import { DEFAULT_DOCUMENT_CATEGORIES, documentCategoriesFor, normalizeDocumentCategories } from './admissionConfig';
 
 export const APPLICATION_TYPES: ApplicationType[] = [
   'NEW_STUDENT_SENIOR4',
@@ -17,11 +20,23 @@ export const APPLICATION_TYPES: ApplicationType[] = [
 ];
 
 export const APPLICATION_STATUSES: ApplicationStatus[] = [
+  'DRAFT',
   'SUBMITTED',
   'UNDER_REVIEW',
+  'DOCUMENTS_REQUIRED',
   'ADDITIONAL_INFO_REQUIRED',
   'APPROVED',
-  'REJECTED'
+  'REJECTED',
+  'WAITLISTED'
+];
+
+export const REVIEW_DECISION_STATUSES: ApplicationStatus[] = [
+  'UNDER_REVIEW',
+  'DOCUMENTS_REQUIRED',
+  'ADDITIONAL_INFO_REQUIRED',
+  'APPROVED',
+  'REJECTED',
+  'WAITLISTED'
 ];
 
 export const RESULT_SLIP_VERIFICATION_STATUSES: ResultSlipVerificationStatus[] = [
@@ -46,12 +61,12 @@ export const TRANSFER_REASONS = [
 export const DOCUMENT_TYPES: Record<ApplicationType, string[]> = {
   NEW_STUDENT_SENIOR4: ['SENIOR3_RESULTS', 'PREVIOUS_REPORT', 'OTHER'],
   SCHOOL_TRANSFER: ['PREVIOUS_REPORT', 'TRANSFER_LETTER', 'STUDENT_ID', 'OTHER'],
-  OTHER_ADMISSION: ['SUPPORTING_DOCUMENT', 'OTHER']
+  OTHER_ADMISSION: ['PREVIOUS_REPORT', 'SUPPORTING_DOCUMENT', 'OTHER']
 };
 
 const MAX_TEXT = 200_000;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
-const MAX_FILES = 5;
+const MAX_FILES = 8;
 
 export interface AdmissionFormData {
   applicationType: ApplicationType;
@@ -91,6 +106,7 @@ export interface AdmissionFormData {
   requestedEducationLevel?: string;
   previousSchoolOther?: string;
   applicationReason?: string;
+  academicBackground?: PreviousAcademicBackground;
 }
 
 export type ValidationResult =
@@ -167,7 +183,7 @@ export function currentAcademicYear(): string {
   return month >= 9 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
 }
 
-export function validateSubmission(body: unknown): ValidationResult {
+export function validateSubmission(body: unknown, options?: PublicAdmissionOptions): ValidationResult {
   const input = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
   const errors: string[] = [];
 
@@ -218,6 +234,48 @@ export function validateSubmission(body: unknown): ValidationResult {
     errors.push('Accept the privacy notice before submitting.');
   }
 
+  const academicBackground = normalizePreviousAcademicBackground(input.academicBackground);
+  if (academicBackground) {
+    if (
+      options?.academicYears.length &&
+      academicBackground.academicYearCompleted &&
+      !options.academicYears.includes(academicBackground.academicYearCompleted)
+    ) {
+      errors.push('Select a valid academic year completed.');
+    }
+    if (academicBackground.seniorCompletionYear && !/^(19|20)\d{2}$/.test(academicBackground.seniorCompletionYear)) {
+      errors.push('Enter a valid year of senior completion.');
+    }
+    if (
+      options?.previousCombinations.length &&
+      academicBackground.previousCombination &&
+      academicBackground.previousCombination !== 'NOT_APPLICABLE' &&
+      !options.previousCombinations.some(item => item.name === academicBackground.previousCombination)
+    ) {
+      errors.push('Select a valid previous combination.');
+    }
+    if (
+      options?.preferredCombinations.length &&
+      academicBackground.preferredCombination &&
+      !options.preferredCombinations.some(item => item.name === academicBackground.preferredCombination)
+    ) {
+      errors.push('Select a preferred combination that is open for admission.');
+    }
+    if (
+      options?.grading.grades.length &&
+      academicBackground.performanceGrade &&
+      !options.grading.grades.some(item => item.grade === academicBackground.performanceGrade)
+    ) {
+      errors.push('Select a grade from the school’s configured grading scale.');
+    }
+    if (academicBackground.performanceMarks && !/^\d{1,3}(\.\d{1,2})?$/.test(academicBackground.performanceMarks)) {
+      errors.push('Enter performance marks as a number up to 100.');
+    }
+    if (academicBackground.subjects.some(subject => subject.marks && !/^\d{1,3}(\.\d{1,2})?$/.test(subject.marks))) {
+      errors.push('Subject marks must be numbers up to 100.');
+    }
+  }
+
   const value: AdmissionFormData = {
     applicationType: applicationType as ApplicationType,
     applicantFullName,
@@ -232,21 +290,13 @@ export function validateSubmission(body: unknown): ValidationResult {
     guardianFullName,
     guardianPhone,
     guardianRelationship,
-    academicYear
+    academicYear,
+    academicBackground
   };
 
   if (applicationType === 'NEW_STUDENT_SENIOR4') {
     value.previousSchoolName = required(errors, input.previousSchoolName || input.previousSchool, 'Previous school name', { min: 2, max: 180 });
     value.previousSchoolLocation = required(errors, input.previousSchoolLocation, 'Previous school location', { min: 2, max: 180 });
-    value.academicYearCompleted = required(errors, input.academicYearCompleted, 'Academic year completed', { min: 4, max: 20 });
-    value.senior3CompletionYear = required(errors, input.senior3CompletionYear, 'Year of Senior 3 completion', { min: 4, max: 4 });
-    if (value.senior3CompletionYear && !/^(19|20)\d{2}$/.test(value.senior3CompletionYear)) {
-      errors.push('Enter a valid year of Senior 3 completion.');
-    }
-    value.senior3CompletionStatus = required(errors, input.senior3CompletionStatus, 'Senior 3 completion status', { min: 2, max: 100 });
-    value.previousCombination = optional(errors, input.previousCombination, 'Previous combination', 180);
-    value.requestedLevel = 'Senior 4';
-    value.requestedCombination = optional(errors, input.requestedCombination, 'Preferred combination', 180);
     value.previousAcademicPerformance = optional(errors, input.previousAcademicPerformance, 'Previous academic performance', 1000);
     value.reasonForChoosingSchool = required(errors, input.reasonForChoosingSchool, 'Reason for choosing our school', { min: 10, max: 2000 });
   } else if (applicationType === 'SCHOOL_TRANSFER') {
@@ -265,10 +315,8 @@ export function validateSubmission(body: unknown): ValidationResult {
       value.transferReasonOther = required(errors, input.transferReasonOther, 'Please explain the transfer reason', { min: 5, max: 2000 });
     }
   } else if (applicationType === 'OTHER_ADMISSION') {
-    value.currentEducationLevel = required(errors, input.currentEducationLevel, 'Current education level', { min: 2, max: 100 });
-    value.requestedEducationLevel = required(errors, input.requestedEducationLevel, 'Requested education level', { min: 2, max: 100 });
-    value.previousSchoolOther = required(errors, input.previousSchool, 'Previous school', { min: 2, max: 180 });
-    value.applicationReason = required(errors, input.applicationReason, 'Reason for application', { min: 10, max: 2000 });
+    // Removed fields (currentEducationLevel, requestedEducationLevel, previousSchool, applicationReason)
+    // are intentionally not required/submitted. Preserve stored values in DB for historical records.
   }
 
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value };
@@ -315,6 +363,160 @@ export function hasActualAcademicData(data?: AcademicPerformanceData): boolean {
   if (!data) return false;
   const hasSubject = data.subjects.some(subject => Boolean(subject.name && (subject.marks || subject.grade)));
   return Boolean(hasSubject || data.total || data.aggregate || data.division);
+}
+
+/**
+ * Normalizes the structured academic-background object. Values are cleaned but
+ * never invented: an empty field stays empty and no grading scheme is inferred.
+ */
+export function normalizePreviousAcademicBackground(raw: unknown): PreviousAcademicBackground | undefined {
+  const source = typeof raw === 'string' ? parseJsonObject(raw) : raw;
+  const input = source && typeof source === 'object' ? (source as Record<string, unknown>) : {};
+  const performance = normalizeAcademicPerformance({
+    subjects: input.subjects,
+    total: input.performanceMarks,
+    division: input.performanceGrade
+  });
+  const academicYearCompleted = cleanString(input.academicYearCompleted, 20);
+  const seniorCompletionYear = cleanString(input.seniorCompletionYear, 4);
+  const previousCombination = cleanString(input.previousCombination, 180);
+  const preferredCombination = cleanString(input.preferredCombination, 180);
+  const performanceMarks = cleanString(input.performanceMarks, 40);
+  const performanceGrade = cleanString(input.performanceGrade, 40);
+  const performanceDescription = cleanString(input.performanceDescription, 1000);
+  const previousSchoolName = cleanString(input.previousSchoolName, 180);
+  const previousSchoolLocation = cleanString(input.previousSchoolLocation, 180);
+  const previousClassOrLevel = cleanString(input.previousClassOrLevel, 100);
+  const schoolIdentification = cleanString(input.schoolIdentification, 100);
+  const subjects = performance.subjects.map((subject, index) => ({
+    id: cleanString(subject.id, 100) || `sub-${index + 1}`,
+    name: subject.name,
+    marks: subject.marks,
+    grade: subject.grade
+  }));
+
+  const hasData = Boolean(
+    academicYearCompleted ||
+      seniorCompletionYear ||
+      previousCombination ||
+      preferredCombination ||
+      performanceMarks ||
+      performanceGrade ||
+      performanceDescription ||
+      previousSchoolName ||
+      previousSchoolLocation ||
+      previousClassOrLevel ||
+      schoolIdentification ||
+      subjects.length > 0
+  );
+  if (!hasData) return undefined;
+
+  return {
+    academicYearCompleted: academicYearCompleted || undefined,
+    seniorCompletionYear: /^(19|20)\d{2}$/.test(seniorCompletionYear) ? seniorCompletionYear : undefined,
+    previousCombination: previousCombination || undefined,
+    preferredCombination: preferredCombination || undefined,
+    performanceMarks: performanceMarks || undefined,
+    performanceGrade: performanceGrade || undefined,
+    performanceDescription: performanceDescription || undefined,
+    previousSchoolName: previousSchoolName || undefined,
+    previousSchoolLocation: previousSchoolLocation || undefined,
+    previousClassOrLevel: previousClassOrLevel || undefined,
+    schoolIdentification: schoolIdentification || undefined,
+    subjects
+  };
+}
+
+export interface PublicAdmissionOption {
+  id: string;
+  name: string;
+  code?: string;
+}
+
+export interface PublicAdmissionGrading {
+  name?: string;
+  passMark?: number;
+  grades: Array<{ grade: string; description?: string; minPercentage: number; maxPercentage: number }>;
+}
+
+export interface PublicAdmissionOptions {
+  academicYears: string[];
+  previousCombinations: PublicAdmissionOption[];
+  preferredCombinations: PublicAdmissionOption[];
+  documentCategories: AdmissionDocumentCategory[];
+  grading: PublicAdmissionGrading;
+}
+
+/**
+ * Loads real configuration from the existing academic-year and combination
+ * modules. Preferred combinations are limited to ACTIVE, non-archived records
+ * that still have capacity; inactive and archived programmes are never exposed.
+ */
+export function getPublicAdmissionOptions(school?: { id?: string }): PublicAdmissionOptions {
+  const schoolId = school?.id;
+  const years = schoolId ? db.getAcademicCollection<any>('academicYears', schoolId) : [];
+  const combinations = schoolId ? db.getAcademicCollection<any>('combinations', schoolId) : [];
+  const students = schoolId ? db.getStudents(schoolId) : [];
+  const scales = schoolId ? db.getAcademicCollection<any>('gradingScales', schoolId) : [];
+  const academicSettings = schoolId ? db.getAcademicCollection<any>('academicSettings', schoolId)[0] : undefined;
+  const scale =
+    scales.find(item => item.id === academicSettings?.gradingScaleId) ??
+    scales.find(item => item.isActive) ??
+    scales[0];
+  const academicYears = years
+    .map(item => cleanString(item.name, 20))
+    .filter(Boolean)
+    .sort((a, b) => b.localeCompare(a));
+
+  const previousCombinations = combinations.map(item => ({
+    id: cleanString(item.id, 60),
+    name: cleanString(item.name, 180),
+    code: cleanString(item.code, 60) || undefined
+  }));
+
+  const preferredCombinations = combinations
+    .filter(item => cleanString(item.status, 20).toUpperCase() === 'ACTIVE' && !item.archivedAt)
+    .filter(item => {
+      const capacity = Number(item.maxCapacity);
+      if (!Number.isFinite(capacity) || capacity <= 0) return true;
+      const enrolled = students.filter(student =>
+        student.combinationId ? student.combinationId === item.id : student.combination === item.name
+      ).length;
+      return enrolled < capacity;
+    })
+    .map(item => ({
+      id: cleanString(item.id, 60),
+      name: cleanString(item.name, 180),
+      code: cleanString(item.code, 60) || undefined
+    }));
+
+  const grading: PublicAdmissionGrading = {
+    name: cleanString(scale?.name, 120) || undefined,
+    passMark: Number.isFinite(Number(scale?.passMark)) ? Number(scale.passMark) : undefined,
+    grades: Array.isArray(scale?.gradeBoundaries)
+      ? scale.gradeBoundaries.map((boundary: any) => ({
+          grade: cleanString(boundary?.grade, 40),
+          description: cleanString(boundary?.description, 160) || undefined,
+          minPercentage: Number(boundary?.minPercentage),
+          maxPercentage: Number(boundary?.maxPercentage)
+        })).filter((item: { grade: string; minPercentage: number; maxPercentage: number }) =>
+          item.grade && Number.isFinite(item.minPercentage) && Number.isFinite(item.maxPercentage)
+        )
+      : []
+  };
+
+  return {
+    academicYears: academicYears.length > 0 ? academicYears : [currentAcademicYear()],
+    previousCombinations,
+    preferredCombinations,
+    documentCategories: DEFAULT_DOCUMENT_CATEGORIES.map(category => ({ ...category })),
+    grading
+  };
+}
+
+export function configuredDocumentTypes(type: ApplicationType): string[] {
+  const settings = normalizeDocumentCategories(db.getAdmissionSettings().documentCategories);
+  return documentCategoriesFor(settings, type).map(category => category.key);
 }
 
 interface Senior3ResultsOptions {
@@ -402,7 +604,9 @@ export function buildApplication(
     submittedAt: new Date().toISOString(),
     documents: [],
     reviewHistory: [],
-    statusHistory: []
+    statusHistory: [],
+    documentAccessHistory: [],
+    reviewDecisions: []
   };
 }
 
@@ -479,7 +683,8 @@ export function createRateLimiter({ windowMs, max, prefix, keyFrom }: RateLimitO
 }
 
 export function getAllowedDocumentTypes(type: ApplicationType): string[] {
-  return DOCUMENT_TYPES[type] ?? [];
+  const configured = configuredDocumentTypes(type);
+  return configured.length > 0 ? configured : DOCUMENT_TYPES[type] ?? [];
 }
 
 export function isValidUpload(file: Express.Multer.File, allowedTypes: string[]): boolean {

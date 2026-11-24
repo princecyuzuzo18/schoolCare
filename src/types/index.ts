@@ -269,6 +269,11 @@ export interface AcademicClass {
   archivedAt?: string;
   archivedBy?: string;
   combinationId?: string;
+  /** Managed academic structure links (additive; legacy classes stay valid). */
+  code?: string;
+  academicYearId?: string;
+  levelId?: string;
+  classTeacherId?: string;
 }
 
 export interface Subject {
@@ -279,6 +284,25 @@ export interface Subject {
   department: string;
   credits: number;
   passMark: number;
+  /** Archived subjects can never be selected for new marks assessments. */
+  status?: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  combinationIds?: string[];
+  levelIds?: string[];
+  archivedAt?: string;
+}
+
+/** School-managed class level (Level 3/4/5, Y1/Y2/Y3, or any school level). */
+export interface ClassLevel {
+  id: string;
+  schoolId: string;
+  name: string;
+  code: string;
+  description?: string;
+  academicProgramme?: string;
+  combinationIds: string[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Assessment {
@@ -763,11 +787,14 @@ export interface MysqlStatus {
 export type ApplicationType = 'NEW_STUDENT_SENIOR4' | 'SCHOOL_TRANSFER' | 'OTHER_ADMISSION';
 
 export type ApplicationStatus =
+  | 'DRAFT'
   | 'SUBMITTED'
   | 'UNDER_REVIEW'
+  | 'DOCUMENTS_REQUIRED'
   | 'ADDITIONAL_INFO_REQUIRED'
   | 'APPROVED'
-  | 'REJECTED';
+  | 'REJECTED'
+  | 'WAITLISTED';
 
 // Result verification is intentionally separate from the application status.
 export type ResultSlipVerificationStatus =
@@ -778,6 +805,7 @@ export type ResultSlipVerificationStatus =
   | 'ADDITIONAL_DOCUMENT_REQUIRED';
 
 export interface AcademicResultSubject {
+  id?: string;
   name: string;
   marks?: string;
   grade?: string;
@@ -850,11 +878,81 @@ export interface AdmissionSlipUpload {
   ocrMessage?: string;
 }
 
+export interface AdmissionDocumentCategory {
+  key: string;
+  label: string;
+  active: boolean;
+  required?: boolean;
+  applicationTypes?: ApplicationType[];
+}
+
 export interface AdmissionSettings {
   resultSlipRequired: boolean;
   resultSlipExceptionNote?: string;
+  documentCategories?: AdmissionDocumentCategory[];
   updatedAt?: string;
   updatedBy?: string;
+}
+
+/**
+ * Structured "Previous Academic Background" captured on the public application.
+ * Existing free-text fields on AdmissionApplication are preserved for history and
+ * reports; this object is additive.
+ */
+export interface PreviousAcademicBackground {
+  academicYearCompleted?: string;
+  seniorCompletionYear?: string;
+  previousCombination?: string;
+  preferredCombination?: string;
+  performanceMarks?: string;
+  performanceGrade?: string;
+  performanceDescription?: string;
+  previousSchoolName?: string;
+  previousSchoolLocation?: string;
+  previousClassOrLevel?: string;
+  schoolIdentification?: string;
+  subjects: AcademicResultSubject[];
+}
+
+/** Temporary, private upload created before the application is submitted. */
+export interface AdmissionDocumentUpload {
+  id: string;
+  tokenHash: string;
+  documentType: string;
+  applicationId?: string;
+  documentId?: string;
+  storagePath: string;
+  originalFileName: string;
+  fileMime: string;
+  fileSize: number;
+  createdAt: string;
+  expiresAt: string;
+  consumedAt?: string;
+  replacedAt?: string;
+}
+
+export interface AdmissionDocumentAccessEvent {
+  id: string;
+  applicationId: string;
+  documentId: string;
+  actorId: string;
+  actorName: string;
+  actorRole: string;
+  action: 'PREVIEW' | 'DOWNLOAD';
+  ip?: string;
+  createdAt: string;
+}
+
+export interface AdmissionReviewDecision {
+  id: string;
+  applicationId: string;
+  decision: ApplicationStatus;
+  reason?: string;
+  requestedDocumentTypes?: string[];
+  decidedBy: string;
+  decidedByName: string;
+  decidedByRole: string;
+  createdAt: string;
 }
 
 export interface AdmissionDocument {
@@ -949,7 +1047,10 @@ export interface AdmissionApplication {
   reviewNotes?: string;
   rejectionReason?: string;
   senior3Results?: Senior3ResultsRecord;
+  academicBackground?: PreviousAcademicBackground;
   documents: AdmissionDocument[];
+  documentAccessHistory?: AdmissionDocumentAccessEvent[];
+  reviewDecisions?: AdmissionReviewDecision[];
   reviewHistory: AdmissionReviewNote[];
   statusHistory: AdmissionStatusHistory[];
 }
@@ -1018,6 +1119,22 @@ export interface ClassSubjectAssignment {
   teacherIds: string[];
   isActive: boolean;
   createdAt: string;
+  /** Structure context recorded at assignment time so filters stay consistent. */
+  combinationId?: string;
+  levelId?: string;
+  createdBy?: string;
+  updatedAt?: string;
+  history?: AcademicWorkflowEvent[];
+}
+
+/** Teacher-facing/admin-facing assignment with resolved structure names. */
+export interface ClassSubjectAssignmentView extends ClassSubjectAssignment {
+  combinationName: string;
+  levelName: string;
+  className: string;
+  subjectName: string;
+  subjectCode: string;
+  teacherNames: string[];
 }
 
 export interface ClassTeacherAssignment {
@@ -1301,6 +1418,9 @@ export interface CreateCombinationInput {
 
 export type AcademicCollectionKey =
   | 'combinations'
+  | 'classes'
+  | 'subjects'
+  | 'classLevels'
   | 'academicYears'
   | 'terms'
   | 'classSubjectAssignments'

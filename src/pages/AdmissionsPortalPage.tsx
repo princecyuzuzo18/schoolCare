@@ -32,10 +32,15 @@ import type {
   ApplicationType,
   ResultSlipVerificationStatus
 } from '../types';
-import { api, type ResultSlipUploadResponse } from '../services/api';
+import {
+  api,
+  type AdmissionDocumentUploadResponse,
+  type PublicAdmissionSettings,
+  type ResultSlipUploadResponse
+} from '../services/api';
 import { useAdmissionsCopy } from '../i18n/admissions';
 import { useAuth } from '../contexts/AuthContext';
-import { PublicAdmissionsFooter, PublicAdmissionsHeader } from '../components/PublicAdmissionsChrome';
+import { PublicLayout } from '../components/PublicSiteChrome';
 
 /**
  * Public "Apply Here" UI.
@@ -69,12 +74,6 @@ interface FormState {
   academicYear: string;
   previousSchool: string;
   previousSchoolLocation: string;
-  academicYearCompleted: string;
-  senior3CompletionYear: string;
-  senior3CompletionStatus: string;
-  previousCombination: string;
-  requestedLevel: string;
-  requestedCombination: string;
   previousAcademicPerformance: string;
   reasonForChoosingSchool: string;
   currentSchool: string;
@@ -86,9 +85,6 @@ interface FormState {
   previousSchoolType: string;
   transferReason: string;
   transferReasonOther: string;
-  currentEducationLevel: string;
-  requestedEducationLevel: string;
-  applicationReason: string;
   confirmAccurate: boolean;
   privacyAccepted: boolean;
   website: string;
@@ -108,6 +104,24 @@ interface Receipt {
 }
 
 interface UploadedSlip extends ResultSlipUploadResponse {}
+
+interface AcademicBackgroundState {
+  previousClassOrLevel: string;
+  schoolIdentification: string;
+  performanceMarks: string;
+  performanceGrade: string;
+  performanceDescription: string;
+  subjects: AcademicResultSubject[];
+}
+
+const emptyAcademicBackground = (): AcademicBackgroundState => ({
+  previousClassOrLevel: '',
+  schoolIdentification: '',
+  performanceMarks: '',
+  performanceGrade: '',
+  performanceDescription: '',
+  subjects: [{ name: '', marks: '', grade: '' }]
+});
 
 const emptyAcademicData = (): AcademicPerformanceData => ({
   studentName: '',
@@ -158,6 +172,7 @@ const DOCUMENT_FIELDS: Record<
     { key: 'OTHER', labelKey: 'docOther' }
   ],
   OTHER_ADMISSION: [
+    { key: 'PREVIOUS_REPORT', labelKey: 'docPreviousReport' },
     { key: 'SUPPORTING_DOCUMENT', labelKey: 'docSupporting' },
     { key: 'OTHER', labelKey: 'docOther' }
   ]
@@ -204,12 +219,6 @@ function makeInitialForm(): FormState {
     academicYear: currentAcademicYear(),
     previousSchool: '',
     previousSchoolLocation: '',
-    academicYearCompleted: '',
-    senior3CompletionYear: '',
-    senior3CompletionStatus: '',
-    previousCombination: '',
-    requestedLevel: 'Senior 4',
-    requestedCombination: '',
     previousAcademicPerformance: '',
     reasonForChoosingSchool: '',
     currentSchool: '',
@@ -221,9 +230,6 @@ function makeInitialForm(): FormState {
     previousSchoolType: '',
     transferReason: '',
     transferReasonOther: '',
-    currentEducationLevel: '',
-    requestedEducationLevel: '',
-    applicationReason: '',
     confirmAccurate: false,
     privacyAccepted: false,
     website: ''
@@ -247,7 +253,7 @@ function formatFileSize(bytes: number): string {
 
 type TextFieldName = Exclude<
   keyof FormState,
-  'applicationType' | 'applicantGender' | 'senior3CompletionStatus' | 'transferReason' | 'confirmAccurate' | 'privacyAccepted' | 'website'
+  'applicationType' | 'applicantGender' | 'transferReason' | 'confirmAccurate' | 'privacyAccepted' | 'website'
 >;
 
 export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBackHome, onOpenTracking }) => {
@@ -257,17 +263,20 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
   const [stage, setStage] = useState<Stage>('welcome');
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>(makeInitialForm);
-  const [files, setFiles] = useState<Record<string, File>>({});
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [fileErrors, setFileErrors] = useState<Record<string, string>>({});
+  const [uploadedDocuments, setUploadedDocuments] = useState<Record<string, AdmissionDocumentUploadResponse>>({});
+  const [documentUploading, setDocumentUploading] = useState<Record<string, boolean>>({});
+  const [documentProgress, setDocumentProgress] = useState<Record<string, number>>({});
   const [formError, setFormError] = useState('');
+  const [backgroundError, setBackgroundError] = useState('');
   const [submitError, setSubmitError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
 
-  const [slipRequired, setSlipRequired] = useState(true);
-  const [slipExceptionNote, setSlipExceptionNote] = useState('');
+  const [publicOptions, setPublicOptions] = useState<PublicAdmissionSettings | null>(null);
+  const [academicBackground, setAcademicBackground] = useState<AcademicBackgroundState>(emptyAcademicBackground);
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [slipUpload, setSlipUpload] = useState<UploadedSlip | null>(null);
   const [slipUploading, setSlipUploading] = useState(false);
@@ -277,6 +286,10 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
   const [academic, setAcademic] = useState<AcademicPerformanceData>(emptyAcademicData);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewMeta, setPreviewMeta] = useState<{ fileName: string; mime: string }>({
+    fileName: '',
+    mime: ''
+  });
 
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
   const slipInput = useRef<HTMLInputElement | null>(null);
@@ -295,8 +308,7 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
       .getPublicAdmissionSettings()
       .then(settings => {
         if (!active) return;
-        setSlipRequired(settings.resultSlipRequired);
-        setSlipExceptionNote(settings.resultSlipExceptionNote || '');
+        setPublicOptions(settings);
       })
       .catch(() => {
         // Keep the safe default (slip required) if settings cannot be loaded.
@@ -312,13 +324,23 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
   useEffect(() => () => releasePreview(), [releasePreview]);
 
   const type = (form.applicationType || null) as ApplicationType | null;
+  const usesResultSlip = type === 'NEW_STUDENT_SENIOR4' || type === 'OTHER_ADMISSION';
   const steps = [copy.stepApplicant, copy.stepDetails, copy.stepDocuments, copy.stepReview];
-  const documentFields = type ? DOCUMENT_FIELDS[type] : [];
+  const documentFields = type
+    ? publicOptions?.documentCategories
+        .filter(category =>
+          category.active &&
+          (!category.applicationTypes?.length || category.applicationTypes.includes(type))
+        )
+        .map(category => ({ key: category.key, label: category.label })) ??
+      DOCUMENT_FIELDS[type].map(({ key, labelKey }) => ({ key, label: String(copy[labelKey]) }))
+    : [];
   const schoolName = school?.name || 'ES RUBENGERA RTB';
 
   const clearErrors = () => {
     setFieldErrors({});
     setFormError('');
+    setBackgroundError('');
     setSubmitError('');
     setSlipError('');
   };
@@ -345,6 +367,7 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
   const validateStep = (index: number): boolean => {
     const errors: FieldErrors = {};
     let slipProblem = '';
+    let backgroundErrorText = '';
     const valueOf = (key: TextFieldName) => String(form[key] ?? '').trim();
     const required = (key: TextFieldName) => {
       if (!valueOf(key)) errors[key] = copy.required;
@@ -382,12 +405,6 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
       if (type === 'NEW_STUDENT_SENIOR4') {
         minLength('previousSchool', 2);
         minLength('previousSchoolLocation', 2);
-        minLength('academicYearCompleted', 4);
-        minLength('senior3CompletionYear', 4);
-        if (!/^(19|20)\d{2}$/.test(valueOf('senior3CompletionYear'))) {
-          errors.senior3CompletionYear = copy.invalidYear;
-        }
-        if (!form.senior3CompletionStatus) errors.senior3CompletionStatus = copy.required;
         minLength('reasonForChoosingSchool', 10);
       }
       if (type === 'SCHOOL_TRANSFER') {
@@ -402,17 +419,23 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
         else if (transferReason.length < 3) errors.transferReason = copy.minChars.replace('{min}', '3');
         if (form.transferReason === 'Other reason') minLength('transferReasonOther', 5);
       }
-      if (type === 'OTHER_ADMISSION') {
-        minLength('currentEducationLevel', 2);
-        minLength('requestedEducationLevel', 2);
-        minLength('previousSchool', 2);
-        minLength('applicationReason', 10);
+      // OTHER_ADMISSION: removed fields (currentEducationLevel, requestedEducationLevel,
+      // previousSchool, applicationReason) are no longer collected or required.
+
+      const bg = academicBackground;
+      if (
+        bg.performanceGrade &&
+        publicOptions?.grading.grades.length &&
+        !publicOptions.grading.grades.some(item => item.grade === bg.performanceGrade)
+      ) {
+        backgroundErrorText = copy.gradeScaleNote;
       }
     }
 
     if (index === 2) {
-      if (slipUploading) slipProblem = copy.slipUploading;
-      else if (type === 'NEW_STUDENT_SENIOR4' && slipRequired && !slipUpload) {
+      if (Object.values(documentUploading).some(Boolean)) slipProblem = copy.documentUploading;
+      else if (slipUploading) slipProblem = copy.slipUploading;
+      else if (type === 'NEW_STUDENT_SENIOR4' && !slipUpload) {
         slipProblem = copy.slipRequiredNote;
       }
     }
@@ -424,10 +447,15 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
 
     const keys = Object.keys(errors) as Array<keyof FormState>;
     setFieldErrors(errors);
-    setFormError(keys.length ? copy.fixErrors : slipProblem);
+    setBackgroundError(backgroundErrorText);
+    setFormError(keys.length ? copy.fixErrors : backgroundErrorText || slipProblem);
     setSlipError(slipProblem);
     if (keys.length) {
       focusField(keys[0]);
+      return false;
+    }
+    if (backgroundErrorText) {
+      requestAnimationFrame(() => document.getElementById('academic-background')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
       return false;
     }
     if (slipProblem) {
@@ -449,11 +477,6 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
       applicationType: nextType,
       previousSchool: '',
       previousSchoolLocation: '',
-      academicYearCompleted: '',
-      senior3CompletionYear: '',
-      senior3CompletionStatus: '',
-      previousCombination: '',
-      requestedCombination: '',
       previousAcademicPerformance: '',
       reasonForChoosingSchool: '',
       currentSchool: '',
@@ -465,14 +488,15 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
       previousSchoolType: '',
       transferReason: '',
       transferReasonOther: '',
-      currentEducationLevel: '',
-      requestedEducationLevel: '',
-      applicationReason: '',
       confirmAccurate: false,
       privacyAccepted: false
     }));
-    setFiles({});
+    setUploadedDocuments({});
+    setDocumentUploading({});
+    setDocumentProgress({});
     setFileErrors({});
+    setAcademicBackground(emptyAcademicBackground());
+    setBackgroundError('');
     setSlipUpload(null);
     setSlipUploading(false);
     setSlipProgress(0);
@@ -494,7 +518,7 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
 
   const submit = async () => {
     if (!type || !validateStep(3)) return;
-    if (type === 'NEW_STUDENT_SENIOR4') {
+    if (usesResultSlip) {
       const slipStepValid = validateStep(2);
       if (!slipStepValid) {
         setStep(2);
@@ -515,11 +539,27 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
       // The API uses explicit field names for school details; send aliases alongside the UI keys.
       formData.set('previousSchoolName', form.previousSchool);
       formData.set('currentSchoolName', form.currentSchool);
-      if (type === 'NEW_STUDENT_SENIOR4') {
+      const bg = academicBackground;
+      const backgroundPayload = {
+        performanceMarks: bg.performanceMarks,
+        performanceGrade: bg.performanceGrade,
+        performanceDescription: bg.performanceDescription,
+        previousSchoolName: form.previousSchool || form.currentSchool,
+        previousSchoolLocation: form.previousSchoolLocation || form.currentSchoolLocation,
+        previousClassOrLevel: bg.previousClassOrLevel,
+        schoolIdentification: bg.schoolIdentification,
+        subjects: bg.subjects
+      };
+      formData.set('academicBackground', JSON.stringify(backgroundPayload));
+      if (usesResultSlip) {
         if (slipUpload) formData.set('resultSlipToken', slipUpload.uploadToken);
         if (hasAcademicData(academic)) formData.set('academicPerformance', JSON.stringify(academic));
       }
-      Object.entries(files).forEach(([documentType, file]) => formData.append(documentType, file));
+      const tokenEntries = Object.entries(uploadedDocuments).map(([key, upload]) => ({
+        key,
+        token: upload.uploadToken
+      }));
+      if (tokenEntries.length) formData.set('documentTokens', JSON.stringify(tokenEntries));
 
       // Real backend only: the confirmation screen is reached exclusively from a successful API response.
       const result = await api.submitAdmissionApplication(formData);
@@ -543,8 +583,8 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
     }
   };
 
-  const handleFile = (key: string, file: File | undefined) => {
-    if (!file) return;
+  const handleFile = async (key: string, file: File | undefined) => {
+    if (!file || !type || documentUploading[key]) return;
     if (!ALLOWED_FILE_TYPES.includes(file.type)) {
       setFileErrors(previous => ({ ...previous, [key]: copy.invalidFileType }));
       return;
@@ -553,16 +593,42 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
       setFileErrors(previous => ({ ...previous, [key]: copy.fileTooLarge }));
       return;
     }
-    setFiles(previous => ({ ...previous, [key]: file }));
     setFileErrors(previous => {
       const next = { ...previous };
       delete next[key];
       return next;
     });
+    setDocumentUploading(previous => ({ ...previous, [key]: true }));
+    setDocumentProgress(previous => ({ ...previous, [key]: 0 }));
+    try {
+      const upload = await api.uploadAdmissionDocument(
+        file,
+        key,
+        type,
+        percent => setDocumentProgress(previous => ({ ...previous, [key]: percent })),
+        uploadedDocuments[key]?.uploadToken
+      );
+      setUploadedDocuments(previous => ({ ...previous, [key]: upload }));
+    } catch (error) {
+      setFileErrors(previous => ({
+        ...previous,
+        [key]: error instanceof Error ? error.message : copy.slipUploadFailed
+      }));
+    } finally {
+      setDocumentUploading(previous => ({ ...previous, [key]: false }));
+    }
   };
 
-  const removeFile = (key: string) => {
-    setFiles(previous => {
+  const removeFile = async (key: string) => {
+    const upload = uploadedDocuments[key];
+    if (upload) {
+      try {
+        await api.removeAdmissionDocument(upload.uploadToken);
+      } catch {
+        // The temporary token expires server-side; clearing local state is enough.
+      }
+    }
+    setUploadedDocuments(previous => {
       const next = { ...previous };
       delete next[key];
       return next;
@@ -573,6 +639,23 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
       return next;
     });
     if (fileInputs.current[key]) fileInputs.current[key]!.value = '';
+  };
+
+  const openDocumentPreview = async (key: string) => {
+    const upload = uploadedDocuments[key];
+    if (!upload) return;
+    try {
+      const blob = await api.previewAdmissionDocument(upload.uploadToken);
+      releasePreview();
+      setPreviewMeta({ fileName: upload.fileName, mime: upload.fileMime });
+      setPreviewUrl(URL.createObjectURL(blob));
+      setPreviewOpen(true);
+    } catch (error) {
+      setFileErrors(previous => ({
+        ...previous,
+        [key]: error instanceof Error ? error.message : copy.documentPreviewFailed
+      }));
+    }
   };
 
   const handleSlipFile = async (file: File | undefined) => {
@@ -627,6 +710,7 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
       try {
         const blob = await api.previewResultSlip(slipUpload.uploadToken);
         url = URL.createObjectURL(blob);
+        setPreviewMeta({ fileName: slipUpload.fileName, mime: slipUpload.fileMime });
         setPreviewUrl(url);
       } catch (error) {
         setSlipError(error instanceof Error ? error.message : copy.slipUploadFailed);
@@ -634,6 +718,34 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
       }
     }
     if (url) setPreviewOpen(true);
+  };
+
+  const setBackgroundField = <K extends keyof AcademicBackgroundState>(key: K, value: AcademicBackgroundState[K]) => {
+    setAcademicBackground(previous => ({ ...previous, [key]: value }));
+    setBackgroundError('');
+  };
+
+  const setBackgroundSubject = (index: number, key: keyof AcademicResultSubject, value: string) => {
+    setAcademicBackground(previous => ({
+      ...previous,
+      subjects: previous.subjects.map((subject, subjectIndex) =>
+        subjectIndex === index ? { ...subject, [key]: value } : subject
+      )
+    }));
+  };
+
+  const addBackgroundSubject = () => {
+    setAcademicBackground(previous => ({
+      ...previous,
+      subjects: [...previous.subjects, { name: '', marks: '', grade: '' }]
+    }));
+  };
+
+  const removeBackgroundSubject = (index: number) => {
+    setAcademicBackground(previous => ({
+      ...previous,
+      subjects: previous.subjects.filter((_, subjectIndex) => subjectIndex !== index)
+    }));
   };
 
   const setAcademicField = <K extends keyof AcademicPerformanceData>(key: K, value: AcademicPerformanceData[K]) => {
@@ -675,10 +787,13 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
 
   const applicationStatusLabel = (status: ApplicationStatus) => {
     switch (status) {
+      case 'DRAFT': return copy.statusDraft;
       case 'UNDER_REVIEW': return copy.statusUnderReview;
+      case 'DOCUMENTS_REQUIRED': return copy.statusDocumentsRequired;
       case 'ADDITIONAL_INFO_REQUIRED': return copy.statusAdditional;
       case 'APPROVED': return copy.statusApproved;
       case 'REJECTED': return copy.statusRejected;
+      case 'WAITLISTED': return copy.statusWaitlisted;
       default: return copy.statusSubmitted;
     }
   };
@@ -725,7 +840,7 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
   };
 
   const renderSelect = (
-    name: 'applicantGender' | 'senior3CompletionStatus' | 'transferReason',
+    name: 'applicantGender' | 'transferReason',
     label: string,
     options: Array<{ value: string; label: string }>,
     required = false
@@ -777,9 +892,11 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
     );
   };
 
-  const renderDocumentRow = ({ key, labelKey }: { key: string; labelKey: keyof typeof copy }) => {
-    const file = files[key];
+  const renderDocumentRow = ({ key, label }: { key: string; label: string }) => {
+    const upload = uploadedDocuments[key];
     const error = fileErrors[key];
+    const uploading = Boolean(documentUploading[key]);
+    const progress = documentProgress[key] ?? 0;
     const isDragging = draggingKey === key;
     return (
       <div
@@ -793,37 +910,57 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
         onDrop={event => {
           event.preventDefault();
           setDraggingKey(null);
-          handleFile(key, event.dataTransfer.files?.[0]);
+          void handleFile(key, event.dataTransfer.files?.[0]);
         }}
       >
-        <span className="apply-doc-icon"><FileText className="h-5 w-5" aria-hidden="true" /></span>
+        <span className="apply-doc-icon">
+          {uploading ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <FileText className="h-5 w-5" aria-hidden="true" />}
+        </span>
         <div className="min-w-0 flex-1">
-          <p className="apply-doc-label">{String(copy[labelKey])}</p>
+          <p className="apply-doc-label">{label}</p>
           <p className="apply-doc-meta truncate">
-            {file
-              ? `${copy.fileSelected}: ${file.name} · ${formatFileSize(file.size)}`
-              : `${copy.dropFilesHere} ${copy.browseFiles}`}
+            {upload
+              ? `${copy.fileSelected}: ${upload.fileName} · ${formatFileSize(upload.fileSize)}`
+              : uploading
+                ? copy.documentUploading
+                : `${copy.dropFilesHere} ${copy.browseFiles}`}
           </p>
+          {uploading && (
+            <div className="apply-progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
+              <span className="apply-progress-bar" style={{ width: `${progress}%` }} />
+              <span className="apply-progress-label">{progress}%</span>
+            </div>
+          )}
           {error && <p className="apply-error-text mt-1" role="alert">{error}</p>}
-          {!error && <p className="apply-doc-types">{copy.fileTypes}</p>}
+          {!error && !uploading && <p className="apply-doc-types">{copy.fileTypes}</p>}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <button
             type="button"
+            disabled={uploading}
             className="apply-btn-secondary !min-h-[2.5rem] !px-3 !py-2 !text-xs"
             onClick={() => fileInputs.current[key]?.click()}
           >
-            {file ? copy.replaceFile : copy.chooseFile}
+            {upload ? copy.replaceFile : copy.chooseFile}
           </button>
-          {file && (
-            <button
-              type="button"
-              onClick={() => removeFile(key)}
-              className="apply-icon-btn"
-              aria-label={`${copy.removeFile} ${String(copy[labelKey])}`}
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
+          {upload && (
+            <>
+              <button
+                type="button"
+                className="apply-btn-secondary !min-h-[2.5rem] !px-3 !py-2 !text-xs"
+                onClick={() => void openDocumentPreview(key)}
+              >
+                <ZoomIn className="h-3.5 w-3.5" aria-hidden="true" /> {copy.documentPreview}
+              </button>
+              <button
+                type="button"
+                onClick={() => void removeFile(key)}
+                className="apply-icon-btn"
+                aria-label={`${copy.removeFile} ${label}`}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </>
           )}
           <input
             ref={element => {
@@ -833,9 +970,10 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
             accept=".pdf,.jpg,.jpeg,.png"
             className="sr-only"
             tabIndex={-1}
-            aria-label={String(copy[labelKey])}
+            disabled={uploading}
+            aria-label={label}
             onChange={event => {
-              handleFile(key, event.target.files?.[0]);
+              void handleFile(key, event.target.files?.[0]);
               event.target.value = '';
             }}
           />
@@ -871,12 +1009,6 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
       return [
         { label: copy.previousSchool, value: form.previousSchool },
         { label: copy.previousSchoolLocation, value: form.previousSchoolLocation },
-        { label: copy.yearCompleted, value: form.academicYearCompleted },
-        { label: copy.yearCompletedSenior3, value: form.senior3CompletionYear },
-        { label: copy.senior3Status, value: form.senior3CompletionStatus },
-        { label: copy.previousCombination, value: form.previousCombination },
-        { label: copy.requestedLevel, value: form.requestedLevel },
-        { label: copy.requestedCombination, value: form.requestedCombination },
         { label: copy.reasonChoosing, value: form.reasonForChoosingSchool }
       ];
     }
@@ -891,16 +1023,18 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
         { label: copy.transferReason, value: form.transferReason === 'Other reason' ? form.transferReasonOther : form.transferReason }
       ];
     }
-    return [
-      { label: copy.currentEducationLevel, value: form.currentEducationLevel },
-      { label: copy.requestedEducationLevel, value: form.requestedEducationLevel },
-      { label: copy.previousSchool, value: form.previousSchool },
-      { label: copy.applicationReason, value: form.applicationReason }
-    ];
+    return [];
+  };
+
+  const handlePublicNavigate = (target: string) => {
+    if (target === 'home') onBackHome();
+    else if (target === 'apply') { window.location.hash = '#/apply'; }
+    else if (target === 'track') onOpenTracking();
+    else window.location.assign(`/${target === 'home' ? '' : target}`);
   };
 
   return (
-    <div className="schoolcare-page-bg apply-page flex min-h-screen flex-col bg-transparent">
+    <PublicLayout active="apply" onNavigate={handlePublicNavigate} mainClassName="apply-page">
       <a
         href="#apply-main"
         className="skip-link"
@@ -912,26 +1046,23 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
         Skip to main content
       </a>
 
-      <PublicAdmissionsHeader onBackHome={onBackHome} onOpenTracking={onOpenTracking} />
-
-      <main id="apply-main" tabIndex={-1} className="flex-1 outline-none">
+      <div id="apply-main" tabIndex={-1} className="outline-none">
         {stage === 'welcome' && (
-          <section className="apply-hero relative isolate overflow-hidden">
-            <div className="marketing-grid-bg absolute inset-0 -z-10 opacity-30" aria-hidden="true" />
-            <div className="apply-shell grid items-center gap-12 py-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:py-20">
+          <section className="relative isolate overflow-hidden py-10 sm:py-14">
+            <div className="public-site-shell grid items-center gap-10 py-6 sm:py-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-14">
               <div className="max-w-2xl">
-                <span className="apply-eyebrow">
+                <span className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-[#E8C97F]">
                   <BadgeCheck className="h-3.5 w-3.5" aria-hidden="true" />
                   {schoolName} · {copy.applyPortalLabel}
                 </span>
-                <h1 className="mt-6 text-4xl font-bold leading-[1.08] tracking-tight text-[#064E3B] sm:text-5xl lg:text-[3.5rem]">
+                <h1 className="mt-6 text-4xl font-bold leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-[3.5rem] public-hero-title">
                   {copy.welcomeTitle}
                 </h1>
                 <div className="mt-5 h-1.5 w-28 rounded-full bg-[#D6A84F]" aria-hidden="true" />
-                <p className="mt-5 text-lg font-bold text-[#0B6B51]">{copy.smootherStart}</p>
-                <p className="mt-3 max-w-xl text-base leading-8 text-[#52615C]">{copy.whoCanApply}</p>
-                <p className="mt-2 max-w-xl text-sm leading-7 text-[#6B7874]">{copy.welcomeDescription}</p>
-                <p className="mt-2 text-sm font-bold text-[#1D4ED8]">{copy.staffOnlyNote}</p>
+                <p className="mt-5 text-lg font-bold text-[#E8C97F]">{copy.smootherStart}</p>
+                <p className="mt-3 max-w-xl text-base leading-8 text-[#D7E8E1]">{copy.whoCanApply}</p>
+                <p className="mt-2 max-w-xl text-sm leading-7 text-[#C7D8D2]">{copy.welcomeDescription}</p>
+                <p className="mt-2 text-sm font-bold text-white">{copy.staffOnlyNote}</p>
 
                 <div className="mt-9 flex flex-col gap-3 sm:flex-row">
                   <button type="button" className="apply-btn-primary" onClick={() => setStage('type')}>
@@ -949,10 +1080,10 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
                     { icon: ClipboardList, title: copy.guidedApplication, text: copy.guidedApplicationDesc },
                     { icon: ShieldCheck, title: copy.privateByDesign, text: copy.privateByDesignDesc }
                   ].map(({ icon: Icon, title, text }) => (
-                    <div key={title} className="apply-mini-card">
-                      <Icon className="h-5 w-5 text-[#0B6B51]" aria-hidden="true" />
-                      <p className="mt-3 text-sm font-bold text-[#064E3B]">{title}</p>
-                      <p className="mt-1 text-xs leading-5 text-[#6B7874]">{text}</p>
+                    <div key={title} className="rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur-sm">
+                      <Icon className="h-5 w-5 text-[#E8C97F]" aria-hidden="true" />
+                      <p className="mt-3 text-sm font-bold text-white">{title}</p>
+                      <p className="mt-1 text-xs leading-5 text-[#D7E8E1]">{text}</p>
                     </div>
                   ))}
                 </div>
@@ -989,13 +1120,13 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
 
         {stage === 'type' && (
           <section className="apply-shell py-12 sm:py-16">
-            <button type="button" onClick={() => setStage('welcome')} className="apply-back-link">
+            <button type="button" onClick={() => setStage('welcome')} className="apply-back-link text-white/90 hover:text-white">
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               {copy.backToSite}
             </button>
-            <span className="apply-eyebrow mt-6">{copy.applyPortalLabel}</span>
-            <h1 className="mt-5 text-3xl font-bold tracking-tight text-[#064E3B] sm:text-4xl">{copy.chooseApplicationType}</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-[#61706B]">{copy.chooseApplicationTypeDesc}</p>
+            <span className="mt-6 inline-flex rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-[#E8C97F]">{copy.applyPortalLabel}</span>
+            <h1 className="mt-5 text-3xl font-bold tracking-tight text-white sm:text-4xl public-hero-title">{copy.chooseApplicationType}</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-7 text-[#D7E8E1]">{copy.chooseApplicationTypeDesc}</p>
 
             <div className="mt-9 grid gap-5 lg:grid-cols-3">
               {TYPE_OPTIONS.map(({ type: optionType, titleKey, descriptionKey, icon: Icon }) => (
@@ -1021,11 +1152,11 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
         {stage === 'form' && type && (
           <section className="apply-shell py-10 sm:py-14">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <button type="button" onClick={() => (step === 0 ? setStage('type') : goToStep(step - 1))} className="apply-back-link">
+              <button type="button" onClick={() => (step === 0 ? setStage('type') : goToStep(step - 1))} className="apply-back-link text-white/90 hover:text-white">
                 <ArrowLeft className="h-4 w-4" aria-hidden="true" />
                 {step === 0 ? copy.backToTypes : steps[step - 1]}
               </button>
-              <span className="apply-badge">{copy.stepOf} {step + 1} / {steps.length}</span>
+              <span className="inline-flex rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-bold text-[#E8C97F]">{copy.stepOf} {step + 1} / {steps.length}</span>
             </div>
 
             <div className="mt-8 grid gap-8 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start">
@@ -1169,19 +1300,6 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
                       <section className="grid gap-5 sm:grid-cols-2">
                         {renderField('previousSchool', copy.previousSchool, { required: true })}
                         {renderField('previousSchoolLocation', copy.previousSchoolLocation, { required: true })}
-                        {renderField('academicYearCompleted', copy.yearCompleted, { required: true })}
-                        {renderField('senior3CompletionYear', copy.yearCompletedSenior3, { required: true, placeholder: '2025' })}
-                        {renderSelect('senior3CompletionStatus', copy.senior3Status, [
-                          { value: 'Completed', label: copy.completed },
-                          { value: 'Awaiting results', label: copy.awaitingResults },
-                          { value: 'Not completed', label: copy.notCompleted }
-                        ], true)}
-                        {renderField('previousCombination', copy.previousCombination)}
-                        <div className="apply-field">
-                          <span className="apply-label">{copy.requestedLevel}</span>
-                          <div className="admission-input flex items-center font-bold text-[#064E3B]">Senior 4</div>
-                        </div>
-                        {renderField('requestedCombination', copy.requestedCombination)}
                         <div className="sm:col-span-2">{renderField('previousAcademicPerformance', copy.performance, { textarea: true })}</div>
                         <div className="sm:col-span-2">{renderField('reasonForChoosingSchool', copy.reasonChoosing, { required: true, textarea: true })}</div>
                       </section>
@@ -1205,15 +1323,141 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
                   )}
 
                   {step === 1 && type === 'OTHER_ADMISSION' && (
-                    <div className="mt-8 grid gap-5 sm:grid-cols-2">
-                      {renderField('currentEducationLevel', copy.currentEducationLevel, { required: true })}
-                      {renderField('requestedEducationLevel', copy.requestedEducationLevel, { required: true })}
-                      {renderField('previousSchool', copy.previousSchool, { required: true })}
-                      <div className="sm:col-span-2">{renderField('applicationReason', copy.applicationReason, { required: true, textarea: true })}</div>
+                    <div className="mt-8 rounded-2xl border border-[#E9E4D9] bg-[#FBFAF6] p-5 text-sm leading-7 text-[#52615C]">
+                      <p className="font-bold text-[#064E3B]">{copy.academicBackgroundNote}</p>
+                      <p className="mt-1">{copy.previousAcademicBackgroundIntro}</p>
                     </div>
                   )}
 
-                  {step === 2 && type === 'NEW_STUDENT_SENIOR4' && (
+                  {step === 1 && (
+                    <section id="academic-background" className="apply-subsection mt-8 border-t border-[#EEE9DD] pt-8">
+                      <div className="apply-section-heading">
+                        <GraduationCap className="h-5 w-5" aria-hidden="true" />
+                        <h2>{copy.previousAcademicBackgroundHeading}</h2>
+                      </div>
+                      <p className="mt-2 max-w-3xl text-sm leading-6 text-[#52615C]">{copy.previousAcademicBackgroundIntro}</p>
+                      {backgroundError && (
+                        <p className="apply-error-text mt-3" role="alert">{backgroundError}</p>
+                      )}
+
+                      <div className="mt-5 grid gap-5 sm:grid-cols-2">
+                        <div className="apply-field">
+                          <label className="apply-label" htmlFor="bg-previous-class">{copy.previousClassOrLevel}</label>
+                          <input
+                            id="bg-previous-class"
+                            className="admission-input"
+                            value={academicBackground.previousClassOrLevel}
+                            onChange={event => setBackgroundField('previousClassOrLevel', event.target.value)}
+                          />
+                        </div>
+                        <div className="apply-field">
+                          <label className="apply-label" htmlFor="bg-school-id">{copy.schoolIdentification}</label>
+                          <input
+                            id="bg-school-id"
+                            className="admission-input"
+                            value={academicBackground.schoolIdentification}
+                            onChange={event => setBackgroundField('schoolIdentification', event.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-6">
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 className="text-sm font-bold text-[#064E3B]">{copy.academicPerformanceHeading}</h3>
+                          <button type="button" onClick={addBackgroundSubject} className="apply-edit-btn">
+                            <Plus className="h-3.5 w-3.5" aria-hidden="true" /> {copy.addSubject}
+                          </button>
+                        </div>
+                        <p className="mt-1 text-xs text-[#8A7A57]">{copy.gradeScaleNote}</p>
+                        <div className="mt-3 space-y-3">
+                          {academicBackground.subjects.map((subject, index) => (
+                            <div key={`bg-subject-${index}`} className="apply-result-subject">
+                              <div className="apply-field">
+                                <label className="apply-label" htmlFor={`bg-subject-name-${index}`}>{copy.subject}</label>
+                                <input
+                                  id={`bg-subject-name-${index}`}
+                                  className="admission-input"
+                                  value={subject.name}
+                                  onChange={event => setBackgroundSubject(index, 'name', event.target.value)}
+                                />
+                              </div>
+                              <div className="apply-field">
+                                <label className="apply-label" htmlFor={`bg-subject-marks-${index}`}>{copy.marks}</label>
+                                <input
+                                  id={`bg-subject-marks-${index}`}
+                                  className="admission-input"
+                                  inputMode="decimal"
+                                  value={subject.marks || ''}
+                                  onChange={event => setBackgroundSubject(index, 'marks', event.target.value)}
+                                />
+                              </div>
+                              <div className="apply-field">
+                                <label className="apply-label" htmlFor={`bg-subject-grade-${index}`}>{copy.grade}</label>
+                                <select
+                                  id={`bg-subject-grade-${index}`}
+                                  className="admission-input"
+                                  value={subject.grade || ''}
+                                  onChange={event => setBackgroundSubject(index, 'grade', event.target.value)}
+                                >
+                                  <option value="">{copy.selectOption}</option>
+                                  {(publicOptions?.grading.grades ?? []).map(grade => (
+                                    <option key={grade.grade} value={grade.grade}>{grade.grade}{grade.description ? ` — ${grade.description}` : ''}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <button
+                                type="button"
+                                className="apply-icon-btn self-end"
+                                onClick={() => removeBackgroundSubject(index)}
+                                aria-label={`${copy.removeSubject} ${index + 1}`}
+                              >
+                                <X className="h-4 w-4" aria-hidden="true" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="mt-6 grid gap-5 sm:grid-cols-3">
+                        <div className="apply-field">
+                          <label className="apply-label" htmlFor="bg-performance-marks">{copy.performanceMarks}</label>
+                          <input
+                            id="bg-performance-marks"
+                            className="admission-input"
+                            inputMode="decimal"
+                            value={academicBackground.performanceMarks}
+                            onChange={event => setBackgroundField('performanceMarks', event.target.value)}
+                          />
+                        </div>
+                        <div className="apply-field">
+                          <label className="apply-label" htmlFor="bg-performance-grade">{copy.performanceGrade}</label>
+                          <select
+                            id="bg-performance-grade"
+                            className="admission-input"
+                            value={academicBackground.performanceGrade}
+                            onChange={event => setBackgroundField('performanceGrade', event.target.value)}
+                          >
+                            <option value="">{copy.selectOption}</option>
+                            {(publicOptions?.grading.grades ?? []).map(grade => (
+                              <option key={grade.grade} value={grade.grade}>{grade.grade}{grade.description ? ` — ${grade.description}` : ''}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="apply-field sm:col-span-3">
+                          <label className="apply-label" htmlFor="bg-performance-description">{copy.performanceDescription}</label>
+                          <textarea
+                            id="bg-performance-description"
+                            className="admission-input"
+                            rows={3}
+                            value={academicBackground.performanceDescription}
+                            onChange={event => setBackgroundField('performanceDescription', event.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
+                  {step === 2 && usesResultSlip && (
                     <div className="mt-8 space-y-8">
                       <section className="apply-subsection">
                         <div className="apply-section-heading">
@@ -1230,11 +1474,8 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
                         </div>
                         <p className="mt-2 text-sm leading-6 text-[#52615C]">{copy.uploadSlipText}</p>
                         <p className="mt-2 text-xs font-bold text-[#8A6D1F]">
-                          {slipRequired ? copy.slipRequiredNote : copy.slipWaivedNote}
+                          {type === 'NEW_STUDENT_SENIOR4' ? copy.slipRequiredNote : copy.slipOptionalNote}
                         </p>
-                        {!slipRequired && slipExceptionNote && (
-                          <p className="mt-1 text-xs text-[#6B7874]">{slipExceptionNote}</p>
-                        )}
 
                         <div
                           className={`apply-slip-row${draggingKey === 'resultSlip' ? ' is-dragging' : ''}${slipError ? ' has-error' : ''}`}
@@ -1414,7 +1655,7 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
                     </div>
                   )}
 
-                  {step === 2 && type !== 'NEW_STUDENT_SENIOR4' && (
+                  {step === 2 && !usesResultSlip && (
                     <div className="mt-8">
                       <div className="apply-section-heading">
                         <UploadCloud className="h-5 w-5" aria-hidden="true" />
@@ -1448,12 +1689,24 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
                           { label: copy.relationship, value: form.guardianRelationship }
                         ])}
                         {renderSummary(copy.stepDetails, 1, detailRows())}
+                        {renderSummary(copy.previousAcademicBackgroundHeading, 1, [
+                          { label: copy.previousClassOrLevel, value: academicBackground.previousClassOrLevel },
+                          { label: copy.schoolIdentification, value: academicBackground.schoolIdentification },
+                          { label: copy.performanceMarks, value: academicBackground.performanceMarks },
+                          { label: copy.performanceGrade, value: academicBackground.performanceGrade },
+                          ...academicBackground.subjects
+                            .filter(subject => subject.name || subject.marks || subject.grade)
+                            .map(subject => ({
+                              label: subject.name || copy.subject,
+                              value: [subject.marks, subject.grade].filter(Boolean).join(' · ')
+                            }))
+                        ])}
                         {renderSummary(copy.stepDocuments, 2, [
-                          ...documentFields.map(({ key, labelKey }) => ({
-                            label: String(copy[labelKey]),
-                            value: files[key]?.name ?? ''
+                          ...documentFields.map(({ key, label }) => ({
+                            label,
+                            value: uploadedDocuments[key]?.fileName ?? ''
                           })),
-                          ...(type === 'NEW_STUDENT_SENIOR4'
+                          ...(usesResultSlip
                             ? [{
                                 label: copy.resultSlipLabel,
                                 value: slipUpload ? `${copy.resultSlipUploaded}: ${slipUpload.fileName}` : copy.resultSlipNotUploaded
@@ -1589,7 +1842,7 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
             </div>
           </section>
         )}
-      </main>
+      </div>
 
       {previewOpen && previewUrl && (
         <div className="apply-modal-backdrop" role="presentation" onClick={() => setPreviewOpen(false)}>
@@ -1601,13 +1854,13 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
             onClick={event => event.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3 border-b border-[#EEE9DD] px-5 py-3">
-              <p className="text-sm font-bold text-[#064E3B]">{slipUpload?.fileName || copy.slipPreview}</p>
+              <p className="text-sm font-bold text-[#064E3B]">{previewMeta.fileName || copy.slipPreview}</p>
               <button type="button" className="apply-icon-btn" onClick={() => setPreviewOpen(false)} aria-label={copy.slipClosePreview}>
                 <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
             <div className="apply-modal-body">
-              {slipUpload?.fileMime.startsWith('image/') ? (
+              {previewMeta.mime.startsWith('image/') ? (
                 <img src={previewUrl || undefined} alt={copy.slipPreview} className="mx-auto max-h-full max-w-full object-contain" />
               ) : (
                 <iframe src={previewUrl || undefined} title={copy.slipPreview} className="h-full w-full border-0" />
@@ -1616,8 +1869,6 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
           </div>
         </div>
       )}
-
-      <PublicAdmissionsFooter />
-    </div>
+    </PublicLayout>
   );
 };

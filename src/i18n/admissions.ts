@@ -76,9 +76,6 @@ const en = {
   previousSchoolType: 'Previous school type (optional)',
   transferReason: 'Reason for transferring',
   otherReason: 'Please explain your reason',
-  currentEducationLevel: 'Current education level',
-  requestedEducationLevel: 'Requested education level',
-  applicationReason: 'Reason for your application',
   documentsHeading: 'Supporting documents',
   documentsNote:
     'Upload clear PDF, JPG or PNG copies (max 5 MB each). Documents are optional — a missing document will not automatically reject your application.',
@@ -196,8 +193,7 @@ const en = {
   uploadSlipText:
     'Please upload a clear and readable copy of your official Senior 3 results slip or certificate.',
   slipRequiredNote: 'A clear result slip is required before this application can be submitted.',
-  slipWaivedNote:
-    'The school has allowed applications without a result slip at this time. You may still upload one if you have it.',
+  slipOptionalNote: 'Upload a result slip if you have one so we can review your previous results.',
   slipChooseFile: 'Choose result slip',
   slipReplaceFile: 'Replace result slip',
   slipRemoveFile: 'Remove result slip',
@@ -212,6 +208,7 @@ const en = {
   academicPerformanceHeading: 'Your Academic Performance (optional)',
   academicPerformanceText:
     'If automatic reading is available, we will show what we found. Check it against your original slip and correct anything wrong. Leave fields empty if you are unsure — your application can still be submitted.',
+  academicBackgroundNote: 'Please provide your previous academic background below.',
   pendingVerification: 'Pending Verification',
   extractionUnavailable:
     'Automatic reading was not available. Leave the fields empty if you are unsure; our admissions team will read the original slip.',
@@ -261,12 +258,36 @@ const en = {
   markInvalid: 'Mark invalid',
   saveVerification: 'Save verification',
   verifiedSummaryRequired: 'Enter subjects and marks/grades from the original slip before marking verified.',
-  slipSettings: 'Result slip requirement',
-  slipRequiredSetting: 'Require a Senior 3 result slip for new Senior 4 applications',
-  slipRequiredHint: 'Turn this off only when the school has officially allowed an exception.',
-  slipExceptionReason: 'Reason for exception',
+  admissionDocumentSettings: 'Admission document categories',
+  slipAlwaysRequired:
+    'A Senior 3 result slip is required for every new Senior 4 application. Other applicants may upload one if available.',
   saveSettings: 'Save requirement',
-  settingsSaved: 'Admission setting saved.'
+  settingsSaved: 'Admission setting saved.',
+
+  // Previous academic background and configurable documents
+  previousAcademicBackgroundHeading: 'Previous Academic Background',
+  previousAcademicBackgroundIntro:
+    'Tell us about your previous school, class or level, and subjects. These details are checked against the school’s current academic configuration.',
+  seniorCompletionYear: 'Year of senior completion',
+  performanceMarks: 'Overall marks / aggregate',
+  performanceGrade: 'Performance grade',
+  performanceDescription: 'Performance description (optional)',
+  previousClassOrLevel: 'Previous class or level',
+  schoolIdentification: 'School identification / exam number',
+  gradeScaleNote: 'Choose a grade from the school’s configured grading scale.',
+  documentUploading: 'Uploading document…',
+  documentPreview: 'Preview document',
+  documentPreviewFailed: 'The document preview could not be loaded.',
+  documentsRequiredNote: 'Upload the requested documents before resubmitting.',
+  statusDraft: 'Draft',
+  statusDocumentsRequired: 'Documents Required',
+  statusWaitlisted: 'Waitlisted',
+  reviewDecision: 'Review decision',
+  requestedDocuments: 'Requested documents',
+  decisionHistory: 'Decision history',
+  accessHistory: 'Document access history',
+  academicBackground: 'Previous academic background',
+  selectDocument: 'Select the documents that must be provided'
 } as const;
 
 const rw: Record<keyof typeof en, string> = {
@@ -344,9 +365,6 @@ const rw: Record<keyof typeof en, string> = {
   previousSchoolType: 'Ubwoko bw ishuri mbere (bidakenewe)',
   transferReason: 'Impamvu yo kwimukira',
   otherReason: 'Sobanura impamvu yawe',
-  currentEducationLevel: 'Urwego rw uburezi ubu',
-  requestedEducationLevel: 'Urwego rw uburezi usaba',
-  applicationReason: 'Impamvu y ubusabe bwawe',
   documentsHeading: 'Inyandiko zifasha',
   documentsNote:
     'Ohereza kopi zisobanutse za PDF, JPG cyangwa PNG (ntizirengeje 5 MB buri imwe). Inyandiko ntabwo zikenewe; kutazoha ntibihita byanga ubusabe bwawe.',
@@ -464,8 +482,7 @@ const rw: Record<keyof typeof en, string> = {
   uploadSlipText:
     'Ohereza kopi isobanutse kandi yemewe y ikipi cy ibisubizo bya S3 cyangwa ikemezo.',
   slipRequiredNote: 'Ikipi cy ibisubizo gisobanutse kirakenewe mbere yo kohereza ubusabe.',
-  slipWaivedNote:
-    'Ishuri ryemereye abantu kohereza ubusabe nta kipi cy ibisubizo kuri ubu. Niba uyifite, ushobora kuyohereza.',
+  slipOptionalNote: 'Ohereza ikipi cy ibisubizo niba uyifite kugira ngo dusuzume imitsindire yawe mbere.',
   slipChooseFile: 'Hitamo ikipi cy ibisubizo',
   slipReplaceFile: 'Simbuza ikipi cy ibisubizo',
   slipRemoveFile: 'Kura ikipi cy ibisubizo',
@@ -529,12 +546,36 @@ const rw: Record<keyof typeof en, string> = {
   markInvalid: 'Gereranya nk ibinyoma',
   saveVerification: 'Bika kugenzura',
   verifiedSummaryRequired: 'Andika amasomo n amanota/icyiciro biri kuri ikipi mbere yo kwemeza.',
-  slipSettings: 'Icyo gipimo gikenewe',
-  slipRequiredSetting: 'Saba ikipi cy ibisubizo cya S3 ku busabe bushya bwa S4',
-  slipRequiredHint: 'Hagarika gusa niba ishuri ryemeje uburenganzira budasanzwe.',
-  slipExceptionReason: 'Impamvu y uburenganzira',
+  admissionDocumentSettings: 'Ibyiciro by inyandiko zo kwakirwa',
+  slipAlwaysRequired:
+    'Ikipi cy ibisubizo cya S3 kirakenewe ku busabe bushya bwa S4. Abandi basaba bashobora kuyohereza niba bayifite.',
   saveSettings: 'Bika icyo gipimo',
-  settingsSaved: 'Icyo gipimo cy ubwakilishi cyabitswe.'
+  settingsSaved: 'Icyo gipimo cy ubwakilishi cyabitswe.',
+
+  previousAcademicBackgroundHeading: 'Ubumenyi bw amasomo mbere',
+  previousAcademicBackgroundIntro:
+    'Tubwire kuri ishuri mbere, icyiciro cyangwa urwego, n amasomo wafashe. Aya makuru agenzurwa na sisitemu y ishuri.',
+  seniorCompletionYear: 'Umwaka warangije amasomo ya Senior',
+  performanceMarks: 'Amanota rusange / aggregate',
+  performanceGrade: 'Icyiciro cy imitsindire',
+  performanceDescription: 'Ibisobanuro by imitsindire (bidakenewe)',
+  previousClassOrLevel: 'Icyiciro cyangwa urwego mbere',
+  schoolIdentification: 'Indangamuntu y ishuri / numero y igeragezo',
+  gradeScaleNote: 'Hitamo icyiciro kiri mu gipimo cy ishuri.',
+  documentUploading: 'Inyandiko irinjira…',
+  documentPreview: 'Reba inyandiko',
+  documentPreviewFailed: 'Inyandiko ntishobora kwerekanwa.',
+  documentsRequiredNote: 'Shyiramo inyandiko zasabwa mbere yo kohereza ubusabe.',
+  statusDraft: 'Icyegeranyo',
+  statusDocumentsRequired: 'Inyandiko zirakenewe',
+  statusWaitlisted: 'Ku rutonde rwo kuzuza',
+  reviewDecision: 'Icyemezo cy ubugenzuzi',
+  requestedDocuments: 'Inyandiko zasabwa',
+  decisionHistory: 'Amateka y icyemezo',
+  accessHistory: 'Amateka yo kureba inyandiko',
+  academicBackground: 'Ubumenyi bw amasomo mbere',
+  academicBackgroundNote: 'Nyamuneka tanga amakuru y uburezi bwaho mbere hano hepfo.',
+  selectDocument: 'Hitamo inyandiko zigomba gutangwa'
 };
 
 export type AdmissionsCopy = Record<keyof typeof en, string>;

@@ -19,6 +19,8 @@ import type {
   AcademicPerformanceData,
   AcademicResultSubject,
   AdmissionApplication,
+  AdmissionDocumentCategory,
+  AdmissionSettings,
   ApplicationStatus,
   ApplicationType,
   ResultSlipVerificationStatus
@@ -27,11 +29,23 @@ import { api } from '../services/api';
 import { useAdmissionsCopy } from '../i18n/admissions';
 
 const STATUSES: ApplicationStatus[] = [
+  'DRAFT',
   'SUBMITTED',
   'UNDER_REVIEW',
+  'DOCUMENTS_REQUIRED',
   'ADDITIONAL_INFO_REQUIRED',
   'APPROVED',
-  'REJECTED'
+  'REJECTED',
+  'WAITLISTED'
+];
+
+const REVIEW_STATUSES: ApplicationStatus[] = [
+  'UNDER_REVIEW',
+  'DOCUMENTS_REQUIRED',
+  'ADDITIONAL_INFO_REQUIRED',
+  'APPROVED',
+  'REJECTED',
+  'WAITLISTED'
 ];
 
 const TYPE_LABELS: Record<ApplicationType, string> = {
@@ -41,11 +55,14 @@ const TYPE_LABELS: Record<ApplicationType, string> = {
 };
 
 const STATUS_STYLES: Record<ApplicationStatus, string> = {
+  DRAFT: 'bg-slate-100 text-slate-700',
   SUBMITTED: 'bg-slate-100 text-slate-700',
   UNDER_REVIEW: 'bg-blue-100 text-blue-800',
+  DOCUMENTS_REQUIRED: 'bg-amber-100 text-amber-800',
   ADDITIONAL_INFO_REQUIRED: 'bg-amber-100 text-amber-800',
   APPROVED: 'bg-emerald-100 text-emerald-800',
-  REJECTED: 'bg-red-100 text-red-700'
+  REJECTED: 'bg-red-100 text-red-700',
+  WAITLISTED: 'bg-violet-100 text-violet-800'
 };
 
 const VERIFICATION_STATUSES: ResultSlipVerificationStatus[] = [
@@ -88,13 +105,14 @@ export const AdmissionsManagementPage: React.FC = () => {
   const [note, setNote] = useState('');
   const [status, setStatus] = useState<ApplicationStatus>('UNDER_REVIEW');
   const [reason, setReason] = useState('');
+  const [requestedDocumentTypes, setRequestedDocumentTypes] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState('');
 
-  const [settings, setSettings] = useState<{ resultSlipRequired: boolean; resultSlipExceptionNote?: string }>({
-    resultSlipRequired: true
+  const [settings, setSettings] = useState<AdmissionSettings>({
+    resultSlipRequired: true,
+    documentCategories: []
   });
-  const [exceptionNote, setExceptionNote] = useState('');
   const [verificationStatus, setVerificationStatus] = useState<ResultSlipVerificationStatus>('NOT_YET_VERIFIED');
   const [verificationNotes, setVerificationNotes] = useState('');
   const [verificationData, setVerificationData] = useState<AcademicPerformanceData>(emptyAcademicData);
@@ -103,7 +121,6 @@ export const AdmissionsManagementPage: React.FC = () => {
     try {
       const result = await api.getAdmissionSettings();
       setSettings(result);
-      setExceptionNote(result.resultSlipExceptionNote || '');
     } catch (err) {
       setError(err instanceof Error ? err.message : copy.genericError);
     }
@@ -147,9 +164,10 @@ export const AdmissionsManagementPage: React.FC = () => {
     try {
       const result = await api.getAdmissionApplication(id);
       setSelected(result.application);
-      setStatus(result.application.status === 'SUBMITTED' ? 'UNDER_REVIEW' : result.application.status);
+      setStatus(REVIEW_STATUSES.includes(result.application.status) ? result.application.status : 'UNDER_REVIEW');
       setNote('');
       setReason('');
+      setRequestedDocumentTypes([]);
       const results = result.application.senior3Results;
       setVerificationStatus(results?.verificationStatus || 'NOT_YET_VERIFIED');
       setVerificationNotes(results?.verificationNotes || '');
@@ -182,9 +200,10 @@ export const AdmissionsManagementPage: React.FC = () => {
     setBusy(true);
     setError('');
     try {
-      const result = await api.updateAdmissionStatus(selected.id, status, reason.trim());
+      const result = await api.updateAdmissionStatus(selected.id, status, reason.trim(), requestedDocumentTypes);
       setSelected(result.application);
       setReason('');
+      setRequestedDocumentTypes([]);
       setFeedback(result.notifications.some(item => item.sent) ? copy.notificationNote : copy.messagingOff);
       await load();
     } catch (err) {
@@ -199,11 +218,9 @@ export const AdmissionsManagementPage: React.FC = () => {
     setError('');
     try {
       const result = await api.updateAdmissionSettings({
-        resultSlipRequired: settings.resultSlipRequired,
-        resultSlipExceptionNote: settings.resultSlipRequired ? undefined : exceptionNote.trim()
+        documentCategories: settings.documentCategories
       });
       setSettings(result);
-      setExceptionNote(result.resultSlipExceptionNote || '');
       setFeedback(copy.settingsSaved);
     } catch (err) {
       setError(err instanceof Error ? err.message : copy.genericError);
@@ -251,6 +268,15 @@ export const AdmissionsManagementPage: React.FC = () => {
       data?.division ||
       data?.subjects.some(subject => subject.name || subject.marks || subject.grade)
   );
+
+  const updateDocumentCategory = (key: string, patch: Partial<AdmissionDocumentCategory>) => {
+    setSettings(previous => ({
+      ...previous,
+      documentCategories: (previous.documentCategories ?? []).map(category =>
+        category.key === key ? { ...category, ...patch } : category
+      )
+    }));
+  };
 
   const setVerificationField = <K extends keyof AcademicPerformanceData>(key: K, value: AcademicPerformanceData[K]) => {
     setVerificationData(previous => ({ ...previous, [key]: value }));
@@ -314,32 +340,35 @@ export const AdmissionsManagementPage: React.FC = () => {
         <div className="flex items-start gap-3">
           <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-bold text-amber-900">{copy.slipSettings}</h2>
-            <p className="mt-1 text-xs text-amber-800">{copy.slipRequiredHint}</p>
-            <label className="mt-3 flex items-start gap-2 text-sm font-semibold text-slate-800">
-              <input
-                type="checkbox"
-                checked={settings.resultSlipRequired}
-                onChange={event => setSettings(previous => ({ ...previous, resultSlipRequired: event.target.checked }))}
-                className="mt-0.5 h-4 w-4 accent-blue-700"
-              />
-              {copy.slipRequiredSetting}
-            </label>
-            {!settings.resultSlipRequired && (
-              <label className="mt-3 block">
-                <span className="mb-1 block text-xs font-semibold text-slate-700">{copy.slipExceptionReason}</span>
-                <textarea
-                  value={exceptionNote}
-                  onChange={event => setExceptionNote(event.target.value)}
-                  rows={2}
-                  className="w-full rounded-xl border border-amber-200 bg-white p-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-              </label>
-            )}
+            <h2 className="text-sm font-bold text-amber-900">{copy.admissionDocumentSettings}</h2>
+            <p className="mt-1 text-xs text-amber-800">{copy.slipAlwaysRequired}</p>
+
+            <div className="mt-4 border-t border-amber-200 pt-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-amber-900">{copy.documentsList}</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {(settings.documentCategories ?? []).map(category => (
+                  <label key={category.key} className="flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={category.active}
+                      onChange={event => updateDocumentCategory(category.key, { active: event.target.checked })}
+                      className="h-4 w-4 accent-blue-700"
+                    />
+                    <input
+                      value={category.label}
+                      onChange={event => updateDocumentCategory(category.key, { label: event.target.value })}
+                      className="min-w-0 flex-1 border-0 bg-transparent font-semibold outline-none"
+                      aria-label={`${category.key} label`}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
             <button
               type="button"
               onClick={() => void saveSettings()}
-              disabled={busy || (!settings.resultSlipRequired && exceptionNote.trim().length < 5)}
+              disabled={busy}
               className="mt-3 inline-flex items-center gap-2 rounded-xl bg-amber-700 px-3.5 py-2 text-xs font-bold text-white disabled:opacity-50"
             >
               {copy.saveSettings}
@@ -515,6 +544,54 @@ export const AdmissionsManagementPage: React.FC = () => {
                 </dl>
               </section>
 
+              {selected.academicBackground && (
+                <section>
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500">{copy.academicBackground}</h3>
+                  <dl className="mt-3 grid gap-3 rounded-xl border border-slate-200 p-4 text-sm sm:grid-cols-2">
+                    {[
+                      [copy.yearCompleted, selected.academicBackground.academicYearCompleted],
+                      [copy.seniorCompletionYear, selected.academicBackground.seniorCompletionYear],
+                      [copy.previousCombination, selected.academicBackground.previousCombination],
+                      [copy.requestedCombination, selected.academicBackground.preferredCombination],
+                      [copy.previousClassOrLevel, selected.academicBackground.previousClassOrLevel],
+                      [copy.schoolIdentification, selected.academicBackground.schoolIdentification],
+                      [copy.previousSchool, selected.academicBackground.previousSchoolName],
+                      [copy.previousSchoolLocation, selected.academicBackground.previousSchoolLocation],
+                      [copy.performanceMarks, selected.academicBackground.performanceMarks],
+                      [copy.performanceGrade, selected.academicBackground.performanceGrade],
+                      [copy.performanceDescription, selected.academicBackground.performanceDescription]
+                    ].filter(([, value]) => Boolean(value)).map(([label, value]) => (
+                      <div key={String(label)}>
+                        <dt className="text-xs text-slate-500">{label}</dt>
+                        <dd className="break-words font-semibold text-slate-800">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {selected.academicBackground.subjects.length > 0 && (
+                    <div className="mt-2 overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="w-full min-w-[360px] text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-500">
+                          <tr>
+                            <th className="px-3 py-2">{copy.subject}</th>
+                            <th className="px-3 py-2">{copy.marks}</th>
+                            <th className="px-3 py-2">{copy.grade}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {selected.academicBackground.subjects.map((subject, index) => (
+                            <tr key={`${subject.id || index}-${subject.name}`}>
+                              <td className="px-3 py-2 font-semibold text-slate-700">{subject.name || '—'}</td>
+                              <td className="px-3 py-2 text-slate-600">{subject.marks || '—'}</td>
+                              <td className="px-3 py-2 text-slate-600">{subject.grade || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              )}
+
               <section>
                 <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500">{copy.documentsList}</h3>
                 {selected.documents.length === 0 ? (
@@ -528,13 +605,23 @@ export const AdmissionsManagementPage: React.FC = () => {
                           <span className="truncate">{document.fileName}</span>
                           <span className="shrink-0 text-xs text-slate-400">{document.documentType.replaceAll('_', ' ')}</span>
                         </span>
-                        <a
-                          href={api.getAdmissionDocumentUrl(selected.id, document.id)}
-                          download
-                          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
-                        >
-                          <Download className="h-4 w-4" /> {copy.download}
-                        </a>
+                        <span className="flex shrink-0 gap-2">
+                          <a
+                            href={api.getAdmissionDocumentPreviewUrl(selected.id, document.id)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                          >
+                            <ZoomIn className="h-4 w-4" /> {copy.documentPreview}
+                          </a>
+                          <a
+                            href={api.getAdmissionDocumentUrl(selected.id, document.id)}
+                            download
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
+                          >
+                            <Download className="h-4 w-4" /> {copy.download}
+                          </a>
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -740,6 +827,40 @@ export const AdmissionsManagementPage: React.FC = () => {
                 </section>
               )}
 
+              {(selected.reviewDecisions?.length ?? 0) > 0 && (
+                <section className="border-t border-slate-200 pt-5">
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500">{copy.decisionHistory}</h3>
+                  <div className="mt-2 space-y-2">
+                    {selected.reviewDecisions!.map(decision => (
+                      <div key={decision.id} className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                        <p className="font-bold text-slate-800">
+                          {decision.decision.replaceAll('_', ' ')} · {decision.decidedByName} · {new Date(decision.createdAt).toLocaleString()}
+                        </p>
+                        {decision.reason && <p className="mt-1 whitespace-pre-wrap">{decision.reason}</p>}
+                        {decision.requestedDocumentTypes?.length ? (
+                          <p className="mt-1 font-semibold text-amber-700">
+                            {copy.requestedDocuments}: {decision.requestedDocumentTypes.join(', ')}
+                          </p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {(selected.documentAccessHistory?.length ?? 0) > 0 && (
+                <section className="border-t border-slate-200 pt-5">
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500">{copy.accessHistory}</h3>
+                  <div className="mt-2 space-y-2">
+                    {selected.documentAccessHistory!.map(event => (
+                      <div key={event.id} className="rounded-lg bg-slate-50 p-2.5 text-xs text-slate-600">
+                        <span className="font-bold text-slate-800">{event.action}</span> · {event.actorName} ({event.actorRole}) · {new Date(event.createdAt).toLocaleString()}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               <section>
                 <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500">{copy.reviewNotes}</h3>
                 <p className="mt-1 text-xs text-slate-400">{copy.internalOnly}</p>
@@ -760,7 +881,7 @@ export const AdmissionsManagementPage: React.FC = () => {
               <section className="border-t border-slate-200 pt-5">
                 <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500">{copy.changeStatus}</h3>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {STATUSES.map(item => (
+                  {REVIEW_STATUSES.map(item => (
                     <button
                       key={item}
                       type="button"
@@ -771,16 +892,40 @@ export const AdmissionsManagementPage: React.FC = () => {
                     </button>
                   ))}
                 </div>
-                {(status === 'REJECTED' || status === 'ADDITIONAL_INFO_REQUIRED') && (
+                {['REJECTED', 'ADDITIONAL_INFO_REQUIRED', 'DOCUMENTS_REQUIRED', 'WAITLISTED'].includes(status) && (
                   <label className="mt-4 block">
                     <span className="mb-1.5 block text-sm font-semibold text-slate-700">{copy.statusReason}</span>
                     <textarea value={reason} onChange={event => setReason(event.target.value)} rows={3} className="w-full rounded-xl border border-slate-200 p-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                   </label>
                 )}
+                {status === 'DOCUMENTS_REQUIRED' && (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-bold text-amber-900">{copy.selectDocument}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {(settings.documentCategories ?? []).map(category => (
+                        <label key={category.key} className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={requestedDocumentTypes.includes(category.key)}
+                            onChange={event => setRequestedDocumentTypes(previous =>
+                              event.target.checked
+                                ? [...previous, category.key]
+                                : previous.filter(key => key !== category.key)
+                            )}
+                            className="h-3.5 w-3.5 accent-amber-700"
+                          />
+                          {category.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => void changeStatus()}
-                  disabled={busy || ((status === 'REJECTED' || status === 'ADDITIONAL_INFO_REQUIRED') && reason.trim().length < 5)}
+                  disabled={busy ||
+                    (['REJECTED', 'ADDITIONAL_INFO_REQUIRED', 'DOCUMENTS_REQUIRED', 'WAITLISTED'].includes(status) && reason.trim().length < 5) ||
+                    (status === 'DOCUMENTS_REQUIRED' && requestedDocumentTypes.length === 0)}
                   className="mt-4 inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
                 >
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}

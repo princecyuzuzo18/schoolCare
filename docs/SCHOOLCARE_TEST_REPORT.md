@@ -9,7 +9,7 @@
 
 ## 1. Purpose
 
-This report records the verification performed during the professionalisation work on SchoolCare. It covers the completed Headteacher dashboard, Headteacher navigation cleanup, high-risk API authorization gates, the read-only Smart Alert Center, accurate School Settings status, and the existing safe regression suites.
+This report records the verification performed during the professionalisation work on SchoolCare. It covers the completed Headteacher dashboard, Headteacher navigation cleanup, high-risk API authorization gates, the read-only Smart Alert Center, accurate School Settings status, the professional admission academic/document workflow, the Teacher Marks Management workspace, and the existing safe regression suites.
 
 It is not a claim that every browser interaction, external service, or production deployment path has been tested. Those gaps are listed in section 6.
 
@@ -22,11 +22,11 @@ All commands were run from the project root.
 | Command | Result | Notes |
 |---|---|---|
 | `npm run lint` | PASS | `tsc --noEmit`; no type errors. |
-| `npm run build` | PASS | Vite production build completed; 1,951 modules transformed. Large-chunk warning remains documented as a performance gap. |
-| `npm run db:check` | PASS | MariaDB/InnoDB reachable at `127.0.0.1:3306`; database `schoolcare_db`; 54 tables. |
-| `npm run db:status` | PASS | Migrations `001`–`011` recorded; staff governance tables present. |
+| `npm run build` | PASS | Vite production build completed; 1,954 modules transformed. Large-chunk warning remains documented as a performance gap. |
+| `npm run db:check` | PASS | MariaDB/InnoDB reachable at `127.0.0.1:3306`; database `schoolcare_db`. |
+| `npm run db:status` | PASS | Migrations `001`–`013` recorded; 59 tables; staff governance tables present. |
 | `npm run test:db` | PASS | 18/18 database checks. |
-| `npm run test:navigation` | PASS | 177/177 checks for 12 roles, 38 navigation items and 38 routes. |
+| `npm run test:navigation` | PASS | 180/180 checks for 12 roles, 43 navigation items and 43 routes. |
 | `npm run test:permissions` | PASS | 58/58 permission and delegation checks. |
 | `npm run test:staff` | PASS | 23/23 staff-management checks. |
 | `npm run test:api` | PASS | 64/64 API security checks. |
@@ -34,6 +34,9 @@ All commands were run from the project root.
 | `npm run test:lifecycle` | PASS | 22/22 archive/restore checks. |
 | `npm run test:permission-management` | PASS | 23/23 permission-group checks. |
 | `npm run test:academics` | PASS | 60/60 academic-workflow checks. |
+| `npm run test:admissions` | PASS | 58/58 admission academic-background, upload, mandatory-slip, validation, review, access-history and export checks. |
+| `npm run test:teacher-marks` | PASS | 45/45 teacher marks navigation, assignment scope, draft/submit/review/return/approve/publish and results checks. |
+| `npm run test:academic-structure` | PASS | 46/46 centralized structure, assignment validation/filtering, teacher isolation, marks chain, archive/restore and Apply-field checks. |
 | `npm run test:role-redirection` | PASS | 95/95 role-login and redirect checks. |
 | `npm run test:public-site` | PASS | 52/52 public website checks. |
 | `npm run test:combinations` | PASS | 69/69 combination-management checks. |
@@ -89,7 +92,7 @@ All commands were run from the project root.
 
 `scripts/verify-navigation.ts` verifies:
 
-- 38 navigation items map to 38 registered routes without duplicates.
+- 43 navigation items map to 43 registered routes without duplicates.
 - Every role reaches only authorized pages.
 - All 12 role dashboards are routable and never fall back to the public landing page.
 - Headteacher navigation uses the eight requested sections.
@@ -170,16 +173,71 @@ The UI now labels the report as an internal draft, states the scope of the filte
 - The audit record contains field names only, not the new name or phone number.
 - Empty, overlong, non-text and privileged-only payloads are rejected.
 
+### 3.10 Admission academic information and documents
+
+`scripts/verify-admissions.ts` verifies:
+
+- Public settings expose real academic years, all previous combinations, only open preferred combinations, the configured grading scale and document categories. These options are retained for compatibility and legacy records; the public Apply form no longer asks for academic year completed, Senior completion year/status, previous combination, requested level or preferred combination.
+- Staff cannot waive the Senior 3 result slip requirement but can still change document categories; public settings reflect both rules.
+- Other Admission accepts a result slip and a previous school report, and stores the slip in the same verification record.
+- Non-admissions staff roles are denied list, settings and export endpoints.
+- PDF/JPG/PNG magic-byte uploads are accepted only for configured, application-type-appropriate categories.
+- Invalid document types, invalid categories and mismatched file content are rejected.
+- Temporary uploads can be previewed inline, replaced and removed; removed capability tokens stop working.
+- A valid submission stores structured academic background and subject rows, consumes the upload token and never exposes internal tokens.
+- A submission succeeds without the removed Senior 3/academic-year/combination fields, confirming they are not required.
+- Invalid academic year, combinations, grading grade and numeric marks return HTTP 400.
+- Staff application detail exposes the structured background and attached document.
+- All six review statuses are accepted with actor metadata; negative statuses require reasons and `DOCUMENTS_REQUIRED` requires requested types.
+- Status history preserves earlier values while appending every decision.
+- Staff preview/download stream bytes and append actor-aware access history; parents cannot preview documents.
+- CSV export includes academic-background fields and the reference number.
+
+MariaDB mirrors are intentionally unavailable in this suite (`DB_PORT=1`); the script verifies that the JSON-first flow remains safe and reports mirror failures honestly.
+
+### 3.11 Teacher Marks Management
+
+`scripts/verify-teacher-marks.ts` verifies:
+
+- All five teacher pages have routes, are visible to teachers and are hidden from parents.
+- Assigned classes/subjects load only for the signed-in teacher and dashboard counters come from stored records.
+- Unassigned class/subject combinations are rejected with HTTP 403.
+- Marks entry returns only students in the assigned class.
+- Teachers can save incomplete drafts, cannot submit incomplete marks and cannot edit submitted marks.
+- Teachers cannot approve, return or review their own marks.
+- Submitted Marks lists only the teacher's own submissions; parents cannot list submissions.
+- A reviewer can move `SUBMITTED` marks to `UNDER_REVIEW`, return them with a reason, and the teacher can resubmit.
+- Approval generates report cards from approved marks only.
+- Teachers cannot publish official results; authorized reviewers can.
+- Calculated results load for assigned pairs and reject unassigned pairs.
+
+### 3.12 Centralized academic structure
+
+`scripts/verify-academic-structure.ts` verifies:
+
+- The public Apply form omits all six requested fields.
+- Teacher screens use the exact no-assignment message, API-backed searchable selectors, dependent clearing and the registered route id.
+- Academic Administration exposes managed levels, classes, subjects, assignments, confirmations and history.
+- Migration `013` is additive and idempotent.
+- Legacy class IDs, links and archived status are preserved; levels are derived from existing records.
+- Managers can create levels, classes and subjects; duplicate/invalid links are rejected; teachers and parents are denied management and teacher-workspace endpoints.
+- Assignments validate combination, level, subject and teacher scope; history is appended; combination/level filters work for both manager and teacher lists.
+- Deactivated/archived assignments, classes and subjects disappear from teacher selectors and cannot accept new marks.
+- Marks entry loads enrolled students and active assessments, enforces teacher isolation, saves drafts and permits submission only when marks are complete.
+- Submitted marks and legacy records survive archive/restore changes, and structure/marks actions are audited.
+
 ---
 
 ## 4. Data safety notes
 
 - The test scripts set `SCHOOLCARE_DATA_DIR` to an OS temporary directory before importing the server, so JSON module writes are isolated from `data/schoolcare_db.json`.
 - `test:profile` also points `DB_DATABASE`/`DB_NAME` at an unused database name, so the MariaDB profile mirror fails closed and no live account row is changed.
-- `npm test` was deliberately **not** run. It includes `test:isolation`, `test:access-reset` and `test:ai`, which are not safe to run against live data.
+- The consolidated `npm test` chain and the separate `test:db`, `test:activity`, `test:reports`, `test:meetings` and `test:profile` suites were run. All scripted suites set an isolated temporary `SCHOOLCARE_DATA_DIR` before importing the server; `test:admissions` also uses an isolated upload directory.
+- The first `npm test` run was stopped by the harness timeout during `test:ai`; it was rerun with a longer timeout. No test failure was caused by the timeout.
 - `test:signup` was not run against the live database. It requires `DB_DATABASE=schoolcare_signup_test` and `DB_NAME=schoolcare_signup_test`.
-- `test:gemini` was not run because it depends on an external API key and network access.
-- No database backup was created by this work. Phase 2 destructive cleanup remains blocked until a fresh verified backup and explicit record classification are available.
+- `test:openai` reports `QUOTA_EXCEEDED`; `test:gemini` reports `INVALID_KEY` while `AI_PROVIDER=openai`. These are external service failures, not application logic failures.
+- Fresh backups were created before the admission schema migration: `backups/schoolcare_db_2026-11-24T15-57-01-015Z.sql.gz`, `backups/schoolcare-full-20261124T155658Z.tar.gz`, `backups/schoolcare_db_2026-11-24T16-01-11-465Z.sql.gz` and `backups/schoolcare-full-20261124T160107Z.tar.gz`.
+- Phase 2 destructive cleanup remains blocked until record classification and explicit owner confirmation are available.
 
 ---
 
@@ -216,6 +274,19 @@ The UI now labels the report as an internal draft, states the scope of the filte
 - `server/profileSync.ts`, `server/staffAdministration.ts`, `server/database.ts` — guarded self-profile update and MariaDB mirror.
 - `src/services/api.ts`, `src/contexts/AuthContext.tsx`, `src/pages/SettingsPage.tsx` — client method, session refresh and allowlisted profile form.
 - `scripts/verify-headteacher-profile.ts` — immutable-field, validation, mirror and audit checks.
+- `mysql/migrations/012_admission_academic_background.sql` — additive admission status, background, document and decision mirrors.
+- `server/admissionConfig.ts`, `server/admissions.ts`, `server/admissionsMysql.ts`, `server/database.ts`, `server.ts` — configurable categories, real public options, structured validation, secure uploads, review decisions and CSV fields.
+- `src/pages/AdmissionsPortalPage.tsx`, `src/pages/AdmissionsManagementPage.tsx`, `src/services/api.ts`, `src/i18n/admissions.ts`, `src/types/index.ts` — applicant form, staff review UI, client methods, copy and types.
+- `scripts/verify-admissions.ts` — end-to-end admission verification.
+- `server/academics.ts` — explicit `UNDER_REVIEW` transition and role-scoped marks workspace readers.
+- `src/pages/TeacherMarksPages.tsx`, `src/pages/TeacherAcademicsPage.tsx`, `src/pages/AcademicAdminPage.tsx`, `src/navigation.ts`, `src/routes.tsx`, `src/rbac.ts` — five teacher pages, reuse of marks entry and review controls.
+- `scripts/verify-teacher-marks.ts` — end-to-end teacher marks verification.
+- `src/pages/AdmissionsPortalPage.tsx`, `server/admissions.ts` — six Apply fields removed from the applicant UI and server-side required validation.
+- `src/types/index.ts`, `server/database.ts`, `server/academics.ts`, `mysql/migrations/013_academic_structure.sql` — managed class levels, enriched classes/subjects/assignments, additive normalization, permission gates, filters and mirror schema.
+- `src/components/SearchableSelect.tsx`, `src/teacherMarksMessages.ts` — shared API-backed searchable selector and exact no-assignment message.
+- `src/pages/TeacherAcademicsPage.tsx`, `src/pages/TeacherMarksPages.tsx`, `src/pages/AcademicAdminPage.tsx`, `src/services/api.ts` — full managed chain in teacher screens and structure management in Academic Administration.
+- `scripts/verify-academic-structure.ts` — end-to-end academic structure verification.
+- `docs/ADMISSION_ACADEMIC_INFORMATION.md`, `docs/TEACHER_MARKS_MANAGEMENT.md`, `docs/ACADEMIC_STRUCTURE_MANAGEMENT.md` — usage documentation for the three workflows.
 
 ---
 
@@ -232,13 +303,16 @@ The following were not executed and must not be claimed as verified:
 - Browser click-through of School Activity History category and date filters (the data and permission gates are verified).
 - Browser click-through of report filters, print preview and CSV download (API/data parity and CSV contents are verified).
 - JSON↔MariaDB parity tests.
-- Live SMTP/SMS delivery, Gemini key, OCR, production admission secret, or online payment tests.
+- Live SMTP/SMS delivery, OpenAI credits, Gemini connectivity, OCR, production admission secret, or online payment tests.
+- Browser click-through of the new admission academic/document cards, the five teacher marks pages, the Academic Administration Structure tab, searchable selectors and confirmation/history dialogs.
+- JSON↔MariaDB parity for the new admission and academic structure mirror tables.
+- Applying migration `013` in the target deployment environment after backup confirmation, then verifying parity. It has been applied in the local `schoolcare_db` (59 tables, migrations `001`–`013`).
 - Role-by-role exhaustive endpoint matrix beyond the representative gates in `verify-api-security.ts`.
 
 ---
 
 ## 7. Conclusion
 
-The current implementation passes all executed safe checks. The most important verified outcomes are that the Headteacher dashboard is server-authoritative and explanatory, the Headteacher sidebar no longer shows School Documents while the route is preserved, sensitive API routes are permission-gated, the Smart Alert Center is limited to leadership roles and reads only existing records, activity history redacts sensitive fields, executive report exports come from the same permission-scoped server data as the page, meeting records persist in the existing module store with sanitized external links, the Headteacher self-profile endpoint ignores privileged fields, and the existing academic approval workflow still prevents AI grading and automatic publication of unapproved results.
+The current implementation passes all executed application checks, including the consolidated `npm test` chain. The most important verified outcomes are that the Headteacher dashboard is server-authoritative and explanatory, the Headteacher sidebar no longer shows School Documents while the route is preserved, sensitive API routes are permission-gated, the Smart Alert Center is limited to leadership roles and reads only existing records, activity history redacts sensitive fields, executive report exports come from the same permission-scoped server data as the page, meeting records persist in the existing module store with sanitized external links, the Headteacher self-profile endpoint ignores privileged fields, the admission academic/document workflow validates real configuration and protects private documents, and the Teacher Marks workspace preserves assignment isolation, approval integrity and no automatic publication of unapproved results.
 
-Remaining phases must be re-tested and added to this report before final delivery. The consolidated delivery status, including blocked and unverified items, is recorded in `docs/SCHOOLCARE_FINAL_IMPLEMENTATION_REPORT.md`.
+External OpenAI/Gemini connection diagnostics remain blocked by credits/provider configuration, and browser/visual/accessibility acceptance is still outstanding. The consolidated delivery status, including blocked and unverified items, is recorded in `docs/SCHOOLCARE_FINAL_IMPLEMENTATION_REPORT.md`.

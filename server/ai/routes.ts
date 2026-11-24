@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from 'express';
 import multer from 'multer';
 import crypto from 'node:crypto';
+import { PDFParse } from 'pdf-parse';
 import type { LanguageCode, UserRole } from '../../src/types';
 import { db } from '../database';
 import { createRateLimiter } from '../admissions';
@@ -32,8 +33,15 @@ function nextMessageId(): string {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024, files: 1 }
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 }
 });
+
+const TEXT_KNOWLEDGE_EXTENSIONS = /\.(txt|md|markdown|csv|json)$/i;
+
+function isPdfFile(file: Express.Multer.File): boolean {
+  return /\.pdf$/i.test(file.originalname)
+    && (file.mimetype.toLowerCase() === 'application/pdf' || file.buffer.subarray(0, 5).toString('latin1') === '%PDF-');
+}
 
 function actor(req: Request) {
   if (!req.user) throw new Error('Authenticated request is missing its user context.');
@@ -474,13 +482,33 @@ export function registerAiRoutes(app: Express): void {
       const schoolId = scopeSchool(req);
       const title = sanitizeUserText(req.body?.title, 200);
       const file = req.file;
-      const content = file
-        ? file.buffer.toString('utf8').slice(0, 200_000)
-        : sanitizeUserText(req.body?.content, 200_000);
+      const isPdf = file ? isPdfFile(file) : false;
+      const isText = file ? TEXT_KNOWLEDGE_EXTENSIONS.test(file.originalname) : false;
+      if (file && !isPdf && !isText) {
+        return res.status(400).json({ error: 'Only .pdf, .txt, .md, .csv and .json documents are supported.' });
+      }
+      let content: string;
+      if (file && isPdf) {
+        let parser: PDFParse | undefined;
+        try {
+          parser = new PDFParse({ data: new Uint8Array(file.buffer) });
+          const parsed = await parser.getText();
+          content = parsed.text.replace(/\u0000/g, '').slice(0, 200_000);
+        } catch {
+          return res.status(400).json({ error: 'That PDF could not be read. Use a text-based PDF file.' });
+        } finally {
+          if (parser) await parser.destroy();
+        }
+      } else {
+        content = file
+          ? file.buffer.toString('utf8').slice(0, 200_000)
+          : sanitizeUserText(req.body?.content, 200_000);
+      }
       if (!title) return res.status(400).json({ error: 'A document title is required.' });
-      if (!content.trim()) return res.status(400).json({ error: 'Document content is required.' });
-      if (file && !/\.(txt|md|markdown|csv|json)$/i.test(file.originalname)) {
-        return res.status(400).json({ error: 'Only .txt, .md, .csv and .json documents are supported.' });
+      if (!content.trim()) {
+        return res.status(400).json({
+          error: isPdf ? 'That PDF has no readable text.' : 'Document content is required.'
+        });
       }
       const document = await store.createKnowledge({
         id: crypto.randomUUID(),
@@ -489,7 +517,7 @@ export function registerAiRoutes(app: Express): void {
         category: sanitizeUserText(req.body?.category, 80) || 'general',
         visibility: req.body?.visibility === 'SHARED' ? 'SHARED' : 'SCHOOL',
         fileName: file ? file.originalname.slice(0, 255) : '',
-        mimeType: file?.mimetype?.slice(0, 120) || 'text/plain',
+        mimeType: isPdf ? 'application/pdf' : (file?.mimetype?.slice(0, 120) || 'text/plain'),
         content,
         uploadedBy: user.id
       });

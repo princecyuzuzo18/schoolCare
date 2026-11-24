@@ -54,8 +54,8 @@ function KnowledgePanel({ canManage }: { canManage: boolean }) {
 
   const upload = async (file: File | null) => {
     if (!file) return;
-    if (!/\.(txt|md|markdown|csv|json)$/i.test(file.name)) {
-      setError('Only .txt, .md, .csv and .json documents are supported.');
+    if (!/\.(pdf|txt|md|markdown|csv|json)$/i.test(file.name)) {
+      setError('Only .pdf, .txt, .md, .csv and .json documents are supported.');
       return;
     }
     setSaving(true);
@@ -151,7 +151,7 @@ function KnowledgePanel({ canManage }: { canManage: boolean }) {
               <input
                 ref={fileRef}
                 type="file"
-                accept=".txt,.md,.markdown,.csv,.json"
+                accept=".pdf,.txt,.md,.markdown,.csv,.json"
                 className="hidden"
                 onChange={event => void upload(event.target.files?.[0] ?? null)}
               />

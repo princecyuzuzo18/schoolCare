@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2, Clock3, LockKeyhole, Search } from
 import type { AdmissionTrackingSummary } from '../types';
 import { api } from '../services/api';
 import { useAdmissionsCopy } from '../i18n/admissions';
-import { PublicAdmissionsFooter, PublicAdmissionsHeader } from '../components/PublicAdmissionsChrome';
+import { PublicLayout } from '../components/PublicSiteChrome';
 
 interface AdmissionTrackingPageProps {
   onBackHome: () => void;
@@ -80,12 +80,17 @@ export const AdmissionTrackingPage: React.FC<AdmissionTrackingPageProps> = ({ on
     return copy.typeNewTitle;
   };
 
-  return (
-    <div className="schoolcare-page-bg apply-page flex min-h-screen flex-col bg-transparent">
-      <PublicAdmissionsHeader onBackHome={onBackHome} showTrackingLink={false} />
+  const handlePublicNavigate = (target: string) => {
+    if (target === 'home') onBackHome();
+    else if (target === 'track') { window.location.hash = '#/track'; }
+    else if (target === 'apply') { window.location.hash = '#/apply'; }
+    else window.location.assign(`/${target === 'home' ? '' : target}`);
+  };
 
-      <main className="apply-shell flex-1 py-10 sm:py-14">
-        <button type="button" onClick={onBackHome} className="apply-back-link mb-6">
+  return (
+    <PublicLayout active="track" onNavigate={handlePublicNavigate} mainClassName="apply-page">
+      <div className="apply-shell flex-1 py-10 sm:py-14">
+        <button type="button" onClick={onBackHome} className="apply-back-link mb-6 text-white/90 hover:text-white">
           <ArrowLeft className="h-4 w-4" aria-hidden="true" /> {copy.successHome}
         </button>
 
@@ -155,9 +160,7 @@ export const AdmissionTrackingPage: React.FC<AdmissionTrackingPageProps> = ({ on
             </div>
           </section>
         )}
-      </main>
-
-      <PublicAdmissionsFooter />
-    </div>
+      </div>
+    </PublicLayout>
   );
 };

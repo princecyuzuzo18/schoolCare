@@ -1,4 +1,11 @@
-import { NAV_ITEM_MAP, NAV_ITEMS, getQuickNavItems, getVisibleNavItems, getVisibleNavSections } from '../src/navigation';
+import {
+  NAV_ITEM_MAP,
+  NAV_ITEMS,
+  getQuickNavItems,
+  getVisibleNavItems,
+  getVisibleNavSections,
+  isPublicPortalRoute
+} from '../src/navigation';
 import { APP_ROUTES } from '../src/routes';
 import { ROLE_ALLOWED_TABS, ROLE_DASHBOARD_MAP, isTabAllowedForRole, resolveRequestedTab } from '../src/rbac';
 import { ROLE_DASHBOARD_TABS, getRoleDashboardTab } from '../src/roleDashboards';
@@ -79,6 +86,18 @@ check(
   'Anonymous landing hash resolves to the login page',
   resolveRequestedTab(null, 'landing') === 'login',
   resolveRequestedTab(null, 'landing')
+);
+check(
+  'Anonymous parent/student sign-up routes stay public',
+  ['parent-signup', 'student-signup'].every(route => isPublicPortalRoute(route))
+);
+check(
+  'Anonymous staff activation routes stay public',
+  isPublicPortalRoute('staff-activate-abc123')
+);
+check(
+  'Anonymous private dashboard routes are still redirected to login',
+  !isPublicPortalRoute('dashboard') && !isPublicPortalRoute('parent-portal')
 );
 
 // Delegated permission reductions must also hide tabs that the role normally

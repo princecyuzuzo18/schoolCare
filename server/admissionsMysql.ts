@@ -1,5 +1,8 @@
 import type {
   AdmissionApplication,
+  AdmissionDocumentAccessEvent,
+  AdmissionDocumentUpload,
+  AdmissionReviewDecision,
   AdmissionReviewNote,
   AdmissionSettings,
   AdmissionSlipUpload,
@@ -43,8 +46,9 @@ export async function mirrorApplicationCreate(application: AdmissionApplication)
       transfer_academic_year, requested_class, previous_school_type, transfer_reason,
       transfer_reason_other, current_education_level, requested_education_level,
       previous_school_other, application_reason,
-      submitted_at, reviewed_at, reviewed_by, reviewed_by_name, review_notes, rejection_reason
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      submitted_at, reviewed_at, reviewed_by, reviewed_by_name, review_notes, rejection_reason,
+      academic_background
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       application.id,
       application.schoolId,
@@ -91,7 +95,8 @@ export async function mirrorApplicationCreate(application: AdmissionApplication)
       nullable(application.reviewedBy, 50),
       nullable(application.reviewedByName, 255),
       nullable(application.reviewNotes),
-      nullable(application.rejectionReason)
+      nullable(application.rejectionReason),
+      jsonOrNull(application.academicBackground)
     ]
   );
 
@@ -112,6 +117,8 @@ export async function mirrorApplicationCreate(application: AdmissionApplication)
       ]
     );
   }
+
+  await mirrorAcademicBackground(application);
 }
 
 export async function mirrorApplicationUpdate(application: AdmissionApplication): Promise<void> {
@@ -119,7 +126,7 @@ export async function mirrorApplicationUpdate(application: AdmissionApplication)
   if (!pool) return;
   await pool.execute(
     `UPDATE admission_applications SET status = ?, reviewed_at = ?, reviewed_by = ?,
-      reviewed_by_name = ?, review_notes = ?, rejection_reason = ? WHERE id = ?`,
+      reviewed_by_name = ?, review_notes = ?, rejection_reason = ?, academic_background = ? WHERE id = ?`,
     [
       application.status,
       toMySqlDate(application.reviewedAt),
@@ -127,6 +134,7 @@ export async function mirrorApplicationUpdate(application: AdmissionApplication)
       nullable(application.reviewedByName, 255),
       nullable(application.reviewNotes),
       nullable(application.rejectionReason),
+      jsonOrNull(application.academicBackground),
       application.id
     ]
   );
@@ -174,6 +182,99 @@ export async function mirrorStatusHistory(history: AdmissionStatusHistory): Prom
 function jsonOrNull(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   return JSON.stringify(value);
+}
+
+export async function mirrorAcademicBackground(application: AdmissionApplication): Promise<void> {
+  const pool = getMysqlPool();
+  if (!pool || !application.academicBackground) return;
+  const subjects = application.academicBackground.subjects ?? [];
+  for (const [index, subject] of subjects.entries()) {
+    await pool.execute(
+      `INSERT INTO admission_academic_subjects
+        (id, application_id, subject_name, marks, grade, sort_order, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        subject_name = VALUES(subject_name), marks = VALUES(marks), grade = VALUES(grade), sort_order = VALUES(sort_order)`,
+      [
+        subject.id || `sub-${application.id}-${index + 1}`,
+        application.id,
+        nullable(subject.name, 255),
+        nullable(subject.marks, 60),
+        nullable(subject.grade, 60),
+        index,
+        new Date().toISOString().slice(0, 19).replace('T', ' ')
+      ]
+    );
+  }
+}
+
+export async function mirrorAdmissionDocumentUpload(record: AdmissionDocumentUpload): Promise<void> {
+  const pool = getMysqlPool();
+  if (!pool) return;
+  await pool.execute(
+    `INSERT IGNORE INTO admission_document_uploads (
+      id, token_hash, application_id, document_id, document_type, storage_path,
+      original_file_name, file_mime, file_size, created_at, expires_at, consumed_at, replaced_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      record.id,
+      record.tokenHash,
+      nullable(record.applicationId, 50),
+      nullable(record.documentId, 50),
+      record.documentType,
+      record.storagePath,
+      record.originalFileName,
+      record.fileMime,
+      record.fileSize,
+      toMySqlDate(record.createdAt),
+      toMySqlDate(record.expiresAt),
+      toMySqlDate(record.consumedAt),
+      toMySqlDate(record.replacedAt)
+    ]
+  );
+}
+
+export async function mirrorAdmissionDocumentAccess(event: AdmissionDocumentAccessEvent): Promise<void> {
+  const pool = getMysqlPool();
+  if (!pool) return;
+  await pool.execute(
+    `INSERT IGNORE INTO admission_document_access_log
+      (id, application_id, document_id, actor_id, actor_name, actor_role, action, ip, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.id,
+      event.applicationId,
+      event.documentId,
+      event.actorId,
+      event.actorName,
+      event.actorRole,
+      event.action,
+      nullable(event.ip, 100),
+      toMySqlDate(event.createdAt)
+    ]
+  );
+}
+
+export async function mirrorAdmissionReviewDecision(decision: AdmissionReviewDecision): Promise<void> {
+  const pool = getMysqlPool();
+  if (!pool) return;
+  await pool.execute(
+    `INSERT IGNORE INTO admission_review_decisions
+      (id, application_id, decision, reason, requested_document_types,
+       decided_by, decided_by_name, decided_by_role, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      decision.id,
+      decision.applicationId,
+      decision.decision,
+      nullable(decision.reason),
+      jsonOrNull(decision.requestedDocumentTypes),
+      decision.decidedBy,
+      decision.decidedByName,
+      decision.decidedByRole,
+      toMySqlDate(decision.createdAt)
+    ]
+  );
 }
 
 export async function mirrorSenior3Results(record: Senior3ResultsRecord): Promise<void> {
@@ -252,16 +353,18 @@ export async function mirrorAdmissionSettings(settings: AdmissionSettings): Prom
   if (!pool) return;
   await pool.execute(
     `INSERT INTO admission_settings
-      (id, result_slip_required, result_slip_exception_note, updated_at, updated_by)
-     VALUES (?, ?, ?, ?, ?)
+      (id, result_slip_required, result_slip_exception_note, document_categories, updated_at, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
       result_slip_required = VALUES(result_slip_required),
       result_slip_exception_note = VALUES(result_slip_exception_note),
+      document_categories = VALUES(document_categories),
       updated_at = VALUES(updated_at), updated_by = VALUES(updated_by)`,
     [
       'public_admissions',
       settings.resultSlipRequired ? 1 : 0,
       nullable(settings.resultSlipExceptionNote),
+      jsonOrNull(settings.documentCategories),
       toMySqlDate(settings.updatedAt),
       nullable(settings.updatedBy, 50)
     ]

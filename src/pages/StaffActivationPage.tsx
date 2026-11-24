@@ -3,6 +3,7 @@ import { useLanguage } from '../i18n/LanguageContext';
 import { api, ApiError } from '../services/api';
 import type { LanguageCode } from '../types';
 import { LockKeyhole, ShieldCheck } from 'lucide-react';
+import { PublicPageBackground } from '../components/PublicPageBackground';
 
 interface StaffActivationPageProps {
   onActivated: () => void;
@@ -66,8 +67,9 @@ export const StaffActivationPage: React.FC<StaffActivationPageProps> = ({ onActi
   };
 
   return (
-    <div className="schoolcare-page-bg flex min-h-screen items-center justify-center bg-transparent px-4 py-10">
-      <main className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <PublicPageBackground className="items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center px-4 py-10">
+        <main className="w-full max-w-md rounded-2xl border border-white/20 bg-white/95 p-6 shadow-2xl backdrop-blur-sm">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-800">
             <ShieldCheck className="h-3.5 w-3.5" />
@@ -183,7 +185,8 @@ export const StaffActivationPage: React.FC<StaffActivationPageProps> = ({ onActi
             </button>
           </form>
         )}
-      </main>
-    </div>
+        </main>
+      </div>
+    </PublicPageBackground>
   );
 };

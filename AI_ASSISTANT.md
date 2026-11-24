@@ -20,28 +20,35 @@ A role-aware, bilingual (English / Ikinyarwanda) assistant embedded in SchoolCar
 
 ## 2. Configuration
 
-Copy `.env.example` to `.env` and set the AI section:
+Copy `.env.example` to `.env` and set the AI section. Two providers are supported: **OpenAI** and **Gemini**.
 
 ```dotenv
-GEMINI_API_KEY="MY_GEMINI_API_KEY"   # placeholder = assistant unavailable
-AI_PROVIDER="gemini"
-GEMINI_MODEL="gemini-3.5-flash-lite" # preferred; wins over AI_MODEL
-AI_MODEL="gemini-3.5-flash-lite"     # legacy fallback
+# OpenAI (recommended)
+AI_PROVIDER="openai"
+OPENAI_API_KEY="sk-proj-..."           # placeholder = assistant unavailable
+OPENAI_MODEL="gpt-4.1-mini"            # optional; e.g. gpt-4.1, gpt-5-mini, gpt-5
+
+# Gemini (alternative — uncomment and comment out the OpenAI lines above)
+# AI_PROVIDER="gemini"
+# GEMINI_API_KEY="MY_GEMINI_API_KEY"
+# GEMINI_MODEL="gemini-3.5-flash-lite"  # preferred; wins over AI_MODEL
+# AI_MODEL="gemini-3.5-flash-lite"      # legacy fallback
+
 AI_ENABLED="true"
-AI_DEFAULT_LANGUAGE="en"             # en or rw
+AI_DEFAULT_LANGUAGE="en"              # en or rw
 AI_TIMEOUT_MS="25000"
 AI_RATE_LIMIT_PER_HOUR="60"
 AI_RETENTION_DAYS="180"
 ```
 
-See [`docs/GEMINI_SETUP.md`](./docs/GEMINI_SETUP.md) for free-tier verification, live connection testing, and troubleshooting.
+See [`docs/GEMINI_SETUP.md`](./docs/GEMINI_SETUP.md) for Gemini setup. To verify the OpenAI key and model, run `npm run test:openai` (makes a small live request).
 
 Rules:
 
-1. `GEMINI_API_KEY` must be a real Google Gemini key. Placeholders and short/invalid values are rejected.
+1. The key matching `AI_PROVIDER` must be real: `OPENAI_API_KEY` for `openai`, `GEMINI_API_KEY` for `gemini`. Placeholders and short/invalid values are rejected.
 2. The key is read **only on the server**. It is never sent to the browser or stored in the database.
 3. `AI_ENABLED=false` or a missing/invalid key makes `/api/ai/chat` return HTTP 503 with `code: DISABLED` or `code: NOT_CONFIGURED`. The UI shows an “unavailable” state. It never fakes a reply.
-4. `GEMINI_MODEL` is preferred and `AI_MODEL` is a legacy fallback; both default to `gemini-3.5-flash-lite`. The installed SDK is `@google/genai`; the old raw REST path is not used. Only `AI_PROVIDER=gemini` is supported.
+4. For OpenAI, `OPENAI_MODEL` defaults to `gpt-4.1-mini`; for Gemini, `GEMINI_MODEL` wins over the legacy `AI_MODEL` fallback. A stale model override from the other provider is ignored when switching providers. The installed SDKs are `openai` and `@google/genai`.
 5. Values are read at request time, so changing `.env` requires a server restart.
 
 ### Database migration

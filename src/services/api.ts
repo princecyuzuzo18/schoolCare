@@ -27,6 +27,7 @@ import {
   ApplicationType,
   AdmissionReviewNote,
   AdmissionSettings,
+  AdmissionDocumentCategory,
   AcademicPerformanceData,
   ResultSlipVerificationEvent,
   ResultSlipVerificationStatus,
@@ -49,7 +50,10 @@ import {
   LanguageCode,
   AcademicYear,
   AcademicTerm,
+  AcademicWorkflowEvent,
   ClassSubjectAssignment,
+  ClassSubjectAssignmentView,
+  ClassLevel,
   AssessmentCategory,
   GradingScale,
   MarkEntry,
@@ -167,6 +171,35 @@ export interface ResultSlipUploadResponse {
   fileMime: string;
   expiresAt: string;
   extracted: ResultSlipExtraction;
+}
+
+export interface PublicAdmissionOption {
+  id: string;
+  name: string;
+  code?: string;
+}
+
+export interface PublicAdmissionSettings {
+  resultSlipRequired: boolean;
+  resultSlipExceptionNote?: string;
+  academicYears: string[];
+  previousCombinations: PublicAdmissionOption[];
+  preferredCombinations: PublicAdmissionOption[];
+  grading: {
+    name?: string;
+    passMark?: number;
+    grades: Array<{ grade: string; description?: string; minPercentage: number; maxPercentage: number }>;
+  };
+  documentCategories: AdmissionDocumentCategory[];
+}
+
+export interface AdmissionDocumentUploadResponse {
+  uploadToken: string;
+  documentType: string;
+  fileName: string;
+  fileSize: number;
+  fileMime: string;
+  expiresAt: string;
 }
 
 class ApiService {
@@ -885,6 +918,27 @@ class ApiService {
   public createClass(payload: Partial<AcademicClass>): Promise<AcademicClass> {
     return this.request<AcademicClass>('/academics/classes', { method: 'POST', body: JSON.stringify(payload) });
   }
+  public updateClass(id: string, payload: Partial<AcademicClass>): Promise<AcademicClass> {
+    return this.request<AcademicClass>(`/academics/classes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+  public setClassStatus(id: string, status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED'): Promise<AcademicClass> {
+    return this.request<AcademicClass>(`/academics/classes/${id}/status`, {
+      method: 'PATCH', body: JSON.stringify({ status })
+    });
+  }
+
+  public getClassLevels(filters: { combinationId?: string; activeOnly?: boolean } = {}): Promise<ClassLevel[]> {
+    const params = new URLSearchParams();
+    if (filters.combinationId) params.append('combinationId', filters.combinationId);
+    if (filters.activeOnly) params.append('activeOnly', 'true');
+    return this.request<ClassLevel[]>(`/academics/class-levels?${params.toString()}`);
+  }
+  public createClassLevel(payload: Partial<ClassLevel>): Promise<ClassLevel> {
+    return this.request<ClassLevel>('/academics/class-levels', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public updateClassLevel(id: string, payload: Partial<ClassLevel>): Promise<ClassLevel> {
+    return this.request<ClassLevel>(`/academics/class-levels/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
 
   public getAcademicTeachers(): Promise<UserProfile[]> {
     return this.request<UserProfile[]>('/academics/teachers');
@@ -896,6 +950,14 @@ class ApiService {
 
   public createSubject(payload: Partial<Subject>): Promise<Subject> {
     return this.request<Subject>('/academics/subjects', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public updateSubject(id: string, payload: Partial<Subject>): Promise<Subject> {
+    return this.request<Subject>(`/academics/subjects/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+  public setSubjectStatus(id: string, status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED'): Promise<Subject> {
+    return this.request<Subject>(`/academics/subjects/${id}/status`, {
+      method: 'PATCH', body: JSON.stringify({ status })
+    });
   }
 
   // --- Combination management ---
@@ -1000,13 +1062,27 @@ class ApiService {
   public updateTerm(id: string, payload: Partial<AcademicTerm>): Promise<AcademicTerm> {
     return this.request<AcademicTerm>(`/academics/terms/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
   }
-  public getAssignments(filters: { yearId?: string; termId?: string; classId?: string; subjectId?: string } = {}): Promise<ClassSubjectAssignment[]> {
+  public getAssignments(filters: {
+    yearId?: string; termId?: string; classId?: string; subjectId?: string;
+    combinationId?: string; levelId?: string; includeInactive?: boolean;
+  } = {}): Promise<ClassSubjectAssignmentView[]> {
     const params = new URLSearchParams();
-    Object.entries(filters).forEach(([key, value]) => { if (value) params.append(key, value); });
-    return this.request<ClassSubjectAssignment[]>(`/academics/assignments?${params.toString()}`);
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value === undefined || value === false || value === '') return;
+      params.append(key, String(value));
+    });
+    return this.request<ClassSubjectAssignmentView[]>(`/academics/assignments?${params.toString()}`);
   }
-  public assignTeacher(payload: Partial<ClassSubjectAssignment>): Promise<ClassSubjectAssignment> {
-    return this.request<ClassSubjectAssignment>('/academics/assignments', { method: 'POST', body: JSON.stringify(payload) });
+  public assignTeacher(payload: Partial<ClassSubjectAssignment>): Promise<ClassSubjectAssignmentView> {
+    return this.request<ClassSubjectAssignmentView>('/academics/assignments', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  public updateAssignment(id: string, payload: Partial<ClassSubjectAssignment>): Promise<ClassSubjectAssignmentView> {
+    return this.request<ClassSubjectAssignmentView>(`/academics/assignments/${id}`, {
+      method: 'PATCH', body: JSON.stringify(payload)
+    });
+  }
+  public getAssignmentHistory(id: string): Promise<AcademicWorkflowEvent[]> {
+    return this.request<AcademicWorkflowEvent[]>(`/academics/assignments/${id}/history`);
   }
   public getClassTeacherAssignments(yearId?: string): Promise<Array<{ id: string; schoolId: string; academicYearId: string; classId: string; teacherId: string }>> {
     const params = new URLSearchParams();
@@ -1042,10 +1118,12 @@ class ApiService {
   }
 
   // --- Teacher marks workflow ---
-  public getMyAssignments(filters: { yearId?: string; termId?: string } = {}): Promise<{
+  public getMyAssignments(filters: {
+    yearId?: string; termId?: string; combinationId?: string; levelId?: string;
+  } = {}): Promise<{
     year?: AcademicYear;
     term?: AcademicTerm;
-    assignments: Array<ClassSubjectAssignment & { subjectName: string; subjectCode: string; className: string; status: string }>;
+    assignments: Array<ClassSubjectAssignmentView & { status: string }>;
     classTeacherOf: string[];
   }> {
     const params = new URLSearchParams();
@@ -1071,6 +1149,9 @@ class ApiService {
   }
   public submitMarks(id: string): Promise<MarkSubmission> {
     return this.request(`/academics/submissions/${id}/submit`, { method: 'POST', body: '{}' });
+  }
+  public markMarksUnderReview(id: string): Promise<MarkSubmission> {
+    return this.request(`/academics/submissions/${id}/review`, { method: 'POST', body: '{}' });
   }
   public returnMarks(id: string, reason: string): Promise<MarkSubmission> {
     return this.request(`/academics/submissions/${id}/return`, { method: 'POST', body: JSON.stringify({ reason }) });
@@ -1330,11 +1411,57 @@ class ApiService {
     return this.requestForm('/public/admissions/applications', formData);
   }
 
-  public async getPublicAdmissionSettings(): Promise<{
-    resultSlipRequired: boolean;
-    resultSlipExceptionNote?: string;
-  }> {
+  public async getPublicAdmissionSettings(): Promise<PublicAdmissionSettings> {
     return this.request('/public/admissions/settings');
+  }
+
+  public uploadAdmissionDocument(
+    file: File,
+    documentType: string,
+    applicationType: string,
+    onProgress: (percent: number) => void,
+    replaceToken?: string
+  ): Promise<AdmissionDocumentUploadResponse> {
+    const formData = new FormData();
+    formData.append('document', file);
+    formData.append('documentType', documentType);
+    formData.append('applicationType', applicationType);
+    if (replaceToken) formData.append('replaceToken', replaceToken);
+
+    return new Promise<AdmissionDocumentUploadResponse>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE}/public/admissions/documents`);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = event => {
+        if (event.lengthComputable) onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      };
+      xhr.onload = () => {
+        let payload: Record<string, unknown> = {};
+        try {
+          payload = JSON.parse(xhr.responseText) as Record<string, unknown>;
+        } catch {
+          // handled below
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(payload as unknown as AdmissionDocumentUploadResponse);
+        } else {
+          reject(new ApiError(String(payload.error || 'The document could not be uploaded.'), xhr.status));
+        }
+      };
+      xhr.onerror = () => reject(new ApiError('The document could not be uploaded. Check your connection.', 0));
+      xhr.send(formData);
+    });
+  }
+
+  public async previewAdmissionDocument(uploadToken: string): Promise<Blob> {
+    return this.requestBlob('/public/admissions/documents/preview', { uploadToken });
+  }
+
+  public async removeAdmissionDocument(uploadToken: string): Promise<{ removed: boolean }> {
+    return this.request('/public/admissions/documents/remove', {
+      method: 'POST',
+      body: JSON.stringify({ uploadToken })
+    });
   }
 
   public uploadResultSlip(
@@ -1421,8 +1548,9 @@ class ApiService {
   }
 
   public async updateAdmissionSettings(settings: {
-    resultSlipRequired: boolean;
+    resultSlipRequired?: boolean;
     resultSlipExceptionNote?: string;
+    documentCategories?: AdmissionDocumentCategory[];
   }): Promise<AdmissionSettings> {
     return this.request('/admissions/settings', {
       method: 'PATCH',
@@ -1457,11 +1585,12 @@ class ApiService {
   public async updateAdmissionStatus(
     id: string,
     status: ApplicationStatus,
-    reason = ''
+    reason = '',
+    requestedDocumentTypes: string[] = []
   ): Promise<{ application: AdmissionApplication; notifications: AdmissionNotificationStatus[] }> {
     return this.request(`/admissions/applications/${encodeURIComponent(id)}/status`, {
       method: 'POST',
-      body: JSON.stringify({ status, reason })
+      body: JSON.stringify({ status, reason, requestedDocumentTypes })
     });
   }
 

@@ -12,6 +12,13 @@ import { CommunicationPage } from './pages/CommunicationPage';
 import { StudentsPage } from './pages/StudentsPage';
 import { GuardiansPage } from './pages/GuardiansPage';
 import { TeacherAcademicsPage } from './pages/TeacherAcademicsPage';
+import {
+  TeacherExaminationResultsPage,
+  TeacherMarksManagementPage,
+  TeacherMyClassesPage,
+  TeacherMySubjectsPage,
+  TeacherSubmittedMarksPage
+} from './pages/TeacherMarksPages';
 import { AcademicAdminPage } from './pages/AcademicAdminPage';
 import { CombinationManagementPage } from './pages/CombinationManagementPage';
 import { ReportPrintingPage } from './pages/ReportPrintingPage';
@@ -99,6 +106,31 @@ export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
     id: 'academics',
     title: 'My Academic Work',
     render: () => <TeacherAcademicsPage />
+  },
+  'teacher-my-classes': {
+    id: 'teacher-my-classes',
+    title: 'My Classes',
+    render: ({ onNavigate }) => <TeacherMyClassesPage onNavigate={onNavigate} />
+  },
+  'teacher-marks-management': {
+    id: 'teacher-marks-management',
+    title: 'Marks Management',
+    render: () => <TeacherMarksManagementPage />
+  },
+  'teacher-examination-results': {
+    id: 'teacher-examination-results',
+    title: 'Examination Results',
+    render: () => <TeacherExaminationResultsPage />
+  },
+  'teacher-my-subjects': {
+    id: 'teacher-my-subjects',
+    title: 'My Subjects',
+    render: ({ onNavigate }) => <TeacherMySubjectsPage onNavigate={onNavigate} />
+  },
+  'teacher-submitted-marks': {
+    id: 'teacher-submitted-marks',
+    title: 'Submitted Marks',
+    render: () => <TeacherSubmittedMarksPage />
   },
   'academic-admin': {
     id: 'academic-admin',

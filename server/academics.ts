@@ -7,7 +7,10 @@ import {
   AcademicClass,
   AcademicSettings,
   AcademicTerm,
+  AcademicWorkflowEvent,
   AcademicYear,
+  AcademicCombination,
+  ClassLevel,
   Subject,
   ClassSubjectAssignment,
   AssessmentCategory,
@@ -111,6 +114,95 @@ function requireReviewer(req: Request): UserProfile {
   return actor;
 }
 
+const MARKS_WORKSPACE_ROLES = new Set<UserProfile['role']>([
+  'SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER', 'DEPUTY_HEAD', 'TEACHER'
+]);
+
+function requireAcademicReader(req: Request): UserProfile {
+  const actor = actorOf(req);
+  if (
+    !MARKS_WORKSPACE_ROLES.has(actor.role) ||
+    (!hasPermission(actor, 'academics.read') && !isAcademicLeader(actor) && !canReviewMarks(actor))
+  ) {
+    throw new HttpError(403, 'You are not authorized to view academic marks data.');
+  }
+  return actor;
+}
+
+/** Resolves and validates the class/combination/level context of an assignment. */
+function assignmentStructure(schoolId: string, classId: string, combinationId = '', levelId = '', strict = false) {
+  const classInfo = db.getClasses(schoolId).find(item => item.id === classId);
+  if (!classInfo) throw new HttpError(400, 'Unknown class.');
+  if (strict && (classInfo.status ?? 'ACTIVE') === 'ARCHIVED') {
+    throw new HttpError(400, 'Archived classes cannot receive new assignments.');
+  }
+  const combinations = db.getAcademicCollection<AcademicCombination>('combinations', schoolId);
+  const levels = db.getAcademicCollection<ClassLevel>('classLevels', schoolId);
+  const combination = combinations.find(item => item.id === (classInfo.combinationId || combinationId))
+    ?? combinations.find(item => item.name.toLowerCase() === String(classInfo.combination || '').toLowerCase());
+  const level = levels.find(item => item.id === (classInfo.levelId || levelId))
+    ?? levels.find(item => item.name.toLowerCase() === String(classInfo.grade || classInfo.name).toLowerCase());
+
+  if (strict && combinationId && combination && combinationId !== combination.id) {
+    throw new HttpError(400, 'The selected combination does not match the selected class.');
+  }
+  if (strict && levelId && level && levelId !== level.id) {
+    throw new HttpError(400, 'The selected class level does not match the selected class.');
+  }
+
+  return {
+    classInfo,
+    combination,
+    level,
+    combinationId: combinationId || combination?.id || '',
+    levelId: levelId || level?.id || ''
+  };
+}
+
+/** A subject must belong to the chosen combination/level and must not be archived. */
+function teachableSubject(schoolId: string, subjectId: string, combination?: AcademicCombination, levelId = ''): Subject {
+  const subject = db.getSubjects(schoolId).find(item => item.id === subjectId);
+  if (!subject) throw new HttpError(400, 'Unknown subject.');
+  if (subject.status === 'ARCHIVED') {
+    throw new HttpError(400, 'Archived subjects cannot be selected for new marks assessments.');
+  }
+  if (combination?.subjects.length && !combination.subjects.some(item => item.subjectId === subjectId)) {
+    throw new HttpError(400, 'This subject is not assigned to the selected combination.');
+  }
+  if (levelId && subject.levelIds?.length && !subject.levelIds.includes(levelId)) {
+    throw new HttpError(400, 'This subject is not configured for the selected class level.');
+  }
+  return subject;
+}
+
+function validateTeacherIds(schoolId: string, ids: string[], _actor: UserProfile): string[] {
+  const unique = [...new Set(ids.filter(id => typeof id === 'string' && id.trim()))];
+  if (unique.length === 0) throw new HttpError(400, 'Select at least one teacher.');
+  const teachingRoles: UserProfile['role'][] = ['TEACHER', 'DEPUTY_HEAD', 'HEAD_TEACHER'];
+  for (const id of unique) {
+    const user = db.getUserById(id);
+    if (!user || user.schoolId !== schoolId || !teachingRoles.includes(user.role)) {
+      throw new HttpError(400, `Teacher ${id} is not a teaching member of your school.`);
+    }
+  }
+  return unique;
+}
+
+function assignmentView(schoolId: string, record: ClassSubjectAssignment) {
+  const structure = assignmentStructure(schoolId, record.classId, record.combinationId, record.levelId);
+  return {
+    ...record,
+    combinationId: record.combinationId || structure.combinationId,
+    levelId: record.levelId || structure.levelId,
+    combinationName: structure.combination?.name ?? '',
+    levelName: structure.level?.name ?? '',
+    className: structure.classInfo.name,
+    subjectName: db.getSubjects(schoolId).find(item => item.id === record.subjectId)?.name ?? record.subjectId,
+    subjectCode: db.getSubjects(schoolId).find(item => item.id === record.subjectId)?.code ?? '',
+    teacherNames: record.teacherIds.map(id => db.getUserById(id)?.fullName ?? id)
+  };
+}
+
 function resolveScope(req: Request) {
   const schoolId = scopedSchoolId(req);
   const body = bodyOf(req);
@@ -138,6 +230,82 @@ export function registerAcademicRoutes(app: Express): void {
   // ------------------------------------------------------------------
   // Academic structure configuration (Headteacher / academic administrator)
   // ------------------------------------------------------------------
+
+  app.get('/api/academics/class-levels', wrap((req, res) => {
+    requireAcademicReader(req);
+    const schoolId = scopedSchoolId(req);
+    let levels = db.getAcademicCollection<ClassLevel>('classLevels', schoolId);
+    const combinationId = req.query.combinationId as string | undefined;
+    if (combinationId) levels = levels.filter(item => item.combinationIds.includes(combinationId));
+    if (req.query.activeOnly === 'true') levels = levels.filter(item => item.isActive);
+    res.json(levels);
+  }));
+
+  app.post('/api/academics/class-levels', wrap((req, res) => {
+    const actor = requireManager(req);
+    const schoolId = scopedSchoolId(req);
+    const b = bodyOf(req);
+    const name = str(b.name, 'Level name');
+    const code = str(b.code, 'Level code').toUpperCase();
+    const all = db.getAcademicCollection<ClassLevel>('classLevels');
+    if (all.some(item => item.schoolId === schoolId && item.code.toUpperCase() === code)) {
+      throw new HttpError(409, 'A class level with this code already exists.');
+    }
+    const combinationIds = Array.isArray(b.combinationIds)
+      ? [...new Set(b.combinationIds.filter((id): id is string => typeof id === 'string'))]
+      : [];
+    const combinations = db.getAcademicCollection<AcademicCombination>('combinations', schoolId);
+    if (combinationIds.some(id => !combinations.some(item => item.id === id))) {
+      throw new HttpError(400, 'Every linked combination must belong to your school.');
+    }
+    const now = new Date().toISOString();
+    const level: ClassLevel = {
+      id: uid('level'),
+      schoolId,
+      name,
+      code,
+      description: typeof b.description === 'string' ? b.description.trim() : undefined,
+      academicProgramme: typeof b.academicProgramme === 'string' ? b.academicProgramme.trim() : undefined,
+      combinationIds,
+      isActive: b.isActive !== false,
+      createdAt: now,
+      updatedAt: now
+    };
+    db.addAcademicRecord('classLevels', level);
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'CREATE_CLASS_LEVEL', 'CLASS_LEVEL', level.id, `Created class level ${name} (${code})`);
+    res.status(201).json(level);
+  }));
+
+  app.patch('/api/academics/class-levels/:id', wrap((req, res) => {
+    const actor = requireManager(req);
+    const schoolId = scopedSchoolId(req);
+    const b = bodyOf(req);
+    const existing = db.getAcademicCollection<ClassLevel>('classLevels', schoolId).find(item => item.id === req.params.id);
+    if (!existing) throw new HttpError(404, 'Class level not found.');
+    const updates: Partial<ClassLevel> = { updatedAt: new Date().toISOString() };
+    if (b.name !== undefined) updates.name = str(b.name, 'Level name');
+    if (b.code !== undefined) {
+      const code = str(b.code, 'Level code').toUpperCase();
+      if (db.getAcademicCollection<ClassLevel>('classLevels', schoolId).some(item => item.id !== existing.id && item.code.toUpperCase() === code)) {
+        throw new HttpError(409, 'A class level with this code already exists.');
+      }
+      updates.code = code;
+    }
+    if (b.description !== undefined) updates.description = typeof b.description === 'string' ? b.description.trim() : '';
+    if (b.academicProgramme !== undefined) updates.academicProgramme = typeof b.academicProgramme === 'string' ? b.academicProgramme.trim() : '';
+    if (Array.isArray(b.combinationIds)) {
+      const ids = [...new Set(b.combinationIds.filter((id): id is string => typeof id === 'string'))];
+      const combinations = db.getAcademicCollection<AcademicCombination>('combinations', schoolId);
+      if (ids.some(id => !combinations.some(item => item.id === id))) {
+        throw new HttpError(400, 'Every linked combination must belong to your school.');
+      }
+      updates.combinationIds = ids;
+    }
+    if (typeof b.isActive === 'boolean') updates.isActive = b.isActive;
+    const updated = db.updateAcademicRecord<ClassLevel>('classLevels', existing.id, schoolId, updates);
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'UPDATE_CLASS_LEVEL', 'CLASS_LEVEL', existing.id, `Updated class level ${updated?.name ?? existing.name}`);
+    res.json(updated);
+  }));
 
   app.get('/api/academics/years', wrap((req, res) => {
     const schoolId = scopedSchoolId(req);
@@ -243,23 +411,124 @@ export function registerAcademicRoutes(app: Express): void {
     const schoolId = scopedSchoolId(req);
     const b = bodyOf(req);
     const name = str(b.name, 'Class name');
-    if (db.getClasses(schoolId).some(item => item.name.toLowerCase() === name.toLowerCase())) {
-      throw new HttpError(409, 'A class with this name already exists.');
+    const academicYearId = str(b.academicYearId ?? b.academicYear, 'Academic year', false)
+      || getAcademicYear(schoolId)?.id || '';
+    const combinationId = str(b.combinationId, 'Combination', false);
+    const levelId = str(b.levelId, 'Class level', false);
+    const classTeacherId = str(b.classTeacherId, 'Class teacher', false);
+    const classes = db.getClasses(schoolId);
+    const code = str(b.code, 'Class code', false)
+      || `${name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)}`;
+
+    if (combinationId && !db.getAcademicCollection<AcademicCombination>('combinations', schoolId).some(item => item.id === combinationId)) {
+      throw new HttpError(400, 'Unknown combination.');
     }
+    if (levelId && !db.getAcademicCollection<ClassLevel>('classLevels', schoolId).some(item => item.id === levelId)) {
+      throw new HttpError(400, 'Unknown class level.');
+    }
+    if (classTeacherId && !db.getUserById(classTeacherId)) {
+      throw new HttpError(400, 'Unknown class teacher.');
+    }
+    if (classes.some(item => item.code?.toUpperCase() === code.toUpperCase())) {
+      throw new HttpError(409, 'A class with this code already exists.');
+    }
+    if (classes.some(item =>
+      item.name.toLowerCase() === name.toLowerCase() &&
+      (item.academicYearId || '') === academicYearId &&
+      (item.combinationId || '') === combinationId &&
+      (item.levelId || '') === levelId
+    )) {
+      throw new HttpError(409, 'A class with this name already exists in the selected year and structure.');
+    }
+
+    const combinationName = db.getAcademicCollection<AcademicCombination>('combinations', schoolId)
+      .find(item => item.id === combinationId)?.name ?? str(b.combination, 'Combination', false);
     const record: AcademicClass = {
       id: uid('class'),
       schoolId,
       name,
-      grade: str(b.grade, 'Grade', false),
+      code,
+      academicYearId,
+      grade: str(b.grade, 'Grade', false) || db.getAcademicCollection<ClassLevel>('classLevels', schoolId).find(item => item.id === levelId)?.name || '',
       stream: str(b.stream, 'Stream', false),
-      combination: str(b.combination, 'Combination', false),
-      classTeacherName: str(b.classTeacherName, 'Class teacher', false),
+      combination: combinationName,
+      combinationId: combinationId || undefined,
+      levelId: levelId || undefined,
+      classTeacherId: classTeacherId || undefined,
+      classTeacherName: str(b.classTeacherName, 'Class teacher', false)
+        || db.getUserById(classTeacherId)?.fullName || '',
       room: str(b.room, 'Room', false),
-      studentCount: 0
+      studentCount: 0,
+      status: b.status === 'INACTIVE' || b.status === 'ARCHIVED' ? b.status : 'ACTIVE'
     };
     db.addClass(record);
-    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'CREATE_CLASS', 'ACADEMIC_CLASS', record.id, `Created class ${record.name}`);
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'CREATE_CLASS', 'ACADEMIC_CLASS', record.id, `Created class ${record.name} (${record.code})`);
     res.status(201).json(record);
+  }));
+
+  app.patch('/api/academics/classes/:id', wrap((req, res) => {
+    const actor = requireManager(req);
+    const schoolId = scopedSchoolId(req);
+    const b = bodyOf(req);
+    const existing = db.getClasses(schoolId).find(item => item.id === req.params.id);
+    if (!existing) throw new HttpError(404, 'Class not found.');
+    const updates: Partial<AcademicClass> = {};
+    if (b.name !== undefined) updates.name = str(b.name, 'Class name');
+    if (b.code !== undefined) {
+      const code = str(b.code, 'Class code');
+      if (db.getClasses(schoolId).some(item => item.id !== existing.id && item.code?.toUpperCase() === code.toUpperCase())) {
+        throw new HttpError(409, 'A class with this code already exists.');
+      }
+      updates.code = code;
+    }
+    if (b.academicYearId !== undefined) updates.academicYearId = str(b.academicYearId, 'Academic year', false);
+    if (b.combinationId !== undefined) {
+      const id = str(b.combinationId, 'Combination', false);
+      if (id && !db.getAcademicCollection<AcademicCombination>('combinations', schoolId).some(item => item.id === id)) {
+        throw new HttpError(400, 'Unknown combination.');
+      }
+      updates.combinationId = id || undefined;
+    }
+    if (b.levelId !== undefined) {
+      const id = str(b.levelId, 'Class level', false);
+      if (id && !db.getAcademicCollection<ClassLevel>('classLevels', schoolId).some(item => item.id === id)) {
+        throw new HttpError(400, 'Unknown class level.');
+      }
+      updates.levelId = id || undefined;
+    }
+    if (b.classTeacherId !== undefined) {
+      const id = str(b.classTeacherId, 'Class teacher', false);
+      if (id && !db.getUserById(id)) throw new HttpError(400, 'Unknown class teacher.');
+      updates.classTeacherId = id || undefined;
+      updates.classTeacherName = id ? db.getUserById(id)?.fullName ?? '' : '';
+    }
+    if (b.room !== undefined) updates.room = str(b.room, 'Room', false);
+    if (b.status !== undefined) {
+      if (!['ACTIVE', 'INACTIVE', 'ARCHIVED'].includes(String(b.status))) throw new HttpError(400, 'Invalid class status.');
+      updates.status = b.status as AcademicClass['status'];
+      updates.archivedAt = b.status === 'ARCHIVED' ? new Date().toISOString() : undefined;
+      updates.archivedBy = b.status === 'ARCHIVED' ? actor.id : undefined;
+    }
+    const updated = db.updateAcademicRecord<AcademicClass>('classes', existing.id, schoolId, updates);
+    if (!updated) throw new HttpError(404, 'Class not found.');
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'UPDATE_CLASS', 'ACADEMIC_CLASS', updated.id, `Updated class ${updated.name}`);
+    res.json(updated);
+  }));
+
+  app.patch('/api/academics/classes/:id/status', wrap((req, res) => {
+    const actor = requireManager(req);
+    const schoolId = scopedSchoolId(req);
+    const status = str(bodyOf(req).status, 'Status');
+    if (!['ACTIVE', 'INACTIVE', 'ARCHIVED'].includes(status)) throw new HttpError(400, 'Invalid class status.');
+    const existing = db.getClasses(schoolId).find(item => item.id === req.params.id);
+    if (!existing) throw new HttpError(404, 'Class not found.');
+    const updated = db.updateAcademicRecord<AcademicClass>('classes', existing.id, schoolId, {
+      status: status as AcademicClass['status'],
+      archivedAt: status === 'ARCHIVED' ? new Date().toISOString() : undefined,
+      archivedBy: status === 'ARCHIVED' ? actor.id : undefined
+    });
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'SET_CLASS_STATUS', 'ACADEMIC_CLASS', existing.id, `Class ${existing.name} set to ${status}`);
+    res.json(updated);
   }));
 
   app.post('/api/academics/subjects', wrap((req, res) => {
@@ -271,6 +540,16 @@ export function registerAcademicRoutes(app: Express): void {
     if (db.getSubjects(schoolId).some(item => item.code.toUpperCase() === code || item.name.toLowerCase() === name.toLowerCase())) {
       throw new HttpError(409, 'A subject with this name or code already exists.');
     }
+    const combinationIds = Array.isArray(b.combinationIds)
+      ? [...new Set(b.combinationIds.filter((id): id is string => typeof id === 'string'))] : [];
+    const levelIds = Array.isArray(b.levelIds)
+      ? [...new Set(b.levelIds.filter((id): id is string => typeof id === 'string'))] : [];
+    if (combinationIds.some(id => !db.getAcademicCollection<AcademicCombination>('combinations', schoolId).some(item => item.id === id))) {
+      throw new HttpError(400, 'Every linked combination must belong to your school.');
+    }
+    if (levelIds.some(id => !db.getAcademicCollection<ClassLevel>('classLevels', schoolId).some(item => item.id === id))) {
+      throw new HttpError(400, 'Every linked class level must belong to your school.');
+    }
     const record: Subject = {
       id: uid('subj'),
       schoolId,
@@ -278,11 +557,81 @@ export function registerAcademicRoutes(app: Express): void {
       code,
       department: str(b.department, 'Department', false),
       credits: optionalNum(b.credits, 'Credits') ?? 0,
-      passMark: optionalNum(b.passMark, 'Pass mark') ?? getScale(schoolId)?.passMark ?? 50
+      passMark: optionalNum(b.passMark, 'Pass mark') ?? getScale(schoolId)?.passMark ?? 50,
+      status: b.status === 'INACTIVE' || b.status === 'ARCHIVED' ? b.status : 'ACTIVE',
+      combinationIds,
+      levelIds,
+      archivedAt: b.status === 'ARCHIVED' ? new Date().toISOString() : undefined
     };
     db.addSubject(record);
     db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'CREATE_SUBJECT', 'SUBJECT', record.id, `Created subject ${record.name} (${record.code})`);
     res.status(201).json(record);
+  }));
+
+  app.patch('/api/academics/subjects/:id', wrap((req, res) => {
+    const actor = requireManager(req);
+    const schoolId = scopedSchoolId(req);
+    const b = bodyOf(req);
+    const existing = db.getSubjects(schoolId).find(item => item.id === req.params.id);
+    if (!existing) throw new HttpError(404, 'Subject not found.');
+    const updates: Partial<Subject> = {};
+    if (b.name !== undefined) {
+      const name = str(b.name, 'Subject name');
+      if (db.getSubjects(schoolId).some(item => item.id !== existing.id && item.name.toLowerCase() === name.toLowerCase())) {
+        throw new HttpError(409, 'A subject with this name already exists.');
+      }
+      updates.name = name;
+    }
+    if (b.code !== undefined) {
+      const code = str(b.code, 'Subject code').toUpperCase();
+      if (db.getSubjects(schoolId).some(item => item.id !== existing.id && item.code.toUpperCase() === code)) {
+        throw new HttpError(409, 'A subject with this code already exists.');
+      }
+      updates.code = code;
+    }
+    if (b.department !== undefined) updates.department = str(b.department, 'Department', false);
+    if (b.credits !== undefined) updates.credits = optionalNum(b.credits, 'Credits') ?? 0;
+    if (b.passMark !== undefined) updates.passMark = num(b.passMark, 'Pass mark');
+    if (b.combinationIds !== undefined) {
+      const ids = [...new Set(Array.isArray(b.combinationIds)
+        ? b.combinationIds.filter((id): id is string => typeof id === 'string') : [])];
+      if (ids.some(id => !db.getAcademicCollection<AcademicCombination>('combinations', schoolId).some(item => item.id === id))) {
+        throw new HttpError(400, 'Every linked combination must belong to your school.');
+      }
+      updates.combinationIds = ids;
+    }
+    if (b.levelIds !== undefined) {
+      const ids = [...new Set(Array.isArray(b.levelIds)
+        ? b.levelIds.filter((id): id is string => typeof id === 'string') : [])];
+      if (ids.some(id => !db.getAcademicCollection<ClassLevel>('classLevels', schoolId).some(item => item.id === id))) {
+        throw new HttpError(400, 'Every linked class level must belong to your school.');
+      }
+      updates.levelIds = ids;
+    }
+    if (b.status !== undefined) {
+      if (!['ACTIVE', 'INACTIVE', 'ARCHIVED'].includes(String(b.status))) throw new HttpError(400, 'Invalid subject status.');
+      updates.status = b.status as Subject['status'];
+      updates.archivedAt = b.status === 'ARCHIVED' ? new Date().toISOString() : undefined;
+    }
+    const updated = db.updateAcademicRecord<Subject>('subjects', existing.id, schoolId, updates);
+    if (!updated) throw new HttpError(404, 'Subject not found.');
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'UPDATE_SUBJECT', 'SUBJECT', updated.id, `Updated subject ${updated.name}`);
+    res.json(updated);
+  }));
+
+  app.patch('/api/academics/subjects/:id/status', wrap((req, res) => {
+    const actor = requireManager(req);
+    const schoolId = scopedSchoolId(req);
+    const status = str(bodyOf(req).status, 'Status');
+    if (!['ACTIVE', 'INACTIVE', 'ARCHIVED'].includes(status)) throw new HttpError(400, 'Invalid subject status.');
+    const existing = db.getSubjects(schoolId).find(item => item.id === req.params.id);
+    if (!existing) throw new HttpError(404, 'Subject not found.');
+    const updated = db.updateAcademicRecord<Subject>('subjects', existing.id, schoolId, {
+      status: status as Subject['status'],
+      archivedAt: status === 'ARCHIVED' ? new Date().toISOString() : undefined
+    });
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'SET_SUBJECT_STATUS', 'SUBJECT', existing.id, `Subject ${existing.name} set to ${status}`);
+    res.json(updated);
   }));
 
   // Teacher directory for assignment screens. This avoids exposing /api/users,
@@ -300,55 +649,117 @@ export function registerAcademicRoutes(app: Express): void {
   }));
 
   app.get('/api/academics/assignments', wrap((req, res) => {
+    // Full assignment administration data is manager-only. Teachers use the
+    // dedicated /my-assignments endpoint, which is scoped to their own ID.
+    requireManager(req);
     const schoolId = scopedSchoolId(req);
-    res.json(getAssignments(
-      schoolId,
-      req.query.yearId as string,
-      req.query.termId as string,
-      req.query.classId as string,
-      req.query.subjectId as string
+    const filters = {
+      yearId: req.query.yearId as string | undefined,
+      termId: req.query.termId as string | undefined,
+      classId: req.query.classId as string | undefined,
+      subjectId: req.query.subjectId as string | undefined,
+      combinationId: req.query.combinationId as string | undefined,
+      levelId: req.query.levelId as string | undefined
+    };
+    const matches = (item: ClassSubjectAssignment) =>
+      (!filters.yearId || item.academicYearId === filters.yearId)
+      && (!filters.termId || item.termId === filters.termId)
+      && (!filters.classId || filters.classId === 'all' || item.classId === filters.classId)
+      && (!filters.subjectId || filters.subjectId === 'all' || item.subjectId === filters.subjectId);
+    const records = req.query.includeInactive === 'true'
+      ? db.getAcademicCollection<ClassSubjectAssignment>('classSubjectAssignments', schoolId).filter(matches)
+      : getAssignments(schoolId, filters.yearId, filters.termId, filters.classId, filters.subjectId);
+    const views = records.map(item => assignmentView(schoolId, item));
+    res.json(views.filter(item =>
+      (!filters.combinationId || item.combinationId === filters.combinationId)
+      && (!filters.levelId || item.levelId === filters.levelId)
     ));
+  }));
+
+  app.get('/api/academics/assignments/:id/history', wrap((req, res) => {
+    const schoolId = scopedSchoolId(req);
+    const actor = actorOf(req);
+    const record = db.getAcademicCollection<ClassSubjectAssignment>('classSubjectAssignments', schoolId)
+      .find(item => item.id === req.params.id);
+    if (!record) throw new HttpError(404, 'Assignment not found.');
+    if (!isAcademicManager(actor) && !canReviewMarks(actor) && !record.teacherIds.includes(actor.id)) {
+      throw new HttpError(403, 'You are not authorized to view this assignment history.');
+    }
+    res.json(record.history ?? []);
   }));
 
   app.post('/api/academics/assignments', wrap((req, res) => {
     const actor = requireManager(req);
     const schoolId = scopedSchoolId(req);
     const b = bodyOf(req);
-    const assignment = {
+    const academicYearId = str(b.academicYearId ?? b.yearId, 'Academic year');
+    const termId = str(b.termId, 'Term');
+    const classId = str(b.classId, 'Class');
+    const subjectId = str(b.subjectId, 'Subject');
+    if (!db.getAcademicCollection<AcademicYear>('academicYears', schoolId).some(item => item.id === academicYearId)) {
+      throw new HttpError(400, 'Unknown academic year.');
+    }
+    if (!db.getAcademicCollection<AcademicTerm>('terms', schoolId).some(item => item.id === termId && item.academicYearId === academicYearId)) {
+      throw new HttpError(400, 'The selected term does not belong to the academic year.');
+    }
+    const structure = assignmentStructure(schoolId, classId, str(b.combinationId, 'Combination', false), str(b.levelId, 'Class level', false), true);
+    teachableSubject(schoolId, subjectId, structure.combination, structure.levelId);
+    const teacherIds = validateTeacherIds(schoolId, Array.isArray(b.teacherIds) ? b.teacherIds : [], actor);
+    const now = new Date().toISOString();
+    const history: AcademicWorkflowEvent[] = [{
+      action: 'ASSIGNMENT_CREATED',
+      by: actor.id,
+      byName: actor.fullName,
+      role: actor.role,
+      at: now,
+      note: `${teacherIds.length} teacher(s) assigned.`
+    }];
+    const assignment: ClassSubjectAssignment = {
       id: uid('csa'),
       schoolId,
-      academicYearId: str(b.academicYearId ?? b.yearId, 'Academic year'),
-      termId: str(b.termId, 'Term'),
-      classId: str(b.classId, 'Class'),
-      subjectId: str(b.subjectId, 'Subject'),
-      teacherIds: Array.isArray(b.teacherIds) ? b.teacherIds.filter((id): id is string => typeof id === 'string') : [],
+      academicYearId,
+      termId,
+      classId,
+      subjectId,
+      combinationId: structure.combinationId || undefined,
+      levelId: structure.levelId || undefined,
+      teacherIds,
       isActive: b.isActive !== false,
-      createdAt: new Date().toISOString()
+      createdAt: now,
+      updatedAt: now,
+      createdBy: actor.id,
+      history
     };
-    if (!db.getClasses(schoolId).some(item => item.id === assignment.classId)) throw new HttpError(400, 'Unknown class.');
-    if (!db.getSubjects(schoolId).some(item => item.id === assignment.subjectId)) throw new HttpError(400, 'Unknown subject.');
-    const existing = getAssignments(schoolId, assignment.academicYearId, assignment.termId, assignment.classId, assignment.subjectId)[0];
+    const existing = db.getAcademicCollection<ClassSubjectAssignment>('classSubjectAssignments', schoolId).find(item =>
+      item.academicYearId === academicYearId && item.termId === termId &&
+      item.classId === classId && item.subjectId === subjectId
+    );
     if (existing) {
+      const updatedHistory = [...(existing.history ?? []), ...history.map(event => ({ ...event, action: 'ASSIGNMENT_UPDATED' }))];
       const updated = db.updateAcademicRecord<ClassSubjectAssignment>('classSubjectAssignments', existing.id, schoolId, {
-        teacherIds: assignment.teacherIds,
-        isActive: assignment.isActive
+        teacherIds,
+        isActive: assignment.isActive,
+        combinationId: assignment.combinationId,
+        levelId: assignment.levelId,
+        updatedAt: now,
+        history: updatedHistory
       });
-      const added = assignment.teacherIds.filter(id => !existing.teacherIds.includes(id));
+      const added = teacherIds.filter(id => !existing.teacherIds.includes(id));
       notifyTeachers(schoolId, added,
         'New subject assignment', 'Ishyirwa mu masomo yigishwa',
         `You have been assigned to teach a subject in the selected class and term.`,
         `Washyizwe mu kwigisha isomo muri iryo tsinda n'igihembwe.`, existing.id);
-      db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'UPDATE_TEACHER_ASSIGNMENT', 'CLASS_SUBJECT_ASSIGNMENT', existing.id, `Updated teachers for ${assignment.classId}/${assignment.subjectId}`);
-      res.json(updated);
+      db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'UPDATE_TEACHER_ASSIGNMENT', 'CLASS_SUBJECT_ASSIGNMENT', existing.id, `Updated teachers for ${classId}/${subjectId}`);
+      res.json(assignmentView(schoolId, updated!));
       return;
     }
     db.addAcademicRecord('classSubjectAssignments', assignment);
-    notifyTeachers(schoolId, assignment.teacherIds,
+    notifyTeachers(schoolId, teacherIds,
       'New subject assignment', 'Ishyirwa mu masomo yigishwa',
       `You have been assigned to teach a subject in the selected class and term.`,
       `Washyizwe mu kwigisha isomo muri iryo tsinda n'igihembwe.`);
-    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'ASSIGN_TEACHER_SUBJECT', 'CLASS_SUBJECT_ASSIGNMENT', assignment.id, `Assigned ${assignment.teacherIds.length} teacher(s)`);
-    res.status(201).json(assignment);
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'ASSIGN_TEACHER_SUBJECT', 'CLASS_SUBJECT_ASSIGNMENT', assignment.id, `Assigned ${teacherIds.length} teacher(s)`);
+    res.status(201).json(assignmentView(schoolId, assignment));
   }));
 
   app.patch('/api/academics/assignments/:id', wrap((req, res) => {
@@ -358,22 +769,49 @@ export function registerAcademicRoutes(app: Express): void {
     const existing = db.getAcademicCollection<ClassSubjectAssignment>('classSubjectAssignments', schoolId)
       .find(item => item.id === req.params.id);
     if (!existing) throw new HttpError(404, 'Assignment not found.');
-    const updates: Record<string, unknown> = {};
-    if (Array.isArray(b.teacherIds)) updates.teacherIds = b.teacherIds.filter((id): id is string => typeof id === 'string');
+    const structure = assignmentStructure(schoolId, existing.classId, existing.combinationId, existing.levelId);
+    const updates: Partial<ClassSubjectAssignment> = { updatedAt: new Date().toISOString() };
+    if (Array.isArray(b.teacherIds)) {
+      updates.teacherIds = validateTeacherIds(schoolId, b.teacherIds, actor);
+    }
     if (typeof b.isActive === 'boolean') updates.isActive = b.isActive;
-    const updated = db.updateAcademicRecord('classSubjectAssignments', req.params.id, schoolId, updates);
+    if (b.combinationId !== undefined) {
+      const id = str(b.combinationId, 'Combination', false);
+      const next = id ? assignmentStructure(schoolId, existing.classId, id, updates.levelId || existing.levelId, true) : null;
+      updates.combinationId = next?.combinationId || undefined;
+    }
+    if (b.levelId !== undefined) {
+      const id = str(b.levelId, 'Class level', false);
+      const next = id ? assignmentStructure(schoolId, existing.classId, updates.combinationId || existing.combinationId, id, true) : null;
+      updates.levelId = next?.levelId || undefined;
+    }
+    if (updates.isActive !== false) {
+      teachableSubject(schoolId, existing.subjectId,
+        db.getAcademicCollection<AcademicCombination>('combinations', schoolId).find(item => item.id === (updates.combinationId || existing.combinationId)),
+        updates.levelId || existing.levelId || '');
+    }
+    updates.history = [...(existing.history ?? []), {
+      action: updates.isActive === false ? 'ASSIGNMENT_DEACTIVATED' : 'ASSIGNMENT_UPDATED',
+      by: actor.id,
+      byName: actor.fullName,
+      role: actor.role,
+      at: updates.updatedAt!,
+      note: Array.isArray(updates.teacherIds) ? `Teachers: ${updates.teacherIds.length}.` : undefined
+    }];
+    const updated = db.updateAcademicRecord<ClassSubjectAssignment>('classSubjectAssignments', existing.id, schoolId, updates);
     if (!updated) throw new HttpError(404, 'Assignment not found.');
     const added = Array.isArray(updates.teacherIds)
-      ? (updates.teacherIds as string[]).filter(id => !existing.teacherIds.includes(id)) : [];
+      ? updates.teacherIds.filter(id => !existing.teacherIds.includes(id)) : [];
     notifyTeachers(schoolId, added,
       'New subject assignment', 'Ishyirwa mu masomo yigishwa',
       `You have been assigned to teach a subject in the selected class and term.`,
       `Washyizwe mu kwigisha isomo muri iryo tsinda n'igihembwe.`, existing.id);
-    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'UPDATE_TEACHER_ASSIGNMENT', 'CLASS_SUBJECT_ASSIGNMENT', updated.id, 'Updated class/subject assignment');
-    res.json(updated);
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'UPDATE_TEACHER_ASSIGNMENT', 'CLASS_SUBJECT_ASSIGNMENT', updated.id, `Updated assignment ${structure.classInfo.name}`);
+    res.json(assignmentView(schoolId, updated));
   }));
 
   app.get('/api/academics/class-teachers', wrap((req, res) => {
+    requireManager(req);
     const schoolId = scopedSchoolId(req);
     res.json(db.getAcademicCollection('classTeacherAssignments', schoolId).filter(
       item => !req.query.yearId || (item as { academicYearId?: string }).academicYearId === req.query.yearId
@@ -535,25 +973,31 @@ export function registerAcademicRoutes(app: Express): void {
   // ------------------------------------------------------------------
 
   app.get('/api/academics/my-assignments', wrap((req, res) => {
-    const actor = actorOf(req);
+    const actor = requireAcademicReader(req);
     const schoolId = scopedSchoolId(req);
     notifySubmissionDeadlines(schoolId);
     const year = getAcademicYear(schoolId, req.query.yearId as string);
     const term = getTerm(schoolId, req.query.termId as string, year?.id);
+    const activeSubjectIds = new Set(db.getSubjects(schoolId)
+      .filter(subject => subject.status !== 'ARCHIVED').map(subject => subject.id));
+    const activeClassIds = new Set(db.getClasses(schoolId)
+      .filter(item => (item.status ?? 'ACTIVE') !== 'ARCHIVED').map(item => item.id));
+    const combinationFilter = req.query.combinationId as string | undefined;
+    const levelFilter = req.query.levelId as string | undefined;
     const assignments = getAssignments(schoolId, year?.id, term?.id)
-      .filter(item => item.teacherIds.includes(actor.id));
+      .filter(item => item.teacherIds.includes(actor.id)
+        && activeSubjectIds.has(item.subjectId)
+        && activeClassIds.has(item.classId))
+      .map(item => assignmentView(schoolId, item))
+      .filter(item => (!combinationFilter || item.combinationId === combinationFilter)
+        && (!levelFilter || item.levelId === levelFilter));
     const classTeacherOf = db.getAcademicCollection<{ classId: string; teacherId: string }>('classTeacherAssignments', schoolId)
       .filter(item => item.teacherId === actor.id).map(item => item.classId);
-    const subjects = db.getSubjects(schoolId);
-    const classes = db.getClasses(schoolId);
     res.json({
       year,
       term,
       assignments: assignments.map(item => ({
         ...item,
-        subjectName: subjects.find(subject => subject.id === item.subjectId)?.name ?? item.subjectId,
-        subjectCode: subjects.find(subject => subject.id === item.subjectId)?.code ?? '',
-        className: classes.find(classInfo => classInfo.id === item.classId)?.name ?? item.classId,
         status: getSubmission(schoolId, item.academicYearId, item.termId, item.classId, item.subjectId)?.status ?? 'DRAFT'
       })),
       classTeacherOf
@@ -561,7 +1005,7 @@ export function registerAcademicRoutes(app: Express): void {
   }));
 
   app.get('/api/academics/marks-entry', wrap((req, res) => {
-    const actor = actorOf(req);
+    const actor = requireAcademicReader(req);
     const { schoolId, year, term } = resolveScope(req);
     const classId = str(req.query.classId, 'Class');
     const subjectId = str(req.query.subjectId, 'Subject');
@@ -597,7 +1041,12 @@ export function registerAcademicRoutes(app: Express): void {
     const b = bodyOf(req);
     const classId = str(b.classId, 'Class');
     const subjectId = str(b.subjectId, 'Subject');
+    const classInfo = db.getClasses(schoolId).find(item => item.id === classId);
+    if (!classInfo || (classInfo.status ?? 'ACTIVE') === 'ARCHIVED') {
+      throw new HttpError(400, 'Archived classes cannot accept new marks entries.');
+    }
     assertTeacherAssignment(actor, schoolId, year.id, term.id, classId, subjectId);
+    teachableSubject(schoolId, subjectId);
     const submission = getSubmission(schoolId, year.id, term.id, classId, subjectId);
     if (submission && ['SUBMITTED', 'UNDER_REVIEW', 'APPROVED'].includes(submission.status)) {
       throw new HttpError(409, 'These marks are locked. Request a return or reopening before editing.');
@@ -708,7 +1157,7 @@ export function registerAcademicRoutes(app: Express): void {
   // ------------------------------------------------------------------
 
   app.get('/api/academics/submissions', wrap((req, res) => {
-    const actor = actorOf(req);
+    const actor = requireAcademicReader(req);
     const schoolId = scopedSchoolId(req);
     let list = db.getAcademicCollection<MarkSubmission>('markSubmissions', schoolId);
     if (!isAcademicManager(actor) && !canReviewMarks(actor)) {
@@ -724,7 +1173,7 @@ export function registerAcademicRoutes(app: Express): void {
   }));
 
   app.get('/api/academics/submissions/:id', wrap((req, res) => {
-    const actor = actorOf(req);
+    const actor = requireAcademicReader(req);
     const schoolId = scopedSchoolId(req);
     const submission = db.getAcademicCollection<MarkSubmission>('markSubmissions', schoolId).find(item => item.id === req.params.id);
     if (!submission) throw new HttpError(404, 'Submission not found.');
@@ -735,7 +1184,7 @@ export function registerAcademicRoutes(app: Express): void {
   }));
 
   app.post('/api/academics/submissions/:id/submit', wrap((req, res) => {
-    const actor = actorOf(req);
+    const actor = requireAcademicReader(req);
     const schoolId = scopedSchoolId(req);
     const submission = db.getAcademicCollection<MarkSubmission>('markSubmissions', schoolId).find(item => item.id === req.params.id);
     if (!submission) throw new HttpError(404, 'Submission not found.');
@@ -751,6 +1200,25 @@ export function registerAcademicRoutes(app: Express): void {
     db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'SUBMIT_MARKS', 'MARK_SUBMISSION', submission.id, 'Submitted marks for review');
     notifyTeachers(schoolId, db.getUsers(schoolId).filter(user => canReviewMarks(user)).map(user => user.id),
       'Marks ready for review', 'Amanota irategereje kugenzurwa', '', '', submission.id);
+    res.json(updated);
+  }));
+
+  app.post('/api/academics/submissions/:id/review', wrap((req, res) => {
+    const reviewer = requireReviewer(req);
+    const schoolId = scopedSchoolId(req);
+    const submission = db.getAcademicCollection<MarkSubmission>('markSubmissions', schoolId).find(item => item.id === req.params.id);
+    if (!submission) throw new HttpError(404, 'Submission not found.');
+    if (submission.status !== 'SUBMITTED') throw new HttpError(409, 'Only newly submitted marks can start review.');
+    const now = new Date().toISOString();
+    const updated = db.updateAcademicRecord<MarkSubmission>('markSubmissions', submission.id, schoolId, {
+      status: 'UNDER_REVIEW', reviewedAt: now, reviewedBy: reviewer.id,
+      reviewedByName: reviewer.fullName, updatedAt: now,
+      history: addHistory({ action: 'UNDER_REVIEW', by: reviewer.id, byName: reviewer.fullName, role: reviewer.role, at: now }, submission.history)
+    });
+    db.logAudit(schoolId, reviewer.id, reviewer.fullName, reviewer.role, 'REVIEW_MARKS', 'MARK_SUBMISSION', submission.id, 'Marks moved under review.');
+    notifyTeachers(schoolId, [submission.teacherId],
+      'Marks under review', 'Amanota ari kugenzurwa',
+      'Your marks submission is now being reviewed.', 'Amanota yawe ari kugenzurwa.', submission.id);
     res.json(updated);
   }));
 
@@ -855,7 +1323,7 @@ export function registerAcademicRoutes(app: Express): void {
   }));
 
   app.get('/api/academics/results', wrap((req, res) => {
-    const actor = actorOf(req);
+    const actor = requireAcademicReader(req);
     const schoolId = scopedSchoolId(req);
     const year = getAcademicYear(schoolId, req.query.yearId as string);
     const term = getTerm(schoolId, req.query.termId as string, year?.id);
@@ -869,7 +1337,7 @@ export function registerAcademicRoutes(app: Express): void {
   }));
 
   app.get('/api/academics/dashboard', wrap((req, res) => {
-    const actor = actorOf(req);
+    const actor = requireAcademicReader(req);
     const schoolId = scopedSchoolId(req);
     notifySubmissionDeadlines(schoolId);
     const year = getAcademicYear(schoolId, req.query.yearId as string);

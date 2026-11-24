@@ -8,7 +8,6 @@ import { HealthIncidentModal } from './components/HealthIncidentModal';
 import { AccessibilityProvider } from './contexts/AccessibilityContext';
 import AiAssistantLauncher from './components/AiAssistantLauncher';
 
-import { LandingPage } from './pages/LandingPage';
 import { AuthPage } from './pages/AuthPage';
 import { AdmissionsPortalPage } from './pages/AdmissionsPortalPage';
 import { AdmissionTrackingPage } from './pages/AdmissionTrackingPage';
@@ -18,14 +17,16 @@ import { AccountSignupPage } from './pages/AccountSignupPage';
 import { api } from './services/api';
 import { HealthIncident, Student, Guardian } from './types';
 import { isTabAllowedForRole, resolveRequestedTab } from './rbac';
-import { getNavItem, getQuickNavItems } from './navigation';
+import { getNavItem, getQuickNavItems, isPublicPortalRoute } from './navigation';
 import { getRoute } from './routes';
 import { AlertTriangle, Menu, X } from 'lucide-react';
 
 function readHashTab(): string | null {
   if (typeof window === 'undefined') return null;
   const raw = window.location.hash.replace(/^#\/?/, '').trim();
-  return raw || null;
+  // Ignore query strings such as #/login?authError=google so public routes
+  // like the login page still resolve correctly after a provider redirect.
+  return raw.split('?')[0] || null;
 }
 
 const MainApp: React.FC = () => {
@@ -88,12 +89,11 @@ const MainApp: React.FC = () => {
       const requested = readHashTab();
 
       if (!currentUser) {
-        const publicTabs = new Set(['login', 'apply', 'track']);
         if (requested === 'landing') {
           // The public home lives outside the portal hash routes; a stale
           // #/landing link simply shows the public landing page again.
           history.replaceState(null, '', '#/');
-        } else if (requested && !publicTabs.has(requested)) {
+        } else if (requested && !isPublicPortalRoute(requested)) {
           sessionStorage.setItem(REDIRECT_TARGET_KEY, requested);
           history.replaceState(null, '', '#/login');
           window.dispatchEvent(new Event('hashchange'));
@@ -427,24 +427,28 @@ const PublicSite: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!showLogin && !isPublicPortalRoute(readHashTab())) {
+      // The public homepage is the server-rendered school website at '/'.
+      // Public signup/activation hash routes are rendered by PublicRouteGate,
+      // so must not be redirected here.
+      window.location.replace('/');
+    }
+  }, [showLogin]);
+
   if (showLogin) {
     return (
       <AuthPage
         onBack={() => {
-          window.location.hash = '#/';
+          // Leave the private portal entirely and return to the public school
+          // website at the site root, not just another SPA hash route.
+          window.location.assign('/');
         }}
       />
     );
   }
 
-  return (
-    <LandingPage
-      onNavigate={tab => {
-        window.location.hash = tab === 'apply' ? '#/apply' : tab === 'track' ? '#/track' : '#/login';
-      }}
-      publicMode
-    />
-  );
+  return null;
 };
 
 /** Public admission pages are intentionally outside the authenticated shell. */
@@ -464,13 +468,13 @@ const PublicRouteGate: React.FC = () => {
   if (route === 'apply') {
     return (
       <AdmissionsPortalPage
-        onBackHome={() => { window.location.hash = '#/'; }}
+        onBackHome={() => { window.location.assign('/'); }}
         onOpenTracking={() => { window.location.hash = '#/track'; }}
       />
     );
   }
   if (route === 'track') {
-    return <AdmissionTrackingPage onBackHome={() => { window.location.hash = '#/'; }} />;
+    return <AdmissionTrackingPage onBackHome={() => { window.location.assign('/'); }} />;
   }
   if (route === 'parent-signup' || route === 'student-signup') {
     return (
@@ -485,7 +489,7 @@ const PublicRouteGate: React.FC = () => {
     return (
       <StaffActivationPage
         onActivated={() => { window.location.hash = '#/login'; }}
-        onBackHome={() => { window.location.hash = '#/'; }}
+        onBackHome={() => { window.location.assign('/'); }}
       />
     );
   }

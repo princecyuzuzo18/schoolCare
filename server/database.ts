@@ -8,6 +8,7 @@ import {
   Guardian,
   StudentGuardianLink,
   AcademicClass,
+  ClassLevel,
   Subject,
   AttendanceRecord,
   HealthIncident,
@@ -27,6 +28,9 @@ import {
   AuditLogEntry,
   AdmissionApplication,
   AdmissionDocument,
+  AdmissionDocumentAccessEvent,
+  AdmissionDocumentUpload,
+  AdmissionReviewDecision,
   AdmissionReviewNote,
   AdmissionSettings,
   AdmissionSlipUpload,
@@ -78,6 +82,7 @@ import {
   initialCombinations
 } from './seedData';
 import { getProfessionalTitle, isStaffRole } from '../src/roleCatalog';
+import { DEFAULT_DOCUMENT_CATEGORIES, normalizeDocumentCategories } from './admissionConfig';
 
 /**
  * Audit details are engineering evidence, not a place to copy personal or
@@ -107,6 +112,7 @@ interface DatabaseSchema {
   users: UserProfile[];
   classes: AcademicClass[];
   combinations: AcademicCombination[];
+  classLevels: ClassLevel[];
   subjects: Subject[];
   students: Student[];
   guardians: Guardian[];
@@ -130,6 +136,9 @@ interface DatabaseSchema {
   admissions: AdmissionApplication[];
   admissionVerifications: AdmissionVerification[];
   admissionSlipUploads: AdmissionSlipUpload[];
+  admissionDocumentUploads: AdmissionDocumentUpload[];
+  admissionDocumentAccessLog: AdmissionDocumentAccessEvent[];
+  admissionReviewDecisions: AdmissionReviewDecision[];
   admissionSettings: AdmissionSettings;
   modules: Record<string, Array<Record<string, unknown>>>;
   academicYears: AcademicYear[];
@@ -145,19 +154,25 @@ interface DatabaseSchema {
 }
 
 const ADMISSION_STATUS_ORDER: ApplicationStatus[] = [
+  'DRAFT',
   'SUBMITTED',
   'UNDER_REVIEW',
+  'DOCUMENTS_REQUIRED',
   'ADDITIONAL_INFO_REQUIRED',
   'APPROVED',
-  'REJECTED'
+  'REJECTED',
+  'WAITLISTED'
 ];
 
 const ADMISSION_STATUSES: Record<ApplicationStatus, { label: string; color: string }> = {
+  DRAFT: { label: 'Draft', color: 'bg-slate-100 text-slate-700' },
   SUBMITTED: { label: 'Submitted', color: 'bg-slate-100 text-slate-700' },
   UNDER_REVIEW: { label: 'Under Review', color: 'bg-blue-100 text-blue-700' },
+  DOCUMENTS_REQUIRED: { label: 'Documents Required', color: 'bg-amber-100 text-amber-700' },
   ADDITIONAL_INFO_REQUIRED: { label: 'Additional Info Required', color: 'bg-amber-100 text-amber-700' },
   APPROVED: { label: 'Approved', color: 'bg-emerald-100 text-emerald-700' },
-  REJECTED: { label: 'Rejected', color: 'bg-red-100 text-red-700' }
+  REJECTED: { label: 'Rejected', color: 'bg-red-100 text-red-700' },
+  WAITLISTED: { label: 'Waitlisted', color: 'bg-violet-100 text-violet-700' }
 };
 
 const ADMISSION_TYPE_LABELS: Record<ApplicationType, string> = {
@@ -168,6 +183,92 @@ const ADMISSION_TYPE_LABELS: Record<ApplicationType, string> = {
 
 const DATA_DIR = process.env.SCHOOLCARE_DATA_DIR || path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'schoolcare_db.json');
+
+/** Short, stable code suggested from an existing level/class name. */
+function suggestedLevelCode(name: string): string {
+  const compact = String(name || '').replace(/[^A-Za-z0-9]/g, '');
+  const short = compact.match(/^(Y\d+|LEVEL\d+|S\d+)/i)?.[0] || compact;
+  return short.replace(/^LEVEL/i, 'L').toUpperCase().slice(0, 30) || 'LEVEL';
+}
+
+/**
+ * Derives managed class levels from the school's existing classes. Existing
+ * level records are preserved; legacy classes only receive additive links so
+ * historical students, marks and report cards keep their original IDs.
+ */
+function normalizeManagedLevels(
+  data: DatabaseSchema,
+  classCombination: Record<string, string>
+): boolean {
+  let changed = false;
+  const now = new Date().toISOString();
+  const levels = data.classLevels;
+  const activeYearId = data.academicSettings?.[0]?.academicYearId;
+
+  for (const classItem of data.classes) {
+    const levelName = String(classItem.grade || classItem.name || '').trim();
+    if (!levelName) continue;
+    const code = suggestedLevelCode(levelName);
+    const schoolId = classItem.schoolId;
+    let level = levels.find(item =>
+      item.schoolId === schoolId &&
+      (item.code.toUpperCase() === code || item.name.toLowerCase() === levelName.toLowerCase())
+    );
+    if (!level) {
+      const combinationId = classItem.combinationId || classCombination[classItem.id];
+      const programme = data.combinations.find(item => item.id === combinationId)?.academicProgramme;
+      level = {
+        id: `level-${code.toLowerCase()}-${schoolId}`.slice(0, 90),
+        schoolId,
+        name: levelName,
+        code,
+        academicProgramme: programme || undefined,
+        combinationIds: combinationId ? [combinationId] : [],
+        isActive: (classItem.status ?? 'ACTIVE') !== 'ARCHIVED',
+        createdAt: now,
+        updatedAt: now
+      };
+      levels.push(level);
+      changed = true;
+    } else {
+      const combinationId = classItem.combinationId || classCombination[classItem.id];
+      if (combinationId && !level.combinationIds.includes(combinationId)) {
+        level.combinationIds.push(combinationId);
+        changed = true;
+      }
+    }
+
+    if (!classItem.levelId) {
+      classItem.levelId = level.id;
+      changed = true;
+    }
+    if (!classItem.code) {
+      classItem.code = `${code}-${String(classItem.stream || 'A').toUpperCase()}`.slice(0, 60);
+      changed = true;
+    }
+    if (!classItem.academicYearId && activeYearId) {
+      classItem.academicYearId = activeYearId;
+      changed = true;
+    }
+  }
+
+  for (const subject of data.subjects) {
+    if (!subject.status) {
+      subject.status = 'ACTIVE';
+      changed = true;
+    }
+    if (!Array.isArray(subject.combinationIds)) {
+      subject.combinationIds = [];
+      changed = true;
+    }
+    if (!Array.isArray(subject.levelIds)) {
+      subject.levelIds = [];
+      changed = true;
+    }
+  }
+
+  return changed;
+}
 
 class DatabaseStore {
   private data: DatabaseSchema;
@@ -187,6 +288,7 @@ class DatabaseStore {
         classIds: [...item.classIds],
         teacherIds: [...item.teacherIds]
       })),
+      classLevels: [],
       subjects: [...initialSubjects],
       students: [...initialStudents],
       guardians: [...initialGuardians],
@@ -210,7 +312,13 @@ class DatabaseStore {
       admissions: [],
       admissionVerifications: [],
       admissionSlipUploads: [],
-      admissionSettings: { resultSlipRequired: true },
+      admissionDocumentUploads: [],
+      admissionDocumentAccessLog: [],
+      admissionReviewDecisions: [],
+      admissionSettings: {
+        resultSlipRequired: true,
+        documentCategories: DEFAULT_DOCUMENT_CATEGORIES.map(category => ({ ...category }))
+      },
       modules: {},
       academicYears: initialAcademicYears.map(item => ({ ...item })),
       terms: initialTerms.map(item => ({ ...item })),
@@ -350,6 +458,7 @@ class DatabaseStore {
     const collectionKeys: AcademicCollectionKey[] = [
       'academicYears',
       'terms',
+      'classLevels',
       'classSubjectAssignments',
       'classTeacherAssignments',
       'assessmentCategories',
@@ -450,6 +559,12 @@ class DatabaseStore {
       changed = true;
     }
 
+    if (!Array.isArray(data.classLevels)) {
+      data.classLevels = [];
+      changed = true;
+    }
+    if (normalizeManagedLevels(data, classCombination)) changed = true;
+
     return changed;
   }
 
@@ -488,6 +603,18 @@ class DatabaseStore {
             parsed.admissionSlipUploads = [];
             needsSave = true;
           }
+          if (!Array.isArray(parsed.admissionDocumentUploads)) {
+            parsed.admissionDocumentUploads = [];
+            needsSave = true;
+          }
+          if (!Array.isArray(parsed.admissionDocumentAccessLog)) {
+            parsed.admissionDocumentAccessLog = [];
+            needsSave = true;
+          }
+          if (!Array.isArray(parsed.admissionReviewDecisions)) {
+            parsed.admissionReviewDecisions = [];
+            needsSave = true;
+          }
           if (
             !parsed.admissionSettings ||
             typeof parsed.admissionSettings !== 'object' ||
@@ -497,6 +624,13 @@ class DatabaseStore {
             parsed.admissionSettings = {
               ...(parsed.admissionSettings && typeof parsed.admissionSettings === 'object' ? parsed.admissionSettings : {}),
               resultSlipRequired: true
+            };
+            needsSave = true;
+          }
+          if (!normalizeDocumentCategories(parsed.admissionSettings?.documentCategories)) {
+            parsed.admissionSettings = {
+              ...parsed.admissionSettings,
+              documentCategories: DEFAULT_DOCUMENT_CATEGORIES.map(category => ({ ...category }))
             };
             needsSave = true;
           }
@@ -1460,9 +1594,65 @@ class DatabaseStore {
     return this.data.admissionSlipUploads[index];
   }
 
+  // --- Pre-submission private document uploads ---
+  public addAdmissionDocumentUpload(record: AdmissionDocumentUpload): AdmissionDocumentUpload {
+    this.data.admissionDocumentUploads.push(record);
+    this.saveData();
+    return record;
+  }
+
+  public getAdmissionDocumentUploadByTokenHash(tokenHash: string): AdmissionDocumentUpload | undefined {
+    return this.data.admissionDocumentUploads.find(item => item.tokenHash === tokenHash);
+  }
+
+  public updateAdmissionDocumentUpload(
+    id: string,
+    updates: Partial<AdmissionDocumentUpload>
+  ): AdmissionDocumentUpload | null {
+    const index = this.data.admissionDocumentUploads.findIndex(item => item.id === id);
+    if (index === -1) return null;
+    this.data.admissionDocumentUploads[index] = {
+      ...this.data.admissionDocumentUploads[index],
+      ...updates
+    };
+    this.saveData();
+    return this.data.admissionDocumentUploads[index];
+  }
+
+  // --- Admission document access and decision history ---
+  public logAdmissionDocumentAccess(event: AdmissionDocumentAccessEvent): AdmissionDocumentAccessEvent {
+    const application = this.data.admissions.find(item => item.id === event.applicationId);
+    if (application) {
+      application.documentAccessHistory = [
+        event,
+        ...(Array.isArray(application.documentAccessHistory) ? application.documentAccessHistory : [])
+      ].slice(0, 100);
+    }
+    this.data.admissionDocumentAccessLog.push(event);
+    this.saveData();
+    return event;
+  }
+
+  public addAdmissionReviewDecision(decision: AdmissionReviewDecision): AdmissionReviewDecision {
+    const application = this.data.admissions.find(item => item.id === decision.applicationId);
+    if (application) {
+      application.reviewDecisions = [
+        decision,
+        ...(Array.isArray(application.reviewDecisions) ? application.reviewDecisions : [])
+      ].slice(0, 100);
+    }
+    this.data.admissionReviewDecisions.push(decision);
+    this.saveData();
+    return decision;
+  }
+
   // --- Administrator-configured admission settings ---
   public getAdmissionSettings(): AdmissionSettings {
-    return { ...this.data.admissionSettings };
+    const settings = { ...this.data.admissionSettings };
+    if (!normalizeDocumentCategories(settings.documentCategories)) {
+      settings.documentCategories = DEFAULT_DOCUMENT_CATEGORIES.map(category => ({ ...category }));
+    }
+    return settings;
   }
 
   public updateAdmissionSettings(updates: Partial<AdmissionSettings>): AdmissionSettings {

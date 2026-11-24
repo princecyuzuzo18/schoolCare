@@ -1,7 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api, MarksEntryView } from '../services/api';
-import type { AcademicTerm, AcademicYear, MarkAttendanceStatus } from '../types';
+import type {
+  AcademicTerm,
+  AcademicYear,
+  ClassSubjectAssignmentView,
+  MarkAttendanceStatus
+} from '../types';
+import { SearchableSelect, type SearchableOption } from '../components/SearchableSelect';
+import { NO_ASSIGNMENT_MESSAGE } from '../teacherMarksMessages';
 import {
   AlertCircle,
   BookOpen,
@@ -17,18 +24,37 @@ type CellKey = string;
 
 const cellKey = (studentId: string, categoryId: string): CellKey => `${studentId}:${categoryId}`;
 
-export const TeacherAcademicsPage: React.FC = () => {
+interface TeacherAcademicsPageProps {
+  title?: string;
+  description?: string;
+}
+
+type TeacherAssignmentView = ClassSubjectAssignmentView & { status: string };
+
+interface ChainOption extends SearchableOption {
+  detail?: string;
+}
+
+function uniqueOptions(items: ChainOption[]): ChainOption[] {
+  return Array.from(new Map(items.filter(item => item.id).map(item => [item.id, item])).values());
+}
+
+export const TeacherAcademicsPage: React.FC<TeacherAcademicsPageProps> = ({
+  title = 'My Academic Work',
+  description = 'Enter marks only for classes and subjects assigned to you for the selected term.'
+}) => {
   const { currentUser } = useAuth();
 
   const [years, setYears] = useState<AcademicYear[]>([]);
   const [terms, setTerms] = useState<AcademicTerm[]>([]);
   const [yearId, setYearId] = useState('');
   const [termId, setTermId] = useState('');
-  const [assignments, setAssignments] = useState<Array<{
-    id: string; classId: string; subjectId: string; className: string; subjectName: string; status: string;
-  }>>([]);
+  const [assignments, setAssignments] = useState<TeacherAssignmentView[]>([]);
+  const [combinationId, setCombinationId] = useState('');
+  const [levelId, setLevelId] = useState('');
   const [classId, setClassId] = useState('');
   const [subjectId, setSubjectId] = useState('');
+  const [categoryId, setCategoryId] = useState('');
   const [entry, setEntry] = useState<MarksEntryView | null>(null);
   const [scores, setScores] = useState<Record<CellKey, string>>({});
   const [attendance, setAttendance] = useState<Record<CellKey, MarkAttendanceStatus>>({});
@@ -46,10 +72,8 @@ export const TeacherAcademicsPage: React.FC = () => {
         ]);
         setYears(yearList);
         setTerms(termList);
-        const initialYear = workspace.year?.id || yearList.find(y => y.isActive)?.id || yearList[0]?.id || '';
-        const initialTerm = workspace.term?.id || termList.find(t => t.isActive)?.id || termList[0]?.id || '';
-        setYearId(initialYear);
-        setTermId(initialTerm);
+        setYearId(workspace.year?.id || yearList.find(y => y.isActive)?.id || yearList[0]?.id || '');
+        setTermId(workspace.term?.id || termList.find(t => t.isActive)?.id || termList[0]?.id || '');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load academic workspace.');
       } finally {
@@ -60,22 +84,51 @@ export const TeacherAcademicsPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!yearId || !termId) return;
-    const load = async () => {
-      try {
-        const [workspace, termList] = await Promise.all([
-          api.getMyAssignments({ yearId, termId }), api.getTerms(yearId)
-        ]);
-        setTerms(termList);
-        setAssignments(workspace.assignments);
-        const first = workspace.assignments[0];
-        setClassId(current => workspace.assignments.some(a => a.classId === current) ? current : first?.classId || '');
-        setSubjectId(current => workspace.assignments.some(a => a.subjectId === current && a.classId === (classId || first?.classId)) ? current : first?.subjectId || '');
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load assignments.');
+    if (!yearId) return;
+    let active = true;
+    api.getTerms(yearId).then(data => {
+      if (!active) return;
+      setTerms(data);
+      setTermId(current => data.some(term => term.id === current)
+        ? current
+        : data.find(term => term.isActive)?.id || data[0]?.id || '');
+    }).catch(err => {
+      if (active) setError(err instanceof Error ? err.message : 'Failed to load terms.');
+    });
+    return () => { active = false; };
+  }, [yearId]);
+
+  useEffect(() => {
+    if (!yearId || !termId) {
+      setAssignments([]);
+      setEntry(null);
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    api.getMyAssignments({ yearId, termId }).then(workspace => {
+      if (!active) return;
+      const list = workspace.assignments as TeacherAssignmentView[];
+      setAssignments(list);
+      setCombinationId('');
+      setLevelId('');
+      setClassId('');
+      setSubjectId('');
+      setCategoryId('');
+      setEntry(null);
+      const first = list[0];
+      if (first) {
+        setCombinationId(first.combinationId || '');
+        setLevelId(first.levelId || '');
+        setClassId(first.classId || '');
+        setSubjectId(first.subjectId || '');
       }
-    };
-    load();
+    }).catch(err => {
+      if (active) setError(err instanceof Error ? err.message : 'Failed to load assignments.');
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
   }, [yearId, termId]);
 
   const loadEntry = async () => {
@@ -85,6 +138,7 @@ export const TeacherAcademicsPage: React.FC = () => {
     try {
       const data = await api.getMarksEntry({ yearId, termId, classId, subjectId });
       setEntry(data);
+      setCategoryId('');
       const nextScores: Record<CellKey, string> = {};
       const nextAttendance: Record<CellKey, MarkAttendanceStatus> = {};
       const nextRemarks: Record<string, string> = {};
@@ -105,14 +159,87 @@ export const TeacherAcademicsPage: React.FC = () => {
   };
 
   useEffect(() => {
+    setEntry(null);
+    setCategoryId('');
+    if (!classId || !subjectId || !yearId || !termId) return;
     loadEntry();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [yearId, termId, classId, subjectId]);
 
-  const selectedAssignment = useMemo(
-    () => assignments.find(item => item.classId === classId && item.subjectId === subjectId),
-    [assignments, classId, subjectId]
+  const combinationOptions = useMemo(
+    () => uniqueOptions(assignments.map(item => ({
+      id: item.combinationId || '',
+      name: item.combinationName || 'Unassigned combination',
+      detail: item.id
+    }))),
+    [assignments]
   );
+  const levelOptions = useMemo(
+    () => uniqueOptions(assignments
+      .filter(item => !combinationId || item.combinationId === combinationId)
+      .map(item => ({ id: item.levelId || '', name: item.levelName || 'Unassigned level' }))),
+    [assignments, combinationId]
+  );
+  const classOptions = useMemo(
+    () => uniqueOptions(assignments
+      .filter(item => (!combinationId || item.combinationId === combinationId)
+        && (!levelId || item.levelId === levelId))
+      .map(item => ({ id: item.classId, name: item.className }))),
+    [assignments, combinationId, levelId]
+  );
+  const subjectOptions = useMemo(
+    () => uniqueOptions(assignments
+      .filter(item => item.classId === classId
+        && (!combinationId || item.combinationId === combinationId)
+        && (!levelId || item.levelId === levelId))
+      .map(item => ({ id: item.subjectId, name: item.subjectName, detail: item.subjectCode }))),
+    [assignments, combinationId, levelId, classId]
+  );
+  const assessmentOptions = useMemo<ChainOption[]>(
+    () => [
+      { id: '', name: 'All assessments', detail: 'Show every active category' },
+      ...(entry?.categories.map(category => ({
+        id: category.id,
+        name: category.name,
+        detail: `${category.code} · max ${category.maxMarks} · ${category.weightPercentage}%`
+      })) ?? [])
+    ],
+    [entry]
+  );
+  const visibleCategories = useMemo(
+    () => categoryId ? entry?.categories.filter(category => category.id === categoryId) ?? [] : entry?.categories ?? [],
+    [entry, categoryId]
+  );
+
+  const selectedAssignment = useMemo(
+    () => assignments.find(item => item.classId === classId && item.subjectId === subjectId
+      && (!combinationId || item.combinationId === combinationId)
+      && (!levelId || item.levelId === levelId)),
+    [assignments, combinationId, levelId, classId, subjectId]
+  );
+
+  const clearDependents = (kind: 'year' | 'term' | 'combination' | 'level' | 'class' | 'subject') => {
+    setEntry(null);
+    setCategoryId('');
+    if (kind === 'year' || kind === 'term') {
+      setCombinationId('');
+      setLevelId('');
+    }
+    if (['year', 'term', 'combination'].includes(kind)) setClassId('');
+    if (['year', 'term', 'combination', 'level', 'class'].includes(kind)) setSubjectId('');
+  };
+
+  const changeYear = (value: string) => {
+    clearDependents('year');
+    setYearId(value);
+    setTermId(terms.find(term => term.academicYearId === value && term.isActive)?.id
+      || terms.find(term => term.academicYearId === value)?.id || '');
+  };
+
+  const changeTerm = (value: string) => {
+    clearDependents('term');
+    setTermId(value);
+  };
 
   const preview = (studentId: string) => {
     if (!entry) return null;
@@ -169,15 +296,14 @@ export const TeacherAcademicsPage: React.FC = () => {
 
   const status = entry?.submission?.status || 'DRAFT';
   const canEdit = Boolean(entry?.canEdit);
+  const noAssignments = !loading && Boolean(yearId && termId) && assignments.length === 0;
 
   return (
     <div className="space-y-6 p-4 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-black text-slate-900">My Academic Work</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Enter marks only for classes and subjects assigned to you for the selected term.
-          </p>
+          <h1 className="text-2xl font-black text-slate-900">{title}</h1>
+          <p className="text-sm text-slate-500 mt-1">{description}</p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-semibold">
           <span className="rounded-full bg-blue-50 px-3 py-1.5 text-blue-800">
@@ -189,37 +315,57 @@ export const TeacherAcademicsPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          { label: 'Academic year', value: yearId, set: setYearId, options: years.map(y => ({ id: y.id, name: y.name })) },
-          { label: 'Term', value: termId, set: setTermId, options: terms.map(t => ({ id: t.id, name: t.name })) },
-          {
-            label: 'Class', value: classId, set: (value: string) => {
-              setClassId(value);
-              const match = assignments.find(a => a.classId === value && a.subjectId === subjectId);
-              if (!match) setSubjectId(assignments.find(a => a.classId === value)?.subjectId || '');
-            },
-            options: Array.from(new Map(assignments.map(a => [a.classId, { id: a.classId, name: a.className }])).values())
-          },
-          {
-            label: 'Subject', value: subjectId, set: setSubjectId,
-            options: assignments.filter(a => a.classId === classId).map(a => ({ id: a.subjectId, name: a.subjectName }))
-          }
-        ].map(control => (
-          <label key={control.label} className="text-xs font-bold text-slate-600">
-            {control.label}
-            <select
-              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800"
-              value={control.value}
-              onChange={event => control.set(event.target.value)}
-            >
-              <option value="">Select...</option>
-              {control.options.map(option => (
-                <option key={option.id} value={option.id}>{option.name}</option>
-              ))}
-            </select>
-          </label>
-        ))}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <SearchableSelect
+          label="Academic year"
+          value={yearId}
+          options={years.map(item => ({ id: item.id, name: item.name }))}
+          onChange={changeYear}
+        />
+        <SearchableSelect
+          label="Term"
+          value={termId}
+          options={terms
+            .filter(item => !yearId || item.academicYearId === yearId)
+            .map(item => ({ id: item.id, name: item.name }))}
+          onChange={changeTerm}
+        />
+        <SearchableSelect
+          label="Combination"
+          value={combinationId}
+          options={combinationOptions}
+          onChange={value => { clearDependents('combination'); setCombinationId(value); }}
+          disabled={assignments.length === 0}
+        />
+        <SearchableSelect
+          label="Class level"
+          value={levelId}
+          options={levelOptions}
+          onChange={value => { clearDependents('level'); setLevelId(value); }}
+          disabled={assignments.length === 0}
+        />
+        <SearchableSelect
+          label="Class"
+          value={classId}
+          options={classOptions}
+          onChange={value => { clearDependents('class'); setClassId(value); }}
+          disabled={assignments.length === 0}
+        />
+        <SearchableSelect
+          label="Subject"
+          value={subjectId}
+          options={subjectOptions}
+          onChange={value => { clearDependents('subject'); setSubjectId(value); }}
+          disabled={assignments.length === 0}
+        />
+        <SearchableSelect
+          label="Assessment"
+          value={categoryId}
+          options={assessmentOptions}
+          onChange={setCategoryId}
+          disabled={!entry}
+          emptyText="No active assessments configured"
+        />
       </div>
 
       {error && (
@@ -233,6 +379,18 @@ export const TeacherAcademicsPage: React.FC = () => {
         </div>
       )}
 
+      {noAssignments && (
+        <div role="status" className="rounded-2xl border border-dashed border-blue-300 bg-blue-50 p-10 text-center text-sm font-semibold text-blue-800">
+          {NO_ASSIGNMENT_MESSAGE}
+        </div>
+      )}
+
+      {!noAssignments && !entry && !loading && (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
+          Choose a combination, class level, class and subject to open the marks sheet.
+        </div>
+      )}
+
       {entry && (
         <>
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -242,7 +400,9 @@ export const TeacherAcademicsPage: React.FC = () => {
                 <div>
                   <p className="font-bold text-slate-900">{entry.subject?.name} - {entry.classInfo?.name}</p>
                   <p className="text-xs text-slate-500">
-                    {entry.year?.name} | {entry.term?.name} | {entry.students.length} students
+                    {combinationOptions.find(item => item.id === combinationId)?.name || 'Combination'}
+                    {' · '}{levelOptions.find(item => item.id === levelId)?.name || 'Level'}
+                    {' · '}{entry.year?.name} | {entry.term?.name} | {entry.students.length} enrolled students
                   </p>
                 </div>
               </div>
@@ -252,7 +412,7 @@ export const TeacherAcademicsPage: React.FC = () => {
                     : status === 'SUBMITTED' ? 'bg-blue-100 text-blue-800'
                       : status === 'RETURNED' ? 'bg-amber-100 text-amber-800'
                         : 'bg-slate-100 text-slate-700'
-                }`}>{status}</span>
+                }`}>{status.replaceAll('_', ' ')}</span>
                 {selectedAssignment && (
                   <span className="text-xs text-slate-500">Assigned to you</span>
                 )}
@@ -271,7 +431,7 @@ export const TeacherAcademicsPage: React.FC = () => {
                 <tr>
                   <th className="px-3 py-3">Admission no.</th>
                   <th className="px-3 py-3 min-w-[180px]">Full name</th>
-                  {entry.categories.map(category => (
+                  {visibleCategories.map(category => (
                     <th key={category.id} className="px-3 py-3 text-center">
                       {category.code}<span className="block font-normal normal-case">max {category.maxMarks} / {category.weightPercentage}%</span>
                     </th>
@@ -289,7 +449,7 @@ export const TeacherAcademicsPage: React.FC = () => {
                     <tr key={student.id} className="hover:bg-slate-50/60">
                       <td className="px-3 py-2 font-mono text-xs text-slate-600">{student.admissionNumber}</td>
                       <td className="px-3 py-2 font-semibold text-slate-800">{student.firstName} {student.lastName}</td>
-                      {entry.categories.map(category => {
+                      {visibleCategories.map(category => {
                         const key = cellKey(student.id, category.id);
                         return (
                           <td key={category.id} className="px-2 py-2">

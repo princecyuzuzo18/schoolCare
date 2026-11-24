@@ -304,7 +304,7 @@ export default function AiChat({ compact = false, initialPrompt, onInitialPrompt
       {status && !status.available && status.reason && (
         <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
           <AlertCircle size={14} className="mt-0.5 shrink-0" />
-          <span>{status.reason} {status.reason.includes('GEMINI_API_KEY') ? 'Ask an administrator to configure it on the server.' : ''}</span>
+          <span>{status.reason} {/(GEMINI_API_KEY|OPENAI_API_KEY)/.test(status.reason) ? 'Ask an administrator to configure it on the server.' : ''}</span>
         </div>
       )}
 

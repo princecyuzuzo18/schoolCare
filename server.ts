@@ -14,6 +14,18 @@ import { checkMysqlHealth, closeMysqlPool, getExportSqlPath, getMysqlPool } from
 import { getPasswordHash, replacePassword, verifyPassword } from './server/authCredentials';
 import { createSession, destroySession, invalidateUserSessions } from './server/sessions';
 import { buildAuthSessionView } from './server/authSession';
+import {
+  GoogleOAuthError,
+  buildGoogleAuthorizeUrl,
+  clearOAuthStateCookie,
+  ensureGoogleUser,
+  googleOAuthConfig,
+  newOAuthState,
+  oauthStateMatches,
+  readOAuthStateCookie,
+  setOAuthStateCookie,
+  verifyGoogleCode
+} from './server/googleOAuth';
 import { syncUserProfileToMysql, type ProfileSyncStatus } from './server/profileSync';
 import { ASSIGNABLE_STAFF_ROLES, getProfessionalTitle } from './src/roleCatalog';
 import { registerPublicSite } from './server/publicSite';
@@ -78,6 +90,7 @@ import {
 import {
   APPLICATION_STATUSES,
   APPLICATION_TYPES,
+  REVIEW_DECISION_STATUSES,
   RESULT_SLIP_VERIFICATION_STATUSES,
   UPLOAD_LIMITS,
   assertSameOrigin,
@@ -87,15 +100,21 @@ import {
   createRateLimiter,
   generateVerificationCode,
   getAllowedDocumentTypes,
+  getPublicAdmissionOptions,
   hasActualAcademicData,
   hashValue,
   isValidUpload,
   nextReferenceNumber,
   normalizeAcademicPerformance,
   normalizeContact,
+  normalizePreviousAcademicBackground,
   validateSubmission
 } from './server/admissions';
+import { documentCategoriesFor, normalizeDocumentCategories, publicDocumentCategories } from './server/admissionConfig';
 import {
+  mirrorAdmissionDocumentAccess,
+  mirrorAdmissionDocumentUpload,
+  mirrorAdmissionReviewDecision,
   mirrorAdmissionSettings,
   mirrorAdmissionSlipUpload,
   mirrorApplicationCreate,
@@ -247,6 +266,7 @@ function runAdmissionUpload(req: Request, res: Response, next: NextFunction): vo
 }
 
 const SLIP_UPLOAD_DIR = path.join(UPLOAD_ROOT, '.slips');
+const DOCUMENT_UPLOAD_DIR = path.join(UPLOAD_ROOT, '.documents');
 const SLIP_TTL_MS = 30 * 60 * 1000;
 
 const slipUpload = multer({
@@ -273,10 +293,44 @@ function runSlipUpload(req: Request, res: Response, next: NextFunction): void {
   });
 }
 
+const documentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: UPLOAD_LIMITS.maxFileBytes,
+    files: 1,
+    fields: 10,
+    parts: 12
+  },
+  fileFilter: (_req, file, callback) => {
+    if (ALLOWED_UPLOAD_MIMES.has(file.mimetype.toLowerCase())) callback(null, true);
+    else callback(new Error('Unsupported file type.'));
+  }
+}).single('document');
+
+function runDocumentUpload(req: Request, res: Response, next: NextFunction): void {
+  documentUpload(req, res, error => {
+    if (error) {
+      res.status(400).json({ error: 'Use a PDF, JPG or PNG document up to 5 MB.' });
+      return;
+    }
+    next();
+  });
+}
+
 function resultSlipExtension(mime: string): string {
   if (mime === 'application/pdf') return '.pdf';
   if (mime === 'image/png') return '.png';
   return '.jpg';
+}
+
+function activeDocumentUpload(token: string) {
+  if (!/^[a-f0-9]{64}$/i.test(token)) return null;
+  const record = db.getAdmissionDocumentUploadByTokenHash(hashValue(token));
+  if (!record || record.consumedAt || record.replacedAt) return null;
+  if (new Date(record.expiresAt).getTime() <= Date.now()) return null;
+  const filePath = path.resolve(UPLOAD_ROOT, record.storagePath);
+  if (!filePath.startsWith(`${UPLOAD_ROOT}${path.sep}`) || !fs.existsSync(filePath)) return null;
+  return { record, filePath };
 }
 
 function activeSlipUpload(token: string) {
@@ -329,6 +383,8 @@ const accountSignupRateLimiter = createRateLimiter({
 const submissionRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 8, prefix: 'admission-submit' });
 const slipUploadRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 15, prefix: 'admission-slip-upload' });
 const slipPreviewRateLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 30, prefix: 'admission-slip-preview' });
+const documentUploadRateLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 30, prefix: 'admission-document-upload' });
+const documentPreviewRateLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 40, prefix: 'admission-document-preview' });
 const trackingRequestLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 6, prefix: 'admission-track-request' });
 const trackingVerifyLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 12, prefix: 'admission-track-verify' });
 
@@ -337,10 +393,14 @@ function requireAdmissionsRole(mode: 'read' | 'write') {
 }
 
 function limitedTrackingSummary(application: AdmissionApplication): AdmissionTrackingSummary {
-  const response =
-    application.status === 'REJECTED' || application.status === 'ADDITIONAL_INFO_REQUIRED'
-      ? application.rejectionReason
-      : undefined;
+  const response = [
+    'REJECTED',
+    'ADDITIONAL_INFO_REQUIRED',
+    'DOCUMENTS_REQUIRED',
+    'WAITLISTED'
+  ].includes(application.status)
+    ? application.rejectionReason
+    : undefined;
   return {
     referenceNumber: application.referenceNumber,
     applicationType: application.applicationType,
@@ -373,6 +433,36 @@ async function persistMirror(task: () => Promise<void>, label: string): Promise<
   } catch (error) {
     console.warn(`[Admissions] MySQL mirror skipped (${label}):`, error instanceof Error ? error.message : error);
   }
+}
+
+function allowedDocumentTypesForUpload(rawType: string): string[] {
+  if (APPLICATION_TYPES.includes(rawType as ApplicationType)) {
+    return getAllowedDocumentTypes(rawType as ApplicationType);
+  }
+  const configured = APPLICATION_TYPES.flatMap(type => getAllowedDocumentTypes(type));
+  return Array.from(new Set(configured)).length > 0 ? Array.from(new Set(configured)) : ['OTHER'];
+}
+
+function recordAdmissionDocumentAccess(
+  req: Request,
+  application: AdmissionApplication,
+  document: { id: string },
+  action: 'PREVIEW' | 'DOWNLOAD'
+): void {
+  const actor = getActor(req);
+  const event = {
+    id: `docaccess-${crypto.randomUUID()}`,
+    applicationId: application.id,
+    documentId: document.id,
+    actorId: actor.id,
+    actorName: actor.fullName,
+    actorRole: actor.role,
+    action,
+    ip: req.ip,
+    createdAt: new Date().toISOString()
+  };
+  db.logAdmissionDocumentAccess(event);
+  void persistMirror(() => mirrorAdmissionDocumentAccess(event), 'document access');
 }
 
 const MODULE_ACCESS: Record<string, { read: UserRole[]; write: UserRole[] }> = {
@@ -576,6 +666,66 @@ app.get('/api/health', (_req, res) => {
     uptimeSeconds: Math.round(process.uptime()),
     timestamp: new Date().toISOString()
   });
+});
+
+/**
+ * Optional Google sign-in/signup. Registered before the private /api auth
+ * middleware because the whole flow must work for anonymous visitors.
+ * The callback below is the "Authorized redirect URI" to whitelist in Google
+ * Cloud: <origin>/api/auth/google/callback
+ */
+app.get('/api/auth/google/status', (_req, res) => {
+  return res.json({ available: googleOAuthConfig().enabled });
+});
+
+app.get('/api/auth/google', (_req, res) => {
+  if (!googleOAuthConfig().enabled) {
+    return res.status(503).json({ error: 'Google sign-in is not configured on this server.' });
+  }
+  const state = newOAuthState();
+  setOAuthStateCookie(res, state);
+  return res.redirect(buildGoogleAuthorizeUrl(state));
+});
+
+app.get('/api/auth/google/callback', async (req, res) => {
+  const loginWithError = (reason: string) => {
+    clearOAuthStateCookie(res);
+    return res.redirect(`/portal#/login?authError=${encodeURIComponent(reason)}`);
+  };
+
+  if (!googleOAuthConfig().enabled) return loginWithError('unconfigured');
+  if (req.query.error) return loginWithError('denied');
+
+  const code = typeof req.query.code === 'string' ? req.query.code : '';
+  const state = typeof req.query.state === 'string' ? req.query.state : '';
+  const expectedState = readOAuthStateCookie(req);
+  if (!code || !state || !expectedState || !oauthStateMatches(expectedState, state)) {
+    return loginWithError('invalid-state');
+  }
+
+  try {
+    const claims = await verifyGoogleCode(code);
+    const user = await ensureGoogleUser(claims);
+    createSession(user.id, res);
+    clearOAuthStateCookie(res);
+    db.logAudit(
+      user.schoolId,
+      user.id,
+      user.fullName,
+      user.role,
+      'USER_LOGIN_GOOGLE',
+      'USER',
+      user.id,
+      'User signed in with Google',
+      req.ip
+    );
+    return res.redirect(buildAuthSessionView(user).dashboardUrl);
+  } catch (error) {
+    const reason = error instanceof GoogleOAuthError ? error.code : 'SIGN_IN_FAILED';
+    // Log only the stable classification; never tokens or raw provider bodies.
+    console.warn(`[OAuth] Google sign-in failed (${reason}).`);
+    return loginWithError('failed');
+  }
 });
 
 app.use('/api', (req, res, next) => {
@@ -3656,11 +3806,128 @@ app.post('/api/demo/reset', requireRole('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req: Re
 
 app.get('/api/public/admissions/settings', (_req: Request, res: Response) => {
   const settings = db.getAdmissionSettings();
+  const options = getPublicAdmissionOptions(db.getSchools()[0]);
   res.json({
-    resultSlipRequired: settings.resultSlipRequired,
-    resultSlipExceptionNote: settings.resultSlipRequired ? undefined : settings.resultSlipExceptionNote
+    // A Senior 3 result slip is mandatory for every new Senior 4 application.
+    // Legacy stored waivers are intentionally not exposed to applicants.
+    resultSlipRequired: true,
+    academicYears: options.academicYears,
+    previousCombinations: options.previousCombinations,
+    preferredCombinations: options.preferredCombinations,
+    grading: options.grading,
+    documentCategories: publicDocumentCategories(
+      normalizeDocumentCategories(settings.documentCategories) ?? settings.documentCategories
+    )
   });
 });
+
+app.post(
+  '/api/public/admissions/documents',
+  assertSameOrigin,
+  documentUploadRateLimiter,
+  runDocumentUpload,
+  async (req: Request, res: Response) => {
+    const file = req.file;
+    if (!file || !isValidUpload(file, ['document'])) {
+      res.status(400).json({ error: 'Use a clear PDF, JPG or PNG document up to 5 MB.' });
+      return;
+    }
+    const documentType = sanitizeInput(req.body?.documentType, 100)
+      .toUpperCase()
+      .replace(/[^A-Z0-9_]/g, '_');
+    const allowed = allowedDocumentTypesForUpload(sanitizeInput(req.body?.applicationType, 40));
+    if (!documentType || !allowed.includes(documentType)) {
+      res.status(400).json({ error: 'This document category is not available for that application type.' });
+      return;
+    }
+
+    try {
+      fs.mkdirSync(DOCUMENT_UPLOAD_DIR, { recursive: true, mode: 0o700 });
+      const token = crypto.randomBytes(32).toString('hex');
+      const mime = file.mimetype.toLowerCase();
+      const storagePath = path.join('.documents', `${crypto.randomUUID()}${resultSlipExtension(mime)}`);
+      fs.writeFileSync(path.resolve(UPLOAD_ROOT, storagePath), file.buffer, { mode: 0o600 });
+
+      const replaceToken = sanitizeInput(req.body?.replaceToken, 100);
+      if (replaceToken) {
+        const previous = activeDocumentUpload(replaceToken);
+        if (previous && previous.record.documentType === documentType) {
+          const now = new Date().toISOString();
+          const replaced = db.updateAdmissionDocumentUpload(previous.record.id, { replacedAt: now });
+          if (replaced) await persistMirror(() => mirrorAdmissionDocumentUpload(replaced), 'document replacement');
+          if (fs.existsSync(previous.filePath)) fs.unlinkSync(previous.filePath);
+        }
+      }
+
+      const now = new Date().toISOString();
+      const record = {
+        id: `up-${crypto.randomUUID()}`,
+        tokenHash: hashValue(token),
+        documentType,
+        storagePath,
+        originalFileName: safeFileName(file.originalname),
+        fileMime: mime,
+        fileSize: file.size,
+        createdAt: now,
+        expiresAt: new Date(Date.now() + SLIP_TTL_MS).toISOString()
+      };
+      db.addAdmissionDocumentUpload(record);
+      await persistMirror(() => mirrorAdmissionDocumentUpload(record), 'document upload');
+
+      res.status(201).json({
+        uploadToken: token,
+        documentType,
+        fileName: record.originalFileName,
+        fileSize: record.fileSize,
+        fileMime: record.fileMime,
+        expiresAt: record.expiresAt
+      });
+    } catch (error) {
+      console.error('[Admissions] Document upload failed:', error);
+      res.status(500).json({ error: 'The document could not be saved. Please try again.' });
+    }
+  }
+);
+
+app.post(
+  '/api/public/admissions/documents/preview',
+  assertSameOrigin,
+  documentPreviewRateLimiter,
+  (req: Request, res: Response) => {
+    const active = activeDocumentUpload(sanitizeInput(req.body?.uploadToken, 100));
+    if (!active) {
+      res.status(404).json({ error: 'This document is no longer available. Please upload it again.' });
+      return;
+    }
+    res.setHeader('Content-Type', active.record.fileMime);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'");
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${safeFileName(active.record.originalFileName)}"`
+    );
+    streamFileSafely(active.filePath, res);
+  }
+);
+
+app.post(
+  '/api/public/admissions/documents/remove',
+  assertSameOrigin,
+  documentPreviewRateLimiter,
+  async (req: Request, res: Response) => {
+    const active = activeDocumentUpload(sanitizeInput(req.body?.uploadToken, 100));
+    if (!active) {
+      res.status(404).json({ error: 'This document is no longer available.' });
+      return;
+    }
+    const now = new Date().toISOString();
+    const removed = db.updateAdmissionDocumentUpload(active.record.id, { consumedAt: now, replacedAt: now });
+    if (removed) await persistMirror(() => mirrorAdmissionDocumentUpload(removed), 'document removal');
+    if (fs.existsSync(active.filePath)) fs.unlinkSync(active.filePath);
+    res.json({ removed: true });
+  }
+);
 
 app.post(
   '/api/public/admissions/result-slips',
@@ -3754,7 +4021,13 @@ app.post(
   submissionRateLimiter,
   runAdmissionUpload,
   async (req: Request, res: Response) => {
-    const validation = validateSubmission(req.body);
+    const school = db.getSchools()[0];
+    if (!school) {
+      res.status(503).json({ error: 'School information is not available yet. Please try again later.' });
+      return;
+    }
+    const options = getPublicAdmissionOptions(school);
+    const validation = validateSubmission(req.body, options);
     if (!validation.ok) {
       res.status(400).json({ error: 'Please correct the highlighted fields.', errors: validation.errors });
       return;
@@ -3770,28 +4043,64 @@ app.post(
       return;
     }
 
+    let documentTokens: Array<{ key: string; token: string }> = [];
+    const rawDocumentTokens = sanitizeInput(req.body?.documentTokens, 4000);
+    if (rawDocumentTokens) {
+      try {
+        const parsed = JSON.parse(rawDocumentTokens) as unknown;
+        if (!Array.isArray(parsed)) throw new Error('Invalid document list.');
+        documentTokens = parsed
+          .map(item => {
+            const record = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+            return {
+              key: sanitizeInput(record.key, 100).toUpperCase().replace(/[^A-Z0-9_]/g, '_'),
+              token: sanitizeInput(record.token, 100)
+            };
+          })
+          .filter(item => item.key && item.token)
+          .slice(0, UPLOAD_LIMITS.maxFiles);
+      } catch {
+        res.status(400).json({ error: 'The document list could not be read. Please upload your documents again.' });
+        return;
+      }
+    }
+    const seenDocumentKeys = new Set<string>();
+    const documentContexts: Array<{
+      key: string;
+      record: NonNullable<ReturnType<typeof activeDocumentUpload>>['record'];
+      filePath: string;
+    }> = [];
+    for (const item of documentTokens) {
+      if (!allowedDocuments.includes(item.key) || seenDocumentKeys.has(item.key)) {
+        res.status(400).json({ error: 'One or more uploaded documents are not valid for this application.' });
+        return;
+      }
+      const context = activeDocumentUpload(item.token);
+      if (!context || context.record.documentType !== item.key) {
+        res.status(400).json({ error: 'An uploaded document has expired. Please upload it again.' });
+        return;
+      }
+      seenDocumentKeys.add(item.key);
+      documentContexts.push({ key: item.key, record: context.record, filePath: context.filePath });
+    }
+
     const resultSlipToken = sanitizeInput(req.body?.resultSlipToken, 100);
-    const slipSettings = db.getAdmissionSettings();
     const slipContext = resultSlipToken ? activeSlipUpload(resultSlipToken) : null;
     if (resultSlipToken && !slipContext) {
       res.status(400).json({ error: 'The result slip upload expired. Please upload the slip again.' });
       return;
     }
-    if (applicationType === 'NEW_STUDENT_SENIOR4' && slipSettings.resultSlipRequired && !slipContext) {
+    if (applicationType === 'NEW_STUDENT_SENIOR4' && !slipContext) {
       res.status(400).json({ error: 'Upload your Senior 3 result slip before submitting.' });
       return;
     }
     const applicantAcademicData = normalizeAcademicPerformance(req.body?.academicPerformance);
-
-    const school = db.getSchools()[0];
-    if (!school) {
-      res.status(503).json({ error: 'School information is not available yet. Please try again later.' });
-      return;
-    }
+    const structuredAcademicBackground = normalizePreviousAcademicBackground(req.body?.academicBackground);
 
     try {
       const referenceNumber = await nextReferenceNumber();
       const application = buildApplication(validation.value, school.id, referenceNumber);
+      if (structuredAcademicBackground) application.academicBackground = structuredAcademicBackground;
       const applicationDir = path.join(UPLOAD_ROOT, application.id);
       fs.mkdirSync(applicationDir, { recursive: true, mode: 0o700 });
 
@@ -3818,6 +4127,31 @@ app.post(
         });
       }
 
+      for (const context of documentContexts) {
+        const document = {
+          id: `doc-${crypto.randomUUID()}`,
+          applicationId: application.id,
+          documentType: context.key,
+          fileName: safeFileName(context.record.originalFileName),
+          fileMime: context.record.fileMime,
+          fileSize: context.record.fileSize,
+          storagePath: path.join(
+            application.id,
+            `${crypto.randomUUID()}${resultSlipExtension(context.record.fileMime)}`
+          ),
+          uploadedAt: new Date().toISOString()
+        };
+        fs.copyFileSync(context.filePath, path.join(UPLOAD_ROOT, document.storagePath), fs.constants.COPYFILE_EXCL);
+        application.documents.push(document);
+        const consumedAt = new Date().toISOString();
+        const consumed = db.updateAdmissionDocumentUpload(context.record.id, {
+          consumedAt,
+          applicationId: application.id,
+          documentId: document.id
+        });
+        if (consumed) await persistMirror(() => mirrorAdmissionDocumentUpload(consumed), 'document consumption');
+      }
+
       let slipDocumentId: string | undefined;
       if (slipContext) {
         const slipDocument = {
@@ -3836,12 +4170,12 @@ app.post(
         slipDocumentId = slipDocument.id;
       }
 
-      if (applicationType === 'NEW_STUDENT_SENIOR4') {
+      // Other-admission applicants may also submit a result slip; keep the same
+      // verification record so admissions staff can review the uploaded evidence.
+      if (applicationType === 'NEW_STUDENT_SENIOR4' || (applicationType === 'OTHER_ADMISSION' && slipContext)) {
         application.senior3Results = buildSenior3ResultsRecord(validation.value, application.id, {
           documentId: slipDocumentId,
           resultSlipUploaded: Boolean(slipContext),
-          slipWaived: !slipContext && !slipSettings.resultSlipRequired,
-          slipExceptionNote: !slipContext && !slipSettings.resultSlipRequired ? slipSettings.resultSlipExceptionNote : undefined,
           ocrStatus: slipContext?.record.ocrStatus ?? 'NOT_ATTEMPTED',
           ocrMessage: slipContext?.record.ocrMessage,
           ocrAt: slipContext?.record.createdAt,
@@ -4026,19 +4360,17 @@ app.get('/api/admissions/settings', requireAdmissionsRole('read'), (_req: Reques
 
 app.patch('/api/admissions/settings', requireAdmissionsRole('write'), async (req: Request, res: Response) => {
   const actor = getActor(req);
-  const resultSlipRequired = req.body?.resultSlipRequired;
-  if (typeof resultSlipRequired !== 'boolean') {
-    res.status(400).json({ error: 'Select whether a Senior 3 result slip is required.' });
+  const documentCategories = normalizeDocumentCategories(req.body?.documentCategories);
+  if (req.body?.documentCategories !== undefined && !documentCategories) {
+    res.status(400).json({ error: 'Provide at least one valid document category.' });
     return;
   }
-  const exceptionNote = sanitizeInput(req.body?.resultSlipExceptionNote, 500);
-  if (!resultSlipRequired && exceptionNote.length < 5) {
-    res.status(400).json({ error: 'Add a short reason for the result slip exception.' });
-    return;
-  }
+  // The Senior 3 result slip requirement is fixed. Any legacy waiver payload is
+  // ignored and cleared so older clients cannot reintroduce an optional slip.
   const settings = db.updateAdmissionSettings({
-    resultSlipRequired,
-    resultSlipExceptionNote: resultSlipRequired ? undefined : exceptionNote,
+    resultSlipRequired: true,
+    resultSlipExceptionNote: undefined,
+    ...(documentCategories ? { documentCategories } : {}),
     updatedAt: new Date().toISOString(),
     updatedBy: actor.id
   });
@@ -4046,7 +4378,7 @@ app.patch('/api/admissions/settings', requireAdmissionsRole('write'), async (req
   db.logAudit(
     actor.schoolId, actor.id, actor.fullName, actor.role,
     'ADMISSION_SETTINGS_UPDATED', 'ADMISSION_SETTINGS', 'public_admissions',
-    `Result slip requirement set to ${resultSlipRequired ? 'required' : `waived: ${exceptionNote}`}.`, req.ip
+    `Senior 3 result slip remains mandatory; ${settings.documentCategories?.length ?? 0} document categories.`, req.ip
   );
   res.json(settings);
 });
@@ -4058,7 +4390,8 @@ app.get('/api/admissions/export', requireAdmissionsRole('read'), (req: Request, 
     'Reference', 'Type', 'Status', 'Submitted', 'Academic Year',
     'Applicant', 'Date of Birth', 'Phone', 'Email', 'District', 'Sector', 'Residence',
     'Guardian', 'Guardian Phone', 'Relationship', 'Previous/Current School', 'Requested Level/Class',
-    'Reason', 'Reviewed By', 'Reviewed At'
+    'Reason', 'Reviewed By', 'Reviewed At',
+    'Academic Background', 'Previous Combination', 'Preferred Combination', 'Performance Grade'
   ];
   const rows = applications.map(application =>
     [
@@ -4081,7 +4414,16 @@ app.get('/api/admissions/export', requireAdmissionsRole('read'), (req: Request, 
       application.requestedLevel || application.requestedClass || application.requestedEducationLevel,
       application.reasonForChoosingSchool || application.transferReason || application.applicationReason,
       application.reviewedByName,
-      application.reviewedAt
+      application.reviewedAt,
+      application.academicBackground
+        ? Object.entries(application.academicBackground)
+            .filter(([, value]) => value && !Array.isArray(value))
+            .map(([key, value]) => `${key}: ${String(value)}`)
+            .join('; ')
+        : '',
+      application.academicBackground?.previousCombination,
+      application.academicBackground?.preferredCombination,
+      application.academicBackground?.performanceGrade
     ]
       .map(csvCell)
       .join(',')
@@ -4204,24 +4546,58 @@ app.post('/api/admissions/applications/:id/status', requireAdmissionsRole('write
   const actor = getActor(req);
   const status = sanitizeInput(req.body?.status, 40) as ApplicationStatus;
   const reason = sanitizeInput(req.body?.reason, 2000);
-  if (!(APPLICATION_STATUSES as string[]).includes(status)) {
-    res.status(400).json({ error: 'Select a valid status.' });
+  if (!(REVIEW_DECISION_STATUSES as string[]).includes(status)) {
+    res.status(400).json({ error: 'Select a valid review decision.' });
     return;
   }
-  if ((status === 'REJECTED' || status === 'ADDITIONAL_INFO_REQUIRED') && reason.length < 5) {
+  if (
+    ['DOCUMENTS_REQUIRED', 'ADDITIONAL_INFO_REQUIRED', 'REJECTED', 'WAITLISTED'].includes(status) &&
+    reason.length < 5
+  ) {
     res.status(400).json({ error: 'A short explanation is required for this status.' });
     return;
   }
 
-  const updated = db.updateAdmissionStatus(application.id, status, actor.id, actor.fullName, reason);
+  const requestedDocumentTypes: string[] = Array.isArray(req.body?.requestedDocumentTypes)
+    ? Array.from(
+        new Set<string>(
+          (req.body.requestedDocumentTypes as unknown[])
+            .map((item: unknown) => sanitizeInput(item, 100).toUpperCase().replace(/[^A-Z0-9_]/g, '_'))
+            .filter(Boolean)
+        )
+      ).slice(0, 20)
+    : [];
+  if (status === 'DOCUMENTS_REQUIRED' && requestedDocumentTypes.length === 0) {
+    res.status(400).json({ error: 'Select at least one document that must be provided.' });
+    return;
+  }
+
+  const decisionReason = [reason, requestedDocumentTypes.length ? `Documents: ${requestedDocumentTypes.join(', ')}` : '']
+    .filter(Boolean)
+    .join(' — ')
+    .slice(0, 2000);
+  const updated = db.updateAdmissionStatus(application.id, status, actor.id, actor.fullName, decisionReason);
   if (!updated) {
     res.status(404).json({ error: 'Application not found.' });
     return;
   }
+  const decision = {
+    id: `decision-${crypto.randomUUID()}`,
+    applicationId: application.id,
+    decision: status,
+    reason: reason || undefined,
+    requestedDocumentTypes: requestedDocumentTypes.length ? requestedDocumentTypes : undefined,
+    decidedBy: actor.id,
+    decidedByName: actor.fullName,
+    decidedByRole: actor.role,
+    createdAt: new Date().toISOString()
+  };
+  db.addAdmissionReviewDecision(decision);
   const historyEntry = updated.statusHistory[updated.statusHistory.length - 1];
   await persistMirror(async () => {
     await mirrorApplicationUpdate(updated);
     if (historyEntry) await mirrorStatusHistory(historyEntry);
+    await mirrorAdmissionReviewDecision(decision);
   }, 'status change');
 
   db.logAudit(
@@ -4229,8 +4605,8 @@ app.post('/api/admissions/applications/:id/status', requireAdmissionsRole('write
     'ADMISSION_STATUS_CHANGED', 'ADMISSION_APPLICATION', application.id,
     `${application.referenceNumber}: ${application.status} -> ${status}.`, req.ip
   );
-  const notifications = await notifyStatusChange(updated, status, reason);
-  res.json({ application: updated, notifications });
+  const notifications = await notifyStatusChange(updated, status, decisionReason);
+  res.json({ application: updated, decision, notifications });
 });
 
 app.get(
@@ -4249,9 +4625,11 @@ app.get(
       res.status(404).json({ error: 'Document not found.' });
       return;
     }
+    recordAdmissionDocumentAccess(req, application, document, 'DOWNLOAD');
     const fileName = safeFileName(document.fileName);
     res.setHeader('Content-Type', document.fileMime);
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store');
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
@@ -4276,6 +4654,7 @@ app.get(
       res.status(404).json({ error: 'Document not found.' });
       return;
     }
+    recordAdmissionDocumentAccess(req, application, document, 'PREVIEW');
     res.setHeader('Content-Type', document.fileMime);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'no-store');

@@ -121,6 +121,41 @@ export const NAV_ITEMS: readonly NavItem[] = [
     description: 'Assigned classes, marks entry and submission history'
   },
   {
+    id: 'teacher-my-classes',
+    label: 'My Classes',
+    icon: Users,
+    section: 'academics',
+    description: 'Classes assigned to you for the selected term'
+  },
+  {
+    id: 'teacher-marks-management',
+    label: 'Marks Management',
+    icon: ClipboardList,
+    section: 'academics',
+    description: 'Enter, save and submit marks for assigned pairs'
+  },
+  {
+    id: 'teacher-examination-results',
+    label: 'Examination Results',
+    icon: GraduationCap,
+    section: 'academics',
+    description: 'Calculated results for your assigned classes and subjects'
+  },
+  {
+    id: 'teacher-my-subjects',
+    label: 'My Subjects',
+    icon: BookOpen,
+    section: 'academics',
+    description: 'Subjects and classes assigned to you'
+  },
+  {
+    id: 'teacher-submitted-marks',
+    label: 'Submitted Marks',
+    icon: ClipboardList,
+    section: 'academics',
+    description: 'Your submissions, review outcomes and correction history'
+  },
+  {
     id: 'academic-admin',
     label: 'Academic Administration',
     labelKey: 'navAcademicAdmin',
@@ -509,6 +544,23 @@ export function getVisibleNavItems(
 
 export function getNavItem(id: string): NavItem | undefined {
   return NAV_ITEM_MAP[id];
+}
+
+const PUBLIC_PORTAL_ROUTES: ReadonlySet<string> = new Set([
+  'login',
+  'apply',
+  'track',
+  'parent-signup',
+  'student-signup'
+]);
+
+/**
+ * Hash routes that the portal gate renders outside the authenticated shell.
+ * Anonymous route syncing must not rewrite these back to the login page.
+ */
+export function isPublicPortalRoute(route: string | null | undefined): boolean {
+  if (!route) return false;
+  return PUBLIC_PORTAL_ROUTES.has(route) || route.startsWith('staff-activate');
 }
 
 const QUICK_NAV_PREFERENCES: Record<UserRole, string[]> = {

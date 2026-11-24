@@ -153,6 +153,169 @@
   background-repeat: no-repeat;
 }
 
+/* --------------------------------------------------------------------------
+   Shared public website background — used by all public-facing pages.
+   Reuses the homepage hero image for a single, consistent brand identity.
+   -------------------------------------------------------------------------- */
+.public-site-bg {
+  --public-navy: #082b63;
+  --public-navy-deep: #041835;
+  --public-blue: #1455a0;
+  --public-gold: #d6a84f;
+  background-color: var(--public-navy-deep);
+  color: #17243b;
+}
+
+.public-site-bg__media {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--public-navy-deep);
+}
+
+.public-site-bg__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  transform: scale(1);
+}
+
+.public-site-bg__overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(4, 24, 53, 0.62) 0%, rgba(6, 35, 73, 0.56) 35%, rgba(4, 24, 53, 0.72) 100%),
+    linear-gradient(90deg, rgba(4, 24, 53, 0.18) 0%, rgba(4, 24, 53, 0.08) 50%, rgba(4, 24, 53, 0.18) 100%);
+}
+
+.public-site-shell,
+.apply-shell,
+.marketing-shell {
+  width: min(100% - 2rem, 74rem);
+  margin-inline: auto;
+}
+
+.public-site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(4, 24, 53, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.public-logo-tile {
+  display: grid;
+  height: 2.75rem;
+  width: 2.75rem;
+  flex-shrink: 0;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+}
+
+.public-nav-link {
+  border-radius: 999px;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.86);
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+.public-nav-link:hover,
+.public-nav-link.is-active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.public-mobile-link {
+  border-radius: 0.85rem;
+  padding: 0.8rem 0.9rem;
+  text-align: left;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+}
+.public-mobile-link:hover,
+.public-mobile-link.is-active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.public-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.55rem 0.9rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #fff;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.public-chip:hover,
+.public-chip.is-active {
+  border-color: rgba(232, 201, 127, 0.55);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.public-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  background: #1d4ed8;
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 0 12px 28px rgba(29, 78, 216, 0.28);
+  transition: background-color 0.18s ease, transform 0.18s ease;
+}
+.public-primary-btn:hover {
+  background: #1e40af;
+  transform: translateY(-1px);
+}
+
+.public-site-footer {
+  background: rgba(2, 16, 36, 0.78);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.public-footer-heading {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #e8c97f;
+}
+
+.public-surface {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 20px 60px rgba(4, 24, 53, 0.14);
+  backdrop-filter: blur(2px);
+}
+
+.public-hero-title {
+  color: #fff;
+  text-shadow: 0 8px 30px rgba(0, 0, 0, 0.22);
+}
+
+@media (max-width: 768px) {
+  .public-site-bg__overlay {
+    background: linear-gradient(180deg, rgba(4, 24, 53, 0.68) 0%, rgba(6, 35, 73, 0.64) 45%, rgba(4, 24, 53, 0.78) 100%);
+  }
+}
+
 html[data-theme='dark'] body {
   background-color: var(--schoolcare-page-bg);
   background-image: none;
@@ -337,6 +500,21 @@ html[data-high-contrast='true'] :focus-visible {
   box-shadow: 0 20px 46px rgb(6 78 59 / 12%);
 }
 
+.auth-card-enter {
+  animation: auth-card-enter 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes auth-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .marketing-hero-glow {
   background: transparent;
 }
@@ -468,10 +646,10 @@ html[data-high-contrast='true'] :focus-visible {
   --apply-green-soft: #0b6b51;
   --apply-gold: #d6a84f;
   --apply-ink: var(--schoolcare-text);
-  --apply-line: var(--schoolcare-border);
+  --apply-line: rgba(8, 43, 99, 0.12);
   background-color: transparent;
   background-image: none;
-  color: var(--schoolcare-text);
+  color: #17243b;
   font-family: "Inter", "Manrope", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 

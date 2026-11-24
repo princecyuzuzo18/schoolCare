@@ -1,128 +1,325 @@
-# SchoolCare Implementation Report
+# SchoolCare Final Implementation Report
 
 **School:** ES RUBENGERA RTB
 **Account owner:** Headteacher MUNYENTWARI Olivier
 **Report date:** 2026-11-24
-**Repository state:** all work remains uncommitted; nothing was pushed, merged or deployed.
-
-This report summarizes the safe implementation stages completed after the full read-only audit. It is an honest delivery status, not an acceptance certificate: items that require owner confirmation, external services, or browser testing remain explicitly listed as outstanding.
+**Repository state:** all work remains uncommitted and unpushed; no merge or deployment was performed. Concurrent pre-existing uncommitted user work was preserved.
 
 ---
 
-## 1. Scope and safety rules followed
+## 1. Objective and outcome
 
-- The existing React/MariaDB application was retained; no duplicate school-management system was introduced.
-- The original audit remains the Phase 1 baseline in `docs/SCHOOLCARE_FULL_SYSTEM_AUDIT.md`.
-- No real learner, parent, staff, academic, attendance, health or finance record was deleted or edited by this work.
-- No fresh backup was created by this work; destructive cleanup remains blocked until a verified backup and explicit owner confirmation exist.
-- Tests isolate JSON writes in OS temporary directories. The self-profile test also points MariaDB at an unused database name so no live account row is changed.
-- `npm test` was not used because it includes mutating suites. Only the documented safe suites were run.
+The requested phased upgrades were implemented in the existing React/Express/MariaDB SchoolCare application:
 
----
+- **Part A — professional admission academic information:** structured previous academic background, real school configuration options, configurable document categories, secure pre-submission uploads, staff review decisions and audited access history.
+- **Part B — complete Teacher Marks Management:** five teacher-facing pages built on the existing marks engine, with server-authoritative assignment scope and real dashboard statistics.
+- **Part C — centralized academic structure:** Headteacher-managed levels, classes, subjects and teacher assignments, with a dependent year → term → combination → level → class → subject → assessment chain and assignment-only teacher marks entry.
+- **Earlier requirements retained:** OpenAI provider selected with keys only in `.env`, Google OAuth sign-in/signup code path, immediate non-privileged account creation, and all public “back home” buttons pointing to `/`.
 
-## 2. Delivered by phase
-
-| Phase | Status | What was implemented and verified |
-|---|---|---|
-| 1 — Full audit | Complete | `docs/SCHOOLCARE_FULL_SYSTEM_AUDIT.md` records the live data inventory, architecture, classification matrix, security findings and recommended order. |
-| 2 — Demo/fake data cleanup | **Blocked** | No destructive deletion was performed. Conflicts such as the hardcoded `486` students and `34` staff figures remain documented. The Headteacher dashboard uses record-derived statistics instead of those figures, but cleanup requires a fresh verified backup and record-by-record owner confirmation. |
-| 3 — Headteacher dashboard | Complete | `server/headteacherDashboard.ts` and `src/pages/DashboardPage.tsx` provide a server-authoritative welcome, school identity, today’s activity, needs-attention items and performance sections with explicit empty states. The exact welcome identity is preserved. |
-| 4 — Navigation and usability | Complete | Organized Headteacher sections with clear labels, descriptions, filters, permission checks and available Kinyarwanda strings. School Documents is hidden from the Headteacher sidebar only. |
-| 5 — Staff and access | Complete for the safe slice | Staff creation, role-safe management, delegated permissions, invitations, one-time activation-link handoff, expiry state, resend rotation and role redirection are implemented. Tokens remain hash-only and the Headteacher account cannot be created or promoted through ordinary staff APIs. |
-| 6 — Academic workflows | Existing workflow retained and verified | Draft → submit → return/approve → generate → publish → distribute remains server-enforced. Grades are calculated on the backend. No AI grading and no automatic publication of unapproved results. |
-| 7 — Reports and export | Complete for internal drafts | `server/reportAnalytics.ts` supplies one permission-scoped builder for JSON and CSV. Reports carry scope/restriction notices, internal-draft status, A4 print styling, signature blocks and audited exports. Visual PDF fidelity is not yet browser-verified. |
-| 8 — Meetings and collaboration | Complete on the existing store | `MeetingWorkspacePage.tsx` provides invitations, responses, external links, agendas, notes, tasks, minutes, filters, status changes and an A4 print sheet. The generic module store was extended to preserve bounded structured payloads; no second database was created. Unsafe links are not clickable. |
-| 9 — Sidebar cleanup | Complete | Only the Headteacher “School Document” shortcut was removed. Routes, files, records and document features used elsewhere remain intact. |
-| 10 — Alerts and history | Complete | Smart Alert Center is a read-only aggregator over existing attention/health/notification records. School Activity History reuses the existing `audit.review`-protected endpoint and centrally redacts learner names, recipient names and sensitive values. |
-| 11 — Profile and school settings | Complete for the Headteacher slice | `PATCH /api/auth/me/profile` is Headteacher-only and session-derived. Only display name, phone and photo URL are accepted. Role, email, school, status, credentials, permissions and Platform Super Admin rights are immutable. MariaDB mirroring reports failure honestly. Delivery status remains honest about unconfigured SMTP/SMS. |
-| 12–17 — Usability, design, security, database reliability and testing | Ongoing | Automated lint, build, database, navigation, permission, API, workflow, privacy, report, meeting and profile suites pass. Browser click-through, accessibility, viewport, load/performance, print/PDF fidelity and Kinyarwanda glyph checks are still outstanding. |
-| 18 — Documentation and delivery | Current stage | Audit, test report, Headteacher guide and this implementation report are in place. Final acceptance depends on the blocked and unverified items below. |
+No second application was created. No database was replaced. No existing student, teacher, academic, examination or admission record was deleted or rewritten by this implementation.
 
 ---
 
-## 3. Verified commands and results
+## 2. Features delivered
 
-All commands were run from the project root on 2026-11-24. Full output is summarized in `docs/SCHOOLCARE_TEST_REPORT.md`.
+### 2.1 Admission academic information
+
+- Added a titled **Previous Academic Background** section to the public application form.
+- Grades are selected from the school's configured/active grading scale.
+- The public form no longer asks for academic year completed, year of Senior 3 completion, Senior 3 completion status, previous combination/subjects, requested admission level or preferred academic combination. Those values are not required to submit an application.
+- Existing applications that already contain those legacy values remain readable in staff review; the public Apply page no longer sends them.
+- Added repeatable subject rows with subject name, marks and grade.
+- Added previous school details/identification fields without removing the existing Senior 3 result-slip OCR flow.
+- Added configurable admission document categories with label, active state, applicability and optional required flag.
+- The Senior 3 result slip is now mandatory for every new Senior 4 application; staff waivers and exception notes were removed, and legacy waivers are ignored server-side.
+- Other Admission applications accept both a result slip and a previous school report, stored through the existing verification record.
+- Added secure public document upload, inline preview, replace and remove before submission:
+  - PDF/JPG/PNG and 5 MB checks;
+  - magic-byte validation;
+  - same-origin enforcement and rate limits;
+  - private hashed capability tokens, never public URLs;
+  - files stored with directory mode `0700` and file mode `0600`;
+  - tokens consumed on final submission and files copied into the application's private directory.
+- Added structured server validation so invalid year/combination/grade/marks values are rejected even if the browser is bypassed.
+- Added staff review UI with:
+  - academic background and subject rows;
+  - original OCR data and applicant-reviewed data side by side;
+  - document preview/download;
+  - document access history;
+  - decision history with actor, role and timestamp;
+  - all review statuses, including `DOCUMENTS_REQUIRED` and `WAITLISTED`.
+- Added reasons for negative decisions and requested document types for `DOCUMENTS_REQUIRED`.
+- Added academic-background summary fields to CSV export.
+
+Detailed usage: `docs/ADMISSION_ACADEMIC_INFORMATION.md`.
+
+### 2.2 Teacher Marks Management
+
+Added five teacher navigation pages and routes:
+
+| Page | Purpose |
+|---|---|
+| My Classes | Assigned classes/subjects for the selected year and term, with real workflow status and counters. |
+| Marks Management | Existing marks-entry workspace reused for assigned pair entry, draft save and submit. |
+| Examination Results | Calculated class/subject results for an assigned pair. |
+| My Subjects | Assigned subjects grouped with their exact classes/levels. |
+| Submitted Marks | Own submissions, return reasons, history and resubmission. |
+
+Key implementation points:
+
+- The existing academic marks engine was reused; no second marks store or workflow was introduced.
+- Teachers see only assignments where `teacherIds` contains their user id.
+- `marks-entry`, `marks/save` and `results` enforce assignment checks on the server.
+- Mark rows are checked against students registered in the class.
+- Submitted, under-review and approved marks are locked against editing.
+- Added an explicit audited `SUBMITTED → UNDER_REVIEW` transition.
+- Reviewer-only return/approve/reopen flows retain reasons and workflow history.
+- Teachers cannot approve, return, review or publish their own marks.
+- Dashboard statistics are derived from stored submissions, assignments and report cards; no hardcoded totals.
+
+Detailed usage: `docs/TEACHER_MARKS_MANAGEMENT.md`.
+
+### 2.3 Centralized academic structure management
+
+The existing **Academic Administration → Structure** tab now manages the full chain used across the school:
+
+- academic years and terms;
+- combinations (reusing the existing Combination Management records);
+- class levels derived from legacy classes and extendable by the Headteacher;
+- classes with year, combination, level, class teacher, room and lifecycle status;
+- subjects with combination/level links and active/inactive/archived status;
+- teacher assignments with validated structure context, teacher notifications, status changes and history.
+
+Teacher marks screens now expose only active assignments for the signed-in teacher. Their selectors follow year → term → combination → level → class → subject → assessment, and changing an earlier selection clears dependent selections. When no assignment exists, the exact message is: “You have no active assignments for the selected academic year and term. Please contact the headteacher or academic administrator.”
+
+Backend enforcement includes manager-only structure writes, manager-only full assignment listing, active-assignment filtering, archived class/subject rejection, teacher isolation through `assertTeacherAssignment()`, school scoping, parameterized persistence and audited history. Legacy IDs, students, marks and report cards are preserved.
+
+Detailed usage: `docs/ACADEMIC_STRUCTURE_MANAGEMENT.md`.
+
+### 2.4 Preserved earlier work
+
+- `AI_PROVIDER=openai`, official OpenAI SDK path and `OPENAI_MODEL=gpt-4.1-mini`.
+- Gemini code path retained.
+- Google OAuth state-cookie flow, token exchange, `tokeninfo` verification and non-privileged `PARENT` account creation for new Google users.
+- Public back-home handlers in `src/App.tsx` use `window.location.assign('/')`.
+
+---
+
+## 3. Migrations and backups
+
+| Item | Status |
+|---|---|
+| `mysql/migrations/012_admission_academic_background.sql` | Applied and recorded at `2026-11-24T16:01:14.000Z`. |
+| Tables after migration | 58. |
+| Migration content | Appends `DRAFT`, `DOCUMENTS_REQUIRED`, `WAITLISTED` to relevant enums; adds `academic_background` JSON; creates four additive mirror tables; adds `document_categories` JSON to admission settings. |
+| Reversibility | Manual down statements are documented at the bottom of the migration. No applied migration was edited. |
+| Backups before schema change | `backups/schoolcare_db_2026-11-24T15-57-01-015Z.sql.gz`, `backups/schoolcare-full-20261124T155658Z.tar.gz`, `backups/schoolcare_db_2026-11-24T16-01-11-465Z.sql.gz`, `backups/schoolcare-full-20261124T160107Z.tar.gz`. |
+| Part B schema | No migration required; the existing academic tables were reused. |
+
+The JSON store remains authoritative. New MariaDB structures are mirrors written with parameterized helpers (`server/admissionsMysql.ts`).
+
+---
+
+## 4. Modified and added files
+
+### 4.1 Part A — admissions implementation
+
+- `mysql/migrations/012_admission_academic_background.sql`
+- `server/admissionConfig.ts`
+- `server/admissions.ts`
+- `server/admissionsMysql.ts`
+- `server/database.ts`
+- `server.ts`
+- `src/types/index.ts`
+- `src/services/api.ts`
+- `src/pages/AdmissionsPortalPage.tsx`
+- `src/pages/AdmissionsManagementPage.tsx`
+- `src/i18n/admissions.ts`
+- `scripts/verify-admissions.ts`
+- `docs/ADMISSION_ACADEMIC_INFORMATION.md`
+
+### 4.2 Part B — teacher marks implementation
+
+- `server/academics.ts`
+- `src/pages/TeacherMarksPages.tsx`
+- `src/pages/TeacherAcademicsPage.tsx`
+- `src/pages/AcademicAdminPage.tsx`
+- `src/navigation.ts`
+- `src/routes.tsx`
+- `src/rbac.ts`
+- `src/services/api.ts`
+- `src/types/index.ts`
+- `scripts/verify-teacher-marks.ts`
+- `docs/TEACHER_MARKS_MANAGEMENT.md`
+
+### 4.3 Part C — centralized academic structure and Apply-field cleanup
+
+- `src/pages/AdmissionsPortalPage.tsx` (six Apply fields removed)
+- `server/admissions.ts` (server-side required validation removed for those fields)
+- `src/types/index.ts`
+- `server/database.ts`
+- `server/academics.ts`
+- `mysql/migrations/013_academic_structure.sql`
+- `src/services/api.ts`
+- `src/components/SearchableSelect.tsx`
+- `src/teacherMarksMessages.ts`
+- `src/pages/TeacherAcademicsPage.tsx`
+- `src/pages/TeacherMarksPages.tsx`
+- `src/pages/AcademicAdminPage.tsx`
+- `scripts/verify-academic-structure.ts`
+- `docs/ACADEMIC_STRUCTURE_MANAGEMENT.md`
+- `docs/TEACHER_MARKS_MANAGEMENT.md`
+
+### 4.4 Shared project and documentation
+
+- `package.json`, `package-lock.json`
+- `docs/SCHOOLCARE_TEST_REPORT.md`
+- `docs/SCHOOLCARE_FINAL_IMPLEMENTATION_REPORT.md`
+
+### 4.5 Concurrent pre-existing uncommitted work preserved
+
+`.env.example`, `AI_ASSISTANT.md`, `scripts/verify-gemini-connection.ts`, `server/ai/config.ts`, `server/ai/provider.ts`, `server/ai/routes.ts`, `server/publicSite.ts`, `server/googleOAuth.ts`, `scripts/verify-google-oauth.ts`, `scripts/verify-openai-connection.ts`, `src/App.tsx`, `src/components/AiChat.tsx`, `src/components/PublicPageBackground.tsx`, `src/components/PublicSiteChrome.tsx`, `src/i18n/en.ts`, `src/i18n/rw.ts`, `src/index.css`, `src/pages/AIAssistantPage.tsx`, `src/pages/AuthPage.tsx`, `src/pages/LandingPage.tsx`, `src/pages/AdmissionTrackingPage.tsx`, `docs/GOOGLE_OAUTH_SETUP.md`, `docs/HOMEPAGE_AND_LOGIN_REDESIGN.md`, and public image assets.
+
+---
+
+## 5. Tests and verification
+
+### 5.1 Passed
 
 | Command | Result |
 |---|---|
 | `npm run lint` | PASS — no TypeScript errors |
-| `npm run build` | PASS — 1,951 modules transformed; large-chunk warning remains documented |
-| `npm run db:check` | PASS — MariaDB/InnoDB reachable, `schoolcare_db`, 54 tables |
-| `npm run db:status` | PASS — migrations `001`–`011` recorded |
+| `npm run build` | PASS — 1,954 modules transformed; existing large-chunk warning remains |
+| `npm run db:status` | PASS — `schoolcare_db`, 59 tables, migrations `001`–`013` |
 | `npm run test:db` | PASS — 18/18 |
-| `npm run test:navigation` | PASS — 177/177 for 12 roles, 38 items and 38 routes |
+| `npm run test:navigation` | PASS — 180/180 for 12 roles, 43 items and 43 routes |
 | `npm run test:permissions` | PASS — 58/58 |
 | `npm run test:staff` | PASS — 23/23 |
 | `npm run test:api` | PASS — 64/64 |
+| `npm run test:isolation` | PASS — 24/24 |
 | `npm run test:school-context` | PASS — 7/7 |
 | `npm run test:lifecycle` | PASS — 22/22 |
 | `npm run test:permission-management` | PASS — 23/23 |
+| `npm run test:access-reset` | PASS — 10/10 |
 | `npm run test:academics` | PASS — 60/60 |
+| `npm run test:admissions` | PASS — 58/58 |
+| `npm run test:teacher-marks` | PASS — 45/45 |
+| `npm run test:academic-structure` | PASS — 46/46 |
 | `npm run test:role-redirection` | PASS — 95/95 |
 | `npm run test:public-site` | PASS — 52/52 |
 | `npm run test:combinations` | PASS — 69/69 |
 | `npm run test:hardening` | PASS — 13/13 |
+| `npm run test:ai` | PASS — 49/49 |
 | `npm run test:headteacher` | PASS — 26/26 |
+| `npm run test:oauth` | PASS — 16/16 |
 | `npm run test:activity` | PASS — 16/16 |
 | `npm run test:reports` | PASS — 19/19 |
 | `npm run test:meetings` | PASS — 29/29 |
 | `npm run test:profile` | PASS — 22/22 |
 
----
+All verification scripts use isolated temporary data directories. The admission suite also uses an isolated upload directory and intentionally disables MariaDB mirrors. No live student, staff, admission, marks or report-card record was changed by the tests.
 
-## 4. Key safety outcomes
+### 5.2 Failed / blocked external checks
 
-1. **Dashboard figures come from stored records.** No hardcoded `486`/`34` totals are presented as verified school statistics.
-2. **Sensitive routes are gated server-side.** Hiding UI elements is not used as the only permission control.
-3. **Academic integrity is preserved.** Teachers cannot approve their own marks, reports are generated from approved marks only, and publishing is explicit and audited.
-4. **Reports do not claim external validation.** They are internal drafts until an authorized person signs the printed copy.
-5. **Activity history redacts sensitive details.** Learner names, recipient names and profile values are not written into audit details by the new flows.
-6. **Staff activation remains secure.** Raw links appear only in the create/resend response and the intentional handoff panel; stored tokens remain hashed and resending rotates them.
-7. **Headteacher privilege boundaries are enforced.** The self-profile route cannot change identity, role, school, credentials or permissions, and Platform Super Admin controls are not exposed through school-level settings.
-8. **Document features were not deleted.** Only the Headteacher sidebar shortcut changed.
+| Command | Result | Cause |
+|---|---|---|
+| `npm run test:openai` | FAIL | Provider is correctly configured as `openai` with `gpt-4.1-mini`, but the account has no credits / `QUOTA_EXCEEDED`. Add credits at `https://platform.openai.com/settings/organization/billing`. |
+| `npm run test:gemini` | FAIL | The helper reports `INVALID_KEY`. The OpenAI provider is currently selected by `.env`, so this helper cannot validate a Gemini key until the provider is switched and a valid key is supplied. |
+| `npm run test:signup` | Not run | Requires the dedicated `schoolcare_signup_test` database and explicit initialization. |
 
----
-
-## 5. Outstanding before final acceptance
-
-### Blocked on owner action
-
-- Create and verify a fresh backup of both JSON and MariaDB data.
-- Confirm the ambiguous records behind the `486` students / `34` staff discrepancy and any demo-looking accounts before any cleanup.
-- Supply external credentials if email, SMS, Gemini AI, OCR or production admission tracking are expected to work.
-
-### Not yet verified
-
-- Browser click-through on desktop and mobile viewports.
-- Keyboard navigation, screen-reader and automated accessibility checks.
-- Load/performance testing and the large frontend chunk warning.
-- Visual A4/PDF fidelity, pagination, logo placement and Kinyarwanda glyph rendering.
-- Click-through of alert filters, activity filters, report filters, CSV download and meeting forms.
-- JSON↔MariaDB parity tests.
-- Live SMTP/SMS delivery, parent online payment and password reset; both payment and password reset remain explicit 503 stubs.
-
-### Known configuration limitations
-
-- Sessions are in-memory and restart-sensitive.
-- Login requires MariaDB health.
-- Older Kinyarwanda strings contain mojibake; newly added strings use proper UTF-8, but a full locale cleanup is still needed.
+The first consolidated `npm test` run was terminated by the harness timeout during `test:ai`; a rerun with a longer timeout was used for the final result. The timeout did not indicate an application failure.
 
 ---
 
-## 6. Files and documentation
+## 6. Remaining configuration
 
-- Full audit: `docs/SCHOOLCARE_FULL_SYSTEM_AUDIT.md`
-- Verification evidence: `docs/SCHOOLCARE_TEST_REPORT.md`
-- Headteacher guide: `docs/HEADTEACHER_USER_GUIDE.md`
-- This report: `docs/SCHOOLCARE_FINAL_IMPLEMENTATION_REPORT.md`
-
-Main implementation areas include `server.ts`, `server/headteacherDashboard.ts`, `server/reportAnalytics.ts`, `server/profileSync.ts`, `server/staffAdministration.ts`, `server/database.ts`, `src/pages/DashboardPage.tsx`, `src/pages/ReportsPage.tsx`, `src/pages/MeetingWorkspacePage.tsx`, `src/pages/StaffManagementPage.tsx`, `src/pages/SettingsPage.tsx`, `src/navigation.ts`, `src/routes.tsx`, `src/services/api.ts` and `src/contexts/AuthContext.tsx`.
+1. **OpenAI credits:** required for AI assistant answers. The key authenticates but has no remaining credit.
+2. **Gemini credentials:** required only if `AI_PROVIDER=gemini` is selected.
+3. **Google OAuth:** sign-in/signup button stays hidden until real `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set. Redirect URI: `http://localhost:3010/api/auth/google/callback`.
+4. **Notifications:** email/SMS channels need real credentials for live delivery; current responses report pending/unconfigured honestly.
+5. **Admission production secret:** set `ADMISSION_TRACKING_SECRET` to at least 32 characters in production.
+6. **Academic setup:** active year, term, combinations, class levels, classes, subjects, teacher assignments, assessment categories and grading scale are required before teacher marks pages show data.
+7. **Production migration rollout:** migration `013` is applied in the local `schoolcare_db`; run the same backup-first `npm run db:migrate` flow in the deployment environment.
+8. **Still unverified:** browser click-through on desktop/mobile, accessibility scan, load testing, visual PDF fidelity, Kinyarwanda glyph rendering, JSON↔MariaDB parity for the new mirror tables.
 
 ---
 
-## 7. Conclusion
+## 7. Exact usage instructions
 
-The safe implementation stages are complete and pass all executed automated checks. The application now presents a real-data Headteacher workspace, organized navigation, actionable alerts, privacy-aware history, internal reports, structured collaboration, safer staff handoff and a strictly allowlisted self-profile edit.
+### 7.1 Start the application
 
-Final acceptance is withheld until the owner-supplied data decisions, backup verification and browser/visual/accessibility testing are completed. No deployment, destructive cleanup or live credential change was performed by this work.
+```bash
+cd /home/prince/Desktop/school
+cp .env.example .env          # if .env does not already exist
+npm install
+npm run db:migrate            # creates a full backup first, then applies pending migrations
+npm run dev
+```
+
+Open `http://localhost:3010`. The configured `APP_URL` is `http://localhost:3010`.
+
+### 7.2 Configure admissions
+
+1. Sign in with an admissions staff account.
+2. Open **Admissions Management**.
+3. Note that the Senior 3 result slip is mandatory for every new Senior 4 application.
+4. Rename or disable document category cards as needed.
+5. Click **Save settings**.
+
+### 7.3 Submit an application
+
+1. Open the public site and select **Apply Here**.
+2. Complete applicant, guardian and school-details steps.
+3. Complete **Previous Academic Background**, including previous class/level and subject rows.
+4. On the documents step, upload each required PDF/JPG/PNG file, preview it, and replace/remove as needed.
+5. Review the summary and submit.
+6. Store the reference number shown on the confirmation screen.
+
+### 7.4 Review an application
+
+1. Open **Admissions Management** and select an application.
+2. Inspect academic background, subject rows, OCR data and documents.
+3. Preview or download documents; access is logged.
+4. Choose a status. For `DOCUMENTS_REQUIRED`, enter a reason and tick requested document types. For other negative decisions, enter a reason.
+5. Submit the decision. History, notification and mirror are updated.
+
+### 7.5 Teacher marks workflow
+
+1. Sign in as a teacher. The default landing tab remains **Attendance**.
+2. Open **My Classes** and select academic year and term.
+3. Open **My Subjects** to confirm assigned subjects/classes.
+4. Open **Marks Management**, choose an assigned pair, and enter marks.
+5. Use **Save draft** while working; use **Submit** only when all categories are complete.
+6. Open **Submitted Marks** to track status and resubmit returned work.
+7. Open **Examination Results** to view calculated totals, grades and ranks.
+8. Reviewers use **Academic Administration → Review** to start review, return with a reason, approve, or reopen. Publishing remains a separate authorized reports action.
+
+### 7.6 Run verification
+
+```bash
+npm run lint
+npm run build
+npm run db:status
+npm test
+npm run test:db
+npm run test:activity
+npm run test:reports
+npm run test:meetings
+npm run test:profile
+```
+
+Optional external-service diagnostics:
+
+```bash
+npm run test:oauth
+npm run test:openai
+npm run test:gemini
+```
+
+---
+
+## 8. Conclusion
+
+The admissions module now captures professional academic background information with real school options, configurable secure documents and an auditable staff decision workflow. The Teacher Portal now exposes a complete marks workspace while the existing server-side academic engine remains authoritative for assignment scope, calculations, workflow, report-card generation and publication.
+
+Automated verification is green for all application suites. External AI service checks remain blocked by credits/provider configuration, and browser/visual/accessibility acceptance is still outstanding. No deployment, destructive cleanup, credential rotation or commit was performed.

@@ -23,7 +23,7 @@ async function responseError(response: Response): Promise<Error> {
 }
 
 const key = (process.env.GEMINI_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
-const model = aiConfig.model;
+const model = (process.env.GEMINI_MODEL || process.env.AI_MODEL || 'gemini-3.5-flash-lite').trim();
 
 console.log('SchoolCare Gemini connection test');
 console.log(`Provider: ${aiConfig.provider}`);

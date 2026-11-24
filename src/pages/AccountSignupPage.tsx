@@ -14,6 +14,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { getRoleDashboard } from '../rbac';
 import { LanguageCode, SignupRequestView } from '../types';
+import { PublicPageBackground } from '../components/PublicPageBackground';
 
 interface AccountSignupPageProps {
   mode: 'parent' | 'student';
@@ -148,7 +149,10 @@ export const AccountSignupPage: React.FC<AccountSignupPageProps> = ({ mode, onBa
       setRequest({ ...result.request, signInEmail: result.request.signInEmail || request.signInEmail });
       if (status === 'APPROVED') {
         setNotice(t('signupApprovedMessage'));
-        const user = await login(email.trim(), password);
+        // Email is optional on sign-up. When it was left blank the server
+        // generated a sign-in address and returned it at submission time.
+        const signInEmail = request.signInEmail || email.trim();
+        const user = await login(signInEmail, password);
         window.location.hash = `#/${getRoleDashboard(user.role)}`;
         return;
       }
@@ -175,31 +179,32 @@ export const AccountSignupPage: React.FC<AccountSignupPageProps> = ({ mode, onBa
     : '';
 
   return (
-    <main className="schoolcare-page-bg min-h-screen bg-transparent px-4 py-10">
-      <div className="mx-auto w-full max-w-2xl">
-        <div className="mb-6 flex items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-          >
-            <ArrowLeft size={16} /> {t('signupBackToSignIn')}
-          </button>
-          <div className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
-            <Globe2 size={16} />
-            <select
-              aria-label={t('signupLanguage')}
-              value={language}
-              onChange={event => setLanguage(event.target.value as LanguageCode)}
-              className="bg-transparent text-sm font-medium outline-none"
+    <PublicPageBackground>
+      <main className="flex min-h-screen items-center justify-center px-4 py-10">
+        <div className="mx-auto w-full max-w-2xl">
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/15"
             >
-              <option value="en">English</option>
-              <option value="rw">Kinyarwanda</option>
-            </select>
+              <ArrowLeft size={16} /> {t('signupBackToSignIn')}
+            </button>
+            <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm text-white">
+              <Globe2 size={16} />
+              <select
+                aria-label={t('signupLanguage')}
+                value={language}
+                onChange={event => setLanguage(event.target.value as LanguageCode)}
+                className="bg-transparent text-sm font-medium text-white outline-none [&_option]:text-slate-900"
+              >
+                <option value="en">English</option>
+                <option value="rw">Kinyarwanda</option>
+              </select>
+            </div>
           </div>
-        </div>
 
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <section className="overflow-hidden rounded-2xl border border-white/20 bg-white/95 shadow-2xl backdrop-blur-sm">
           <div className="border-b border-slate-200 bg-[color:var(--schoolcare-brand-900)] px-6 py-6 text-white">
             <div className="flex items-center gap-3">
               {isParent ? <UserRound size={28} /> : <BookOpenCheck size={28} />}
@@ -410,7 +415,8 @@ export const AccountSignupPage: React.FC<AccountSignupPageProps> = ({ mode, onBa
             )}
           </div>
         </section>
-      </div>
-    </main>
+        </div>
+      </main>
+    </PublicPageBackground>
   );
 };
