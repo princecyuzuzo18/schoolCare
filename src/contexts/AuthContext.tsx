@@ -26,6 +26,7 @@ interface AuthContextType {
   hasPermission: (permission: string) => boolean;
   refreshPermissions: () => Promise<void>;
   refreshSchool: () => Promise<void>;
+  refreshMe: () => Promise<UserProfile | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -141,6 +142,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setSchool(data);
   };
 
+  const refreshMe = async () => {
+    const session = await api.getMe();
+    if (!session.user) return null;
+    setCurrentUser(session.user);
+    setDefaultDashboard(session.defaultDashboard || getRoleDashboard(session.user.role));
+    setDashboardUrl(session.dashboardUrl || `/portal#/${getRoleDashboard(session.user.role)}`);
+    return session.user;
+  };
+
   const role = currentUser?.role ?? null;
   const effectivePermissions = permissions?.effectivePermissions ?? [];
 
@@ -166,7 +176,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         rolePermissions: permissions?.rolePermissions ?? null,
         hasPermission: (permission: string) => effectivePermissions.includes(permission),
         refreshPermissions: loadPermissions,
-        refreshSchool
+        refreshSchool,
+        refreshMe
       }}
     >
       {children}

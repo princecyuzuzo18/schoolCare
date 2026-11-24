@@ -79,6 +79,29 @@ import {
 } from './seedData';
 import { getProfessionalTitle, isStaffRole } from '../src/roleCatalog';
 
+/**
+ * Audit details are engineering evidence, not a place to copy personal or
+ * credential data. Every detail string is passed through this redactor before
+ * it is appended to the activity history.
+ */
+const AUDIT_REDACTIONS: ReadonlyArray<{ pattern: RegExp; replacement: string }> = [
+  {
+    pattern: /(password|passwd|pwd|token|secret|api[_-]?key|authorization|credential|verification[_-]?code|otp)\s*[:=]\s*[^\s,;]+/gi,
+    replacement: '$1=[REDACTED]'
+  },
+  { pattern: /\b(?:\+?250|0)\d{9,12}\b/g, replacement: '[PHONE REDACTED]' },
+  { pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, replacement: '[EMAIL REDACTED]' },
+  { pattern: /\b[a-f0-9]{32,}\b/gi, replacement: '[TOKEN REDACTED]' }
+];
+
+export function sanitizeAuditDetails(details: string): string {
+  let safe = String(details ?? '');
+  for (const { pattern, replacement } of AUDIT_REDACTIONS) {
+    safe = safe.replace(pattern, replacement);
+  }
+  return safe.slice(0, 500);
+}
+
 interface DatabaseSchema {
   schools: School[];
   users: UserProfile[];
@@ -581,7 +604,7 @@ class DatabaseStore {
       action,
       entityType,
       entityId,
-      details,
+      details: sanitizeAuditDetails(details),
       ipAddress,
       timestamp: new Date().toISOString()
     };
@@ -637,7 +660,7 @@ class DatabaseStore {
 
   public updateUserProfile(
     userId: string,
-    updates: Partial<Pick<UserProfile, 'fullName' | 'phone' | 'avatarUrl' | 'teacherDepartment'>>
+    updates: Partial<Pick<UserProfile, 'fullName' | 'firstName' | 'lastName' | 'phone' | 'avatarUrl' | 'teacherDepartment'>>
   ): UserProfile | undefined {
     const user = this.data.users.find(item => item.id === userId);
     if (!user) return undefined;

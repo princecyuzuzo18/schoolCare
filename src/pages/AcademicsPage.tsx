@@ -7,6 +7,7 @@
 import React, { useEffect, useState } from 'react';
 import { ReportCard, AcademicClass, Subject, Student } from '../types';
 import { api } from '../services/api';
+import { HEADTEACHER_DISPLAY_NAME } from '../roleCatalog';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -353,7 +354,9 @@ export const AcademicsPage: React.FC = () => {
                   </div>
                   <div>
                     <p className="font-bold text-slate-800">Directeur d'Établissement</p>
-                    <p className="text-[10px] text-slate-600 mt-8 border-t border-slate-300 pt-1">Jean Bosco Mugiraneza</p>
+                    <p className="text-[10px] text-slate-600 mt-8 border-t border-slate-300 pt-1">
+                      {selectedReportCard.headTeacherName || HEADTEACHER_DISPLAY_NAME}
+                    </p>
                   </div>
                 </div>
               </div>

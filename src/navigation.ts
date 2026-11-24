@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  BellRing,
   BookOpen,
   Briefcase,
   Building2,
@@ -71,6 +72,14 @@ export const NAV_ITEMS: readonly NavItem[] = [
     icon: LayoutDashboard,
     section: 'overview',
     description: 'Role-based school overview'
+  },
+  {
+    id: 'alert-center',
+    label: 'Smart Alert Center',
+    labelKey: 'navAlertCenter',
+    icon: BellRing,
+    section: 'overview',
+    description: 'Actionable school alerts from existing records'
   },
   {
     id: 'approval-center',
@@ -268,17 +277,17 @@ export const NAV_ITEMS: readonly NavItem[] = [
   },
   {
     id: 'meetings',
-    label: 'Online Meetings',
+    label: 'Meetings',
     icon: Calendar,
     section: 'operations',
-    description: 'Meeting schedules and links'
+    description: 'Agendas, responses, minutes and follow-up tasks'
   },
   {
     id: 'collaboration',
-    label: 'Collaboration',
+    label: 'Collaboration Workspace',
     icon: Users,
     section: 'operations',
-    description: 'School collaboration workspace'
+    description: 'Shared plans, notes and school improvement tasks'
   },
   {
     id: 'partner-schools',
@@ -412,6 +421,7 @@ const HEADTEACHER_SECTION_LABELS: Record<string, string> = {
 
 const HEADTEACHER_ITEM_SECTIONS: Record<string, NavSectionId> = {
   dashboard: 'head-dashboard',
+  'alert-center': 'head-dashboard',
   'approval-center': 'head-dashboard',
   students: 'head-people',
   guardians: 'head-people',
@@ -432,7 +442,6 @@ const HEADTEACHER_ITEM_SECTIONS: Record<string, NavSectionId> = {
   discipline: 'head-operations',
   health: 'head-operations',
   events: 'head-operations',
-  documents: 'head-operations',
   meetings: 'head-operations',
   collaboration: 'head-operations',
   'partner-schools': 'head-operations',
@@ -447,6 +456,13 @@ const HEADTEACHER_ITEM_SECTIONS: Record<string, NavSectionId> = {
   'ai-assistant': 'head-reports',
   settings: 'head-settings'
 };
+
+/** Items intentionally hidden from the Headteacher workspace only. */
+const HEADTEACHER_HIDDEN_ITEM_IDS = new Set<string>(['documents']);
+
+function isHeadteacherNavItemVisible(role: UserRole | null | undefined, item: NavItem): boolean {
+  return !(role === 'HEAD_TEACHER' && HEADTEACHER_HIDDEN_ITEM_IDS.has(item.id));
+}
 
 export const NAV_ITEM_MAP: Readonly<Record<string, NavItem>> = NAV_ITEMS.reduce(
   (map, item) => {
@@ -471,7 +487,11 @@ export function getVisibleNavSections(
       const itemSection = isHeadteacher
         ? (HEADTEACHER_ITEM_SECTIONS[item.id] ?? 'head-operations')
         : item.section;
-      return itemSection === sectionId && isTabAllowedForRole(role, item.id, effectivePermissions);
+      return (
+        itemSection === sectionId &&
+        isHeadteacherNavItemVisible(role, item) &&
+        isTabAllowedForRole(role, item.id, effectivePermissions)
+      );
     })
   })).filter(section => section.items.length > 0);
 }
@@ -480,7 +500,11 @@ export function getVisibleNavItems(
   role: UserRole | null | undefined,
   effectivePermissions?: readonly string[]
 ): NavItem[] {
-  return NAV_ITEMS.filter(item => isTabAllowedForRole(role, item.id, effectivePermissions));
+  return NAV_ITEMS.filter(
+    item =>
+      isHeadteacherNavItemVisible(role, item) &&
+      isTabAllowedForRole(role, item.id, effectivePermissions)
+  );
 }
 
 export function getNavItem(id: string): NavItem | undefined {

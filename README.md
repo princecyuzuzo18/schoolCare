@@ -74,13 +74,30 @@ A comprehensive Secondary School Management & Parent Communication Platform buil
 
 ```bash
 npm run lint            # TypeScript check
-npm test                # full suite (security, isolation, academics, hardening, AI assistant)
-npm run test:ai         # AI assistant suite only (no real API key needed)
-npm run test:gemini     # optional live Gemini connection test (uses your key)
-npm run test:academics  # academic workflow only
-npm run test:db         # database schema and migration history
 npm run build           # production client bundle
+npm run db:check        # MariaDB connection check
+npm run db:status       # migration status
+npm run test:db         # database schema and migration history
+npm run test:navigation # navigation and role routing
+npm run test:permissions
+npm run test:staff
+npm run test:api        # API and authorization security
+npm run test:academics  # academic approval workflow
+npm run test:headteacher # Headteacher dashboard
+npm run test:activity   # School Activity History privacy and gates
+npm run test:reports    # executive report export and scope parity
+npm run test:meetings   # meetings/collaboration structured records
+npm run test:profile    # guarded Headteacher self-profile
 ```
+
+> **Do not run `npm test` against live school data.** The aggregate command includes mutating suites (`test:isolation`, `test:access-reset`, `test:ai`). `test:gemini` requires a real API key and network access. See [`docs/SCHOOLCARE_TEST_REPORT.md`](./docs/SCHOOLCARE_TEST_REPORT.md) for the current verified results.
+
+Project documentation:
+
+- [Full system audit](./docs/SCHOOLCARE_FULL_SYSTEM_AUDIT.md)
+- [Test report](./docs/SCHOOLCARE_TEST_REPORT.md)
+- [Headteacher user guide](./docs/HEADTEACHER_USER_GUIDE.md)
+- [Implementation report](./docs/SCHOOLCARE_FINAL_IMPLEMENTATION_REPORT.md)
 
 ---
 
@@ -110,7 +127,9 @@ Set-Location 'D:\PROJECT\schoolcare (1)'
 npm run auth:provision-account
 ```
 
-The command verifies that PowerShell is elevated, lists active accounts from the existing MySQL `user_profiles` table, and lets the administrator select one. It creates the `user_auth_credentials` table if needed, prompts twice for an initial password without echoing it, and inserts only a scrypt hash. Passwords must be 12–128 characters. The table’s `user_id` is a primary/foreign key to `user_profiles.id`, so the command cannot create duplicate user accounts or provision the same account twice. Run it again for each account that needs access. Do not pass passwords as command arguments, paste them into chat, or run the command in a non-elevated terminal. There is no public registration or demo-role sign-in.
+The command verifies that PowerShell is elevated, lists active accounts from the existing MySQL `user_profiles` table, and lets the administrator select one. It creates the `user_auth_credentials` table if needed, prompts twice for an initial password without echoing it, and inserts only a scrypt hash. Passwords must be 12–128 characters. The table’s `user_id` is a primary/foreign key to `user_profiles.id`, so the command cannot create duplicate user accounts or provision the same account twice. Run it again for each account that needs access. Do not pass passwords as command arguments, paste them into chat, or run the command in a non-elevated terminal. There is no demo-role sign-in.
+
+Public parent and student sign-up requests are supported by the application, but verification codes require configured email or SMS delivery. Run sign-up tests only against the isolated `schoolcare_signup_test` database.
 
 The same `user_auth_credentials` table is included in `mysql/schoolcare_db.sql`. The CLI creates it non-destructively for an already-imported XAMPP database; it does not drop or modify existing accounts. Password login reads the hash from this table, so MySQL must remain available for authentication.
 

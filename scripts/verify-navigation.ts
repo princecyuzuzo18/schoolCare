@@ -1,4 +1,4 @@
-import { NAV_ITEMS, getQuickNavItems, getVisibleNavItems, getVisibleNavSections } from '../src/navigation';
+import { NAV_ITEM_MAP, NAV_ITEMS, getQuickNavItems, getVisibleNavItems, getVisibleNavSections } from '../src/navigation';
 import { APP_ROUTES } from '../src/routes';
 import { ROLE_ALLOWED_TABS, ROLE_DASHBOARD_MAP, isTabAllowedForRole, resolveRequestedTab } from '../src/rbac';
 import { ROLE_DASHBOARD_TABS, getRoleDashboardTab } from '../src/roleDashboards';
@@ -212,11 +212,38 @@ check(
 
 const headteacherVisibleIds = headteacherSections.flatMap(section => section.items).map(item => item.id);
 const headteacherTabs = ROLE_ALLOWED_TABS.HEAD_TEACHER;
-const missingGroupedTabs = headteacherTabs.filter(id => !headteacherVisibleIds.includes(id));
+const hiddenHeadteacherTabs = ['documents'];
+const missingGroupedTabs = headteacherTabs.filter(
+  id => !hiddenHeadteacherTabs.includes(id) && !headteacherVisibleIds.includes(id)
+);
 check(
-  'Grouping preserves every Headteacher page',
+  'Grouping preserves every Headteacher page except intentionally hidden entries',
   missingGroupedTabs.length === 0,
   missingGroupedTabs.join(', ')
+);
+check(
+  'Headteacher sidebar hides School Documents',
+  !headteacherVisibleIds.includes('documents'),
+  headteacherVisibleIds.join(', ')
+);
+check(
+  'School Documents remains registered for other roles',
+  Boolean(NAV_ITEM_MAP.documents) && Boolean(APP_ROUTES.documents),
+  `nav=${Boolean(NAV_ITEM_MAP.documents)} route=${Boolean(APP_ROUTES.documents)}`
+);
+
+const headteacherDashboardSection = headteacherSections.find(section => section.label === 'Dashboard');
+check(
+  'Headteacher Dashboard section includes the Smart Alert Center',
+  Boolean(headteacherDashboardSection?.items.some(item => item.id === 'alert-center')),
+  headteacherDashboardSection?.items.map(item => item.id).join(', ') ?? ''
+);
+check(
+  'Smart Alert Center is limited to school leadership roles',
+  ROLES
+    .filter(role => !['SUPER_ADMIN', 'SCHOOL_ADMIN', 'HEAD_TEACHER'].includes(role))
+    .every(role => !isTabAllowedForRole(role, 'alert-center')),
+  ROLES.filter(role => isTabAllowedForRole(role, 'alert-center')).join(', ')
 );
 
 const failed = checks.filter(item => !item.passed);

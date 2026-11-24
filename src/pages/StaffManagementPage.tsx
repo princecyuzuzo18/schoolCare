@@ -112,6 +112,46 @@ function formatDate(value?: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
 }
 
+function isExpired(invitation: StaffInvitation): boolean {
+  if (!invitation.expiresAt || invitation.consumedAt || invitation.revokedAt) return false;
+  const expires = new Date(invitation.expiresAt).getTime();
+  return Number.isFinite(expires) && expires <= Date.now();
+}
+
+const ActivationLinkPanel: React.FC<{
+  invitation: StaffInvitationResponse;
+  copied: string;
+  onCopy: (url: string) => void;
+}> = ({ invitation, copied, onCopy }) => {
+  const { t } = useLanguage();
+  return (
+    <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+      <p className="text-[11px] font-bold text-amber-900">{t('activationLink')}</p>
+      <p className="mt-1 break-all font-mono text-[10px] text-amber-800">
+        {`${window.location.origin}${invitation.activationUrl}`}
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onCopy(invitation.activationUrl)}
+          className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2 py-1 text-[10px] font-bold text-amber-800"
+        >
+          <Copy className="w-3 h-3" />
+          {copied === invitation.activationUrl ? t('copied') : t('copyActivationLink')}
+        </button>
+        <span className="text-[10px] font-semibold text-amber-800">
+          {invitation.deliveryPending ? t('deliveryPending') : t('deliverySent')}
+        </span>
+        <span className="text-[10px] font-semibold text-amber-800">
+          {t('activationExpires')}: {formatDate(invitation.invitation.expiresAt)}
+        </span>
+      </div>
+      <p className="mt-2 text-[10px] text-amber-800">{t('activationCopyOnce')}</p>
+      <p className="mt-1 text-[10px] text-amber-800">{t('activationResendInvalidates')}</p>
+    </div>
+  );
+};
+
 export const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ onNavigate }) => {
   const { currentUser, hasPermission, refreshPermissions } = useAuth();
   const { t, language } = useLanguage();
@@ -375,6 +415,7 @@ export const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ onNavi
     try {
       const result = await api.resendStaffInvitation(invitation.id);
       setNewInvitation(result);
+      setCopied('');
       setSuccess(result.deliveryPending ? t('inviteCreatedPending') : t('invitationResent'));
       await load();
     } catch (err) {
@@ -589,25 +630,7 @@ export const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ onNavi
           </form>
 
           {newInvitation && (
-            <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
-              <p className="text-[11px] font-bold text-amber-900">{t('activationLink')}</p>
-              <p className="mt-1 break-all font-mono text-[10px] text-amber-800">
-                {`${window.location.origin}${newInvitation.activationUrl}`}
-              </p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => copyLink(newInvitation.activationUrl)}
-                  className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2 py-1 text-[10px] font-bold text-amber-800"
-                >
-                  <Copy className="w-3 h-3" />
-                  {copied === newInvitation.activationUrl ? t('copied') : t('copyActivationLink')}
-                </button>
-                <span className="text-[10px] font-semibold text-amber-800">
-                  {newInvitation.deliveryPending ? t('deliveryPending') : t('deliverySent')}
-                </span>
-              </div>
-            </div>
+            <ActivationLinkPanel invitation={newInvitation} copied={copied} onCopy={copyLink} />
           )}
         </section>
       )}
@@ -668,7 +691,7 @@ export const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ onNavi
                         <td className="py-2.5 pr-3">
                           <div className="flex items-center gap-2">
                             {item.photoUrl ? (
-                              <img src={item.photoUrl} alt="" className="h-7 w-7 rounded-full object-cover" />
+                              <img src={item.photoUrl || undefined} alt="" className="h-7 w-7 rounded-full object-cover" />
                             ) : (
                               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-bold text-indigo-700">
                                 {item.fullName.charAt(0)}
@@ -753,7 +776,7 @@ export const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ onNavi
         <section className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
             <Mail className="w-4 h-4 text-amber-600" />
-            {t('pendingInvitations')} ({invitations.filter(item => !item.consumedAt && !item.revokedAt).length})
+            {t('pendingInvitations')} ({invitations.filter(item => !item.consumedAt && !item.revokedAt && !isExpired(item)).length})
           </h2>
           {invitations.length === 0 ? (
             <p className="mt-4 text-xs text-slate-500">{t('noInvitations')}</p>
@@ -772,12 +795,21 @@ export const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ onNavi
                       <p className="text-[10px] text-slate-500">
                         {t('invitationDelivery')}: {sent ? t('deliverySent') : t('deliveryPending')}
                       </p>
+                      <p className="text-[10px] text-slate-500">
+                        {t('activationExpires')}: {formatDate(invitation.expiresAt)}
+                      </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${
-                        active ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
+                        active && !isExpired(invitation) ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
                       }`}>
-                        {invitation.revokedAt ? t('revoked') : invitation.consumedAt ? t('used') : t('pending')}
+                        {invitation.revokedAt
+                          ? t('revoked')
+                          : invitation.consumedAt
+                            ? t('used')
+                            : isExpired(invitation)
+                              ? t('invitationExpired')
+                              : t('pending')}
                       </span>
                       {active && (
                         <>
@@ -795,6 +827,9 @@ export const StaffManagementPage: React.FC<StaffManagementPageProps> = ({ onNavi
                 );
               })}
             </ul>
+          )}
+          {newInvitation && (
+            <ActivationLinkPanel invitation={newInvitation} copied={copied} onCopy={copyLink} />
           )}
         </section>
       )}

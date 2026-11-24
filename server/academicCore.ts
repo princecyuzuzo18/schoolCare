@@ -636,7 +636,7 @@ export function ensureDistribution(schoolId: string, card: ReportCard, actor: Us
     });
     if (reset) {
       db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'RESET_REPORT_DISTRIBUTION',
-        'REPORT_DISTRIBUTION', reset.id, `Regenerated report returned to GENERATED for ${reset.studentName}`);
+        'REPORT_DISTRIBUTION', reset.id, `Regenerated report ${reset.id} returned to GENERATED`);
       return reset;
     }
     return existing;

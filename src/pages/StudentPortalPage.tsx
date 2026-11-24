@@ -89,7 +89,7 @@ export const StudentPortalPage: React.FC = () => {
         <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-r from-[#102B50]/95 via-[#102B50]/75 to-[#102B50]/60" />
         <div className="relative z-10 flex items-center gap-4">
           <img
-            src={student.photoUrl}
+            src={student.photoUrl || undefined}
             alt={student.firstName}
             className="w-16 h-20 object-cover rounded-xl border-2 border-white/60 shadow"
           />

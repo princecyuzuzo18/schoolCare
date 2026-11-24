@@ -304,7 +304,7 @@ export const AttendancePage: React.FC = () => {
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-3">
                         <img
-                          src={student.photoUrl}
+                          src={student.photoUrl || undefined}
                           alt={student.firstName}
                           className="w-8 h-8 rounded-full object-cover border border-slate-200"
                         />

@@ -40,6 +40,20 @@ export interface StaffProfileUpdateInput {
   employmentStartDate?: string;
 }
 
+/** The only profile fields a Headteacher may change for their own account. */
+export interface SelfProfileUpdateInput {
+  fullName?: string;
+  phone?: string;
+  photoUrl?: string;
+}
+
+/** Split a personal name without importing one-off migration constants. */
+export function splitPersonalName(fullName: string): { firstName: string; lastName: string } {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  const firstName = parts.shift() ?? '';
+  return { firstName, lastName: parts.join(' ') };
+}
+
 function normalizeList(values?: string[]): string[] {
   if (!Array.isArray(values)) return [];
   return Array.from(
@@ -255,6 +269,64 @@ export function updateStaffProfile(
   }
 
   return getStaffProfile(schoolId, userId);
+}
+
+/**
+ * Self-service Headteacher profile edit. The caller must derive the user id
+ * and school from the authenticated session; no identity, role, permission,
+ * credential or school field is read from the request body.
+ */
+export function updateSelfProfile(
+  schoolId: string,
+  userId: string,
+  input: SelfProfileUpdateInput,
+  actorId: string
+): UserProfile | undefined {
+  const user = db.getUserById(userId);
+  if (!user || user.schoolId !== schoolId) return undefined;
+
+  if (input.fullName !== undefined) validateText(input.fullName, 'fullName', 150);
+  if (input.phone !== undefined) validateText(input.phone, 'phone', 50);
+  if (input.photoUrl !== undefined && input.photoUrl.trim().length > 500) {
+    throw new StaffManagementError('photoUrl must be 500 characters or fewer.');
+  }
+
+  const userUpdates: Partial<Pick<UserProfile, 'fullName' | 'firstName' | 'lastName' | 'phone' | 'avatarUrl'>> = {};
+  if (input.fullName !== undefined) {
+    const fullName = input.fullName.trim();
+    const names = splitPersonalName(fullName);
+    userUpdates.fullName = fullName;
+    userUpdates.firstName = names.firstName;
+    userUpdates.lastName = names.lastName;
+  }
+  if (input.phone !== undefined) userUpdates.phone = input.phone.trim();
+  if (input.photoUrl !== undefined) userUpdates.avatarUrl = input.photoUrl.trim();
+
+  const updated = db.updateUserProfile(userId, userUpdates);
+
+  const account = db.getStaffAccountByUserId(userId);
+  if (account && account.schoolId === schoolId) {
+    const accountUpdates: Partial<StaffAccount> = { lastModifiedBy: actorId };
+    if (input.phone !== undefined) accountUpdates.phone = input.phone.trim();
+    if (input.photoUrl !== undefined) accountUpdates.photoUrl = input.photoUrl.trim();
+    db.updateStaffAccount(account.id, accountUpdates);
+
+    const member = findStaffMember(account, schoolId);
+    if (member) {
+      const memberUpdates: Partial<StaffMember> = {};
+      if (input.fullName !== undefined) {
+        memberUpdates.fullName = input.fullName.trim();
+        const names = splitPersonalName(input.fullName);
+        memberUpdates.firstName = names.firstName;
+        memberUpdates.lastName = names.lastName;
+      }
+      if (input.phone !== undefined) memberUpdates.phone = input.phone.trim();
+      if (input.photoUrl !== undefined) memberUpdates.photoUrl = input.photoUrl.trim();
+      db.updateStaffMember(member.id, memberUpdates);
+    }
+  }
+
+  return updated;
 }
 
 export function archiveStaffAccount(

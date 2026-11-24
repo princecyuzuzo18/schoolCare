@@ -2,6 +2,7 @@ import React from 'react';
 import type { HealthIncident } from './types';
 
 import { DashboardPage } from './pages/DashboardPage';
+import { AlertCenterPage } from './pages/AlertCenterPage';
 import { ApprovalCenterPage } from './pages/ApprovalCenterPage';
 import { ParentPortalPage } from './pages/ParentPortalPage';
 import { StudentPortalPage } from './pages/StudentPortalPage';
@@ -19,6 +20,7 @@ import { StaffPage } from './pages/StaffPage';
 import { TimetablePage } from './pages/TimetablePage';
 import { AuditPage } from './pages/AuditPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { MeetingWorkspacePage } from './pages/MeetingWorkspacePage';
 import { ReportsPage } from './pages/ReportsPage';
 import { AIAssistantPage } from './pages/AIAssistantPage';
 import { EventsPage } from './pages/EventsPage';
@@ -47,6 +49,11 @@ export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
     render: ({ onNavigate, onOpenIncidentModal }) => (
       <DashboardPage onNavigate={onNavigate} onOpenIncidentModal={onOpenIncidentModal} />
     )
+  },
+  'alert-center': {
+    id: 'alert-center',
+    title: 'Smart Alert Center',
+    render: ({ onNavigate }) => <AlertCenterPage onNavigate={onNavigate} />
   },
   'approval-center': {
     id: 'approval-center',
@@ -250,35 +257,12 @@ export const APP_ROUTES: Readonly<Record<string, AppRoute>> = {
   collaboration: {
     id: 'collaboration',
     title: 'Collaboration',
-    render: () => (
-      <ModuleCrud
-        title="School Collaboration"
-        description="Collaboration items"
-        fields={[
-          { key: 'title', label: 'Title' },
-          { key: 'participants', label: 'Participants' },
-          { key: 'notes', label: 'Notes', type: 'textarea' }
-        ]}
-        moduleKey="collaboration"
-      />
-    )
+    render: () => <MeetingWorkspacePage mode="collaboration" />
   },
   meetings: {
     id: 'meetings',
     title: 'Online Meetings',
-    render: () => (
-      <ModuleCrud
-        title="Online Meetings"
-        description="Meeting schedule"
-        fields={[
-          { key: 'title', label: 'Title' },
-          { key: 'date', label: 'Date', type: 'date' },
-          { key: 'link', label: 'Link' },
-          { key: 'attendees', label: 'Attendees' }
-        ]}
-        moduleKey="meetings"
-      />
-    )
+    render: () => <MeetingWorkspacePage mode="meetings" />
   },
   inventory: {
     id: 'inventory',

@@ -446,6 +446,14 @@ async function main(): Promise<void> {
 }
 
 main().catch(error => {
-  console.error(error instanceof Error ? error.message : String(error));
+  const code = error && typeof error === 'object' && 'code' in error ? (error as { code?: string }).code : undefined;
+  if (code === 'ER_BAD_DB_ERROR' || code === 'ER_DBACCESS_DENIED_ERROR') {
+    console.error(
+      `Database ${TEST_DB} is missing or not granted to ${process.env.DB_USERNAME || process.env.DB_USER || 'schoolcare_user'}. ` +
+      `Run mysql/create_signup_test_db.sql as an administrator, then npm run test:signup:init.`
+    );
+  } else {
+    console.error(error instanceof Error ? error.message : String(error));
+  }
   process.exitCode = 1;
 });

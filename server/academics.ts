@@ -846,7 +846,7 @@ export function registerAcademicRoutes(app: Express): void {
           }, distribution.history)
         });
         db.logAudit(schoolId, reviewer.id, reviewer.fullName, reviewer.role, 'RESET_REPORT_DISTRIBUTION',
-          'REPORT_DISTRIBUTION', distribution.id, `Reopened marks invalidated distribution for ${card.studentName}`);
+          'REPORT_DISTRIBUTION', distribution.id, `Reopened marks invalidated distribution ${distribution.id}`);
       }
     }
     db.logAudit(schoolId, reviewer.id, reviewer.fullName, reviewer.role, 'REOPEN_APPROVED_MARKS', 'MARK_SUBMISSION', submission.id, reason);

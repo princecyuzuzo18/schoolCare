@@ -21,12 +21,19 @@ import {
   Layers,
   HelpCircle,
   Copy,
-  Check
+  Check,
+  UserRound,
+  ShieldCheck,
+  Info
 } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
-  const { school, refreshSchool, role } = useAuth();
+  const { school, refreshSchool, refreshMe, role, currentUser } = useAuth();
   const { t } = useLanguage();
+
+  const roleLabel = role
+    ? role.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, char => char.toUpperCase())
+    : 'Not available';
 
   const [name, setName] = useState(school?.name || 'ES RUBENGERA RTB');
   const [phone, setPhone] = useState(school?.phone || '+250 788 340 120');
@@ -35,6 +42,24 @@ export const SettingsPage: React.FC = () => {
   const [motto, setMotto] = useState(school?.motto || 'Ubumenyi, Umurimo, Ubupfura');
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  const canEditProfile = role === 'HEAD_TEACHER';
+  const [profileForm, setProfileForm] = useState({
+    fullName: currentUser?.fullName || '',
+    phone: currentUser?.phone || '',
+    photoUrl: currentUser?.avatarUrl || ''
+  });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileNotice, setProfileNotice] = useState('');
+  const [profileError, setProfileError] = useState('');
+
+  useEffect(() => {
+    setProfileForm({
+      fullName: currentUser?.fullName || '',
+      phone: currentUser?.phone || '',
+      photoUrl: currentUser?.avatarUrl || ''
+    });
+  }, [currentUser?.id, currentUser?.fullName, currentUser?.phone, currentUser?.avatarUrl]);
 
   // MySQL & XAMPP status state
   const [mysqlStatus, setMysqlStatus] = useState<MysqlStatus | null>(null);
@@ -77,6 +102,28 @@ export const SettingsPage: React.FC = () => {
       alert(err.message || 'Failed to update school settings');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleProfileSave = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setProfileSaving(true);
+    setProfileNotice('');
+    setProfileError('');
+    try {
+      const result = await api.updateMyProfile({
+        fullName: profileForm.fullName.trim(),
+        phone: profileForm.phone.trim(),
+        photoUrl: profileForm.photoUrl.trim()
+      });
+      await refreshMe();
+      setProfileNotice(
+        result.databaseSync === 'unavailable' ? t('profileDbUnavailable') : t('selfProfileUpdated')
+      );
+    } catch (err: any) {
+      setProfileError(err?.message || 'Failed to update profile');
+    } finally {
+      setProfileSaving(false);
     }
   };
 
@@ -200,42 +247,132 @@ export const SettingsPage: React.FC = () => {
             </div>
           </form>
 
-          {/* Infrastructure Health Cards */}
+          {/* Delivery configuration status */}
           <div className="pt-4 border-t border-slate-100">
             <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-1.5">
-              <Radio className="w-4 h-4 text-emerald-600" />
-              <span>Connected Rwandan Telecom Gateways</span>
+              <Radio className="w-4 h-4 text-amber-600" />
+              <span>Communication delivery</span>
             </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-bold text-slate-800">SMS Gateway</span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    Active
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  MTN Rwanda & Airtel Rwanda with sender ID <strong className="text-slate-700">SchoolCare</strong>
-                </p>
-              </div>
-
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-bold text-slate-800">WhatsApp Business</span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    Verified
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  Meta Cloud API with delivery callbacks and guardian read receipts
-                </p>
-              </div>
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs">
+              <p className="font-bold text-amber-900">Not verified in this view</p>
+              <p className="mt-1 text-[11px] text-amber-800 leading-relaxed">
+                The server queues in-app notifications immediately. SMS, WhatsApp and email delivery depend on external credentials configured by the school. SchoolCare reports a queued message as pending when a channel is not configured; it does not claim that an external message was delivered.
+              </p>
             </div>
           </div>
         </div>
 
         {/* MySQL & XAMPP Management Column */}
         <div className="lg:col-span-5 space-y-6">
+          {/* Signed-in profile */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4 text-xs">
+            <div className="pb-3 border-b border-slate-100 flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                <UserRound className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900">My SchoolCare Profile</h3>
+                <p className="text-[11px] text-slate-500">
+                  {t(canEditProfile ? 'profileEditableSubtitle' : 'profileReadonlySubtitle')}
+                </p>
+              </div>
+            </div>
+
+            {canEditProfile && (
+              <form onSubmit={handleProfileSave} className="space-y-3 rounded-xl border border-blue-100 bg-blue-50/40 p-3">
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">{t('profileFullNameLabel')}</span>
+                  <input
+                    required
+                    value={profileForm.fullName}
+                    onChange={event => setProfileForm({ ...profileForm, fullName: event.target.value })}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-[11px] focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">{t('profilePhoneLabel')}</span>
+                  <input
+                    required
+                    value={profileForm.phone}
+                    onChange={event => setProfileForm({ ...profileForm, phone: event.target.value })}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-[11px] focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">{t('profilePhotoUrlLabel')}</span>
+                  <input
+                    value={profileForm.photoUrl}
+                    onChange={event => setProfileForm({ ...profileForm, photoUrl: event.target.value })}
+                    placeholder="https://"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-[11px] focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={profileSaving}
+                  className="inline-flex items-center gap-1 rounded-lg bg-blue-700 px-3 py-2 text-[11px] font-bold text-white hover:bg-blue-800 disabled:opacity-60"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {t(profileSaving ? 'profileSaving' : 'profileSave')}
+                </button>
+              </form>
+            )}
+
+            {profileError && (
+              <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-800">
+                {profileError}
+              </p>
+            )}
+            {profileNotice && (
+              <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-800">
+                {profileNotice}
+              </p>
+            )}
+
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px]">
+              {!canEditProfile && (
+                <div>
+                  <dt className="text-slate-400">Full name</dt>
+                  <dd className="font-bold text-slate-800">{currentUser?.fullName || 'Not available'}</dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-slate-400">Role</dt>
+                <dd className="font-bold text-slate-800">{roleLabel}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-400">Email</dt>
+                <dd className="font-mono font-bold text-slate-800 break-all">{currentUser?.email || 'Not available'}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-400">Language</dt>
+                <dd className="font-bold text-slate-800">{currentUser?.preferredLanguage === 'rw' ? 'Kinyarwanda' : 'English'}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-400">School</dt>
+                <dd className="font-bold text-slate-800">{school?.name || 'Not available'}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-400">Account status</dt>
+                <dd className="font-bold text-emerald-700">{currentUser?.isActive === false ? 'Inactive' : 'Active'}</dd>
+              </div>
+            </dl>
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                {role === 'SUPER_ADMIN'
+                  ? 'Platform Super Admin controls are limited to this section. School-level settings remain visible separately.'
+                  : 'This is a school-level account. Platform Super Admin controls, database dumps and environment templates are not available to this role.'}
+              </p>
+            </div>
+            <p className="flex items-start gap-1.5 text-[10px] text-slate-400">
+              <Info className="w-3 h-3 mt-0.5 shrink-0" />
+              {canEditProfile
+                ? t('profileImmutableNote')
+                : 'Contact the Headteacher or school administrator if any identity detail is incorrect. Profile fields cannot be changed here.'}
+            </p>
+          </div>
+
           {/* XAMPP & MySQL Database Card */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4 text-xs">
             <div className="pb-3 border-b border-slate-100 flex items-center justify-between">

@@ -264,6 +264,17 @@ class ApiService {
     return this.request<AuthSessionResponse>('/auth/me');
   }
 
+  public async updateMyProfile(input: {
+    fullName?: string;
+    phone?: string;
+    photoUrl?: string;
+  }): Promise<AuthSessionResponse & { databaseSync: 'synced' | 'unavailable' | 'not-needed' }> {
+    return this.request<AuthSessionResponse & { databaseSync: 'synced' | 'unavailable' | 'not-needed' }>(
+      '/auth/me/profile',
+      { method: 'PATCH', body: JSON.stringify(input) }
+    );
+  }
+
   public async logout(): Promise<void> {
     await this.request<{ success: boolean }>('/auth/logout', { method: 'POST' });
   }
@@ -1148,10 +1159,35 @@ class ApiService {
   }
 
   // --- Executive Reports & Analytics ---
-  public async getReportsAnalytics(term?: string): Promise<any> {
+  public async getReportsAnalytics(term?: string, combination?: string): Promise<any> {
     const params = new URLSearchParams();
     if (term) params.append('term', term);
+    if (combination && combination !== 'ALL') params.append('combination', combination);
     return this.request<any>(`/reports/analytics?${params.toString()}`);
+  }
+
+  /** Server-rendered CSV keeps exports aligned with the page's permission scope. */
+  public async exportReportsAnalytics(
+    section: string,
+    term?: string,
+    combination?: string
+  ): Promise<{ csv: string; filename: string }> {
+    const params = new URLSearchParams({ section });
+    if (term) params.append('term', term);
+    if (combination && combination !== 'ALL') params.append('combination', combination);
+    const endpoint = `/reports/analytics/export?${params.toString()}`;
+    const res = await fetch(`${API_BASE}${endpoint}`, { credentials: 'same-origin' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
+      this.notifySessionExpired(endpoint, res.status);
+      throw new ApiError(err.error || `HTTP ${res.status}`, res.status);
+    }
+    const disposition = res.headers.get('content-disposition') || '';
+    const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+    return {
+      csv: await res.text(),
+      filename: filenameMatch?.[1] || `SchoolCare_Report_${section}.csv`
+    };
   }
 
   public async getAuditLogs(): Promise<AuditLogEntry[]> {

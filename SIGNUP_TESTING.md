@@ -28,8 +28,11 @@ The initializer refuses to run if the test database already has tables, so it
 can never overwrite an existing test run.
 
 ```bash
-DB_DATABASE=schoolcare_signup_test DB_NAME=schoolcare_signup_test npm run test:signup:init
+npm run test:signup:init
 ```
+
+The npm script already sets `DB_DATABASE` and `DB_NAME` to the isolated test
+database; you do not need to repeat them on the command line.
 
 This imports the existing base schema into the test database only, rewrites the
 hard-coded `USE schoolcare_db` statement to the test database, then applies the
@@ -38,10 +41,14 @@ migrations including `004_parent_student_signup`.
 ## 3. Run the tests
 
 ```bash
-DB_DATABASE=schoolcare_signup_test DB_NAME=schoolcare_signup_test npm run test:signup
+npm run test:signup
 DB_DATABASE=schoolcare_signup_test DB_NAME=schoolcare_signup_test npm run test:db
 DB_DATABASE=schoolcare_signup_test DB_NAME=schoolcare_signup_test npm run db:check
 ```
+
+`test:signup` and `test:signup:init` set the database environment variables
+themselves. The generic database checks do not, so keep the explicit prefix for
+those. The sign-up scripts still refuse to run against `schoolcare_db`.
 
 The sign-up suite uses a temporary JSON data directory and a local fake SMS
 webhook, so no real email or SMS is sent. It covers:

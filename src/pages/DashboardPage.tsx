@@ -43,7 +43,16 @@ import {
   KeyRound,
   Layers,
   Settings,
-  ClipboardCheck
+  ClipboardCheck,
+  Info,
+  MapPin,
+  CalendarDays,
+  TrendingUp,
+  ListChecks,
+  Wallet,
+  BookOpen,
+  AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 
 const CONTROL_CENTER_ACTIONS: WorkspaceAction[] = [
@@ -140,171 +149,392 @@ const TONE_CLASSES: Record<WorkspaceAction['tone'], string> = {
 
 interface HeadteacherOverviewProps {
   summary: HeadteacherDashboardView;
+  headteacherName: string;
   onNavigate: (tab: string) => void;
 }
 
-const HeadteacherOverview: React.FC<HeadteacherOverviewProps> = ({ summary, onNavigate }) => {
-  const { totals, attendance, academics, approvals, events, notifications, activities } = summary;
-  const peopleCards = [
-    { label: 'Students', value: totals.students, tab: 'students', icon: Users, tone: 'bg-blue-50 text-blue-700' },
-    { label: 'Staff', value: totals.staff, tab: 'staff', icon: UserCog, tone: 'bg-indigo-50 text-indigo-700' },
-    { label: 'Parents', value: totals.parents, tab: 'guardians', icon: UserSquare2, tone: 'bg-emerald-50 text-emerald-700' },
-    { label: 'Active Classes', value: totals.activeClasses, tab: 'academic-admin', icon: GraduationCap, tone: 'bg-amber-50 text-amber-700' }
+interface ActivityFeedItem {
+  id: string;
+  title: string;
+  actor: string;
+  time: string;
+  status: string;
+  detail: string;
+  tab: string;
+}
+
+function formatDisplayDate(value: string): string {
+  if (!value) return 'Date not recorded';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat('en-RW', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date);
+}
+
+function entityDestination(entityType: string): string {
+  const map: Record<string, string> = {
+    STUDENT: 'students',
+    STAFF: 'staff-management',
+    USER: 'staff-management',
+    ATTENDANCE: 'attendance',
+    MARK_SUBMISSION: 'academic-admin',
+    REPORT_CARD: 'report-printing',
+    INVOICE: 'finance',
+    PAYMENT: 'finance',
+    EVENT: 'events',
+    ADMISSION_APPLICATION: 'admissions'
+  };
+  return map[entityType] ?? 'approval-center';
+}
+
+const SEVERITY_CLASSES: Record<string, string> = {
+  CRITICAL: 'bg-red-100 text-red-800',
+  HIGH: 'bg-orange-100 text-orange-800',
+  MEDIUM: 'bg-amber-100 text-amber-800',
+  LOW: 'bg-slate-100 text-slate-700'
+};
+
+const HeadteacherOverview: React.FC<HeadteacherOverviewProps> = ({ summary, headteacherName, onNavigate }) => {
+  const { totals, attendance, academics, approvals, attention, performance, events, activities, notifications, finance } = summary;
+  const [trendDays, setTrendDays] = useState(14);
+  const [classFilter, setClassFilter] = useState('ALL');
+
+  const today = summary.generatedAt.slice(0, 10);
+  const todayActivity: ActivityFeedItem[] = [
+    ...activities
+      .filter(item => String(item.timestamp).slice(0, 10) === today)
+      .map(item => ({
+        id: item.id,
+        title: item.action.replaceAll('_', ' ').toLowerCase().replace(/^\w/, char => char.toUpperCase()),
+        actor: `${item.userName} · ${item.userRole}`,
+        time: item.timestamp,
+        status: 'Recorded',
+        detail: item.details || `${item.entityType} update`,
+        tab: entityDestination(item.entityType)
+      })),
+    ...notifications
+      .filter(item => String(item.createdAt).slice(0, 10) === today)
+      .map(item => ({
+        id: item.id,
+        title: item.titleEn,
+        actor: `${item.channel} · ${item.recipientName}`,
+        time: item.createdAt,
+        status: item.status,
+        detail: item.contentEn,
+        tab: 'communication'
+      }))
+  ]
+    .sort((left, right) => right.time.localeCompare(left.time))
+    .slice(0, 8);
+
+  const cards = [
+    { title: 'Total Students', value: totals.students, explanation: 'Learners currently in the school register.', source: 'Student register', tab: 'students', icon: Users, tone: 'bg-blue-50 text-blue-700' },
+    { title: 'Total Staff', value: totals.staff, explanation: 'Active staff members registered at the school.', source: 'Staff directory', tab: 'staff', icon: UserCog, tone: 'bg-indigo-50 text-indigo-700' },
+    { title: 'Total Teachers', value: totals.teachers, explanation: 'Active staff whose role is Teacher.', source: 'Staff roles', tab: 'staff-management', icon: BookOpen, tone: 'bg-sky-50 text-sky-700' },
+    { title: 'Total Classes', value: totals.activeClasses, explanation: 'Classes currently marked active.', source: 'Academic classes', tab: 'academic-admin', icon: GraduationCap, tone: 'bg-amber-50 text-amber-700' },
+    { title: "Today's Attendance", value: attendance.rate === null ? 'No data available' : `${attendance.rate}%`, explanation: attendance.total ? `Based on ${attendance.total} attendance records submitted today.` : 'No roll call has been submitted today.', source: 'Attendance records', tab: 'attendance', icon: UserCheck, tone: 'bg-emerald-50 text-emerald-700' },
+    { title: 'Students Absent Today', value: attendance.absent, explanation: 'Absence records recorded for today.', source: 'Attendance records', tab: 'attendance', icon: AlertCircle, tone: 'bg-red-50 text-red-700' },
+    { title: 'Pending Admissions', value: totals.pendingAdmissions, explanation: 'Applications submitted or under review.', source: 'Admissions applications', tab: 'admissions', icon: UserPlus, tone: 'bg-violet-50 text-violet-700' },
+    { title: 'Published Academic Results', value: totals.publishedResults, explanation: 'Report cards already published to families.', source: 'Report cards', tab: 'report-printing', icon: CheckCircle2, tone: 'bg-teal-50 text-teal-700' },
+    { title: 'Pending Academic Approvals', value: totals.pendingAcademicApprovals, explanation: 'Marks submissions and report cards waiting for review.', source: 'Marks and report cards', tab: 'approval-center', icon: ClipboardCheck, tone: 'bg-orange-50 text-orange-700' },
+    { title: 'Outstanding Fees', value: finance ? `${new Intl.NumberFormat('en-RW').format(finance.outstanding)} RWF` : 'No data available', explanation: finance ? 'Total balance across recorded invoices.' : 'Finance data is not available for this account.', source: 'Invoices', tab: 'finance', icon: Wallet, tone: 'bg-yellow-50 text-yellow-700' }
+  ];
+
+  const trend = performance.attendanceTrend.slice(-trendDays);
+  const classRows = classFilter === 'ALL'
+    ? performance.classPerformance
+    : performance.classPerformance.filter(row => row.className === classFilter);
+  const completionTotal = performance.examinationCompletion.total;
+  const completionRows = [
+    { label: 'Approved', value: performance.examinationCompletion.approved },
+    { label: 'Submitted / under review', value: performance.examinationCompletion.submitted },
+    { label: 'Returned to teacher', value: performance.examinationCompletion.returned },
+    { label: 'Draft', value: performance.examinationCompletion.draft }
   ];
 
   return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-sm font-bold text-slate-900">Headteacher Overview</h2>
-          <p className="text-[11px] text-slate-500">
-            Live school-wide snapshot · {summary.schoolName}
-            {summary.currentTerm ? ` · ${summary.currentTerm}` : ''}
-          </p>
+    <section className="space-y-5">
+      <div className="relative overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-[#102B50] to-[#1D4E89] p-6 text-white shadow-sm">
+        <div className="relative z-10 grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-200">Headteacher workspace</p>
+            <h2 className="mt-2 text-2xl font-bold sm:text-3xl">Welcome, {headteacherName}</h2>
+            <p className="mt-1 text-sm text-blue-100">Headteacher – {summary.schoolName}</p>
+            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-blue-100">
+              <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" /> Academic year: {summary.academicPeriod.academicYear ?? 'No data available'}</span>
+              <span className="inline-flex items-center gap-1.5"><ClipboardList className="h-3.5 w-3.5" /> Term: {summary.academicPeriod.term ?? 'No data available'}</span>
+              <span className="inline-flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> {summary.schoolName}</span>
+              <span className="inline-flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> {formatDisplayDate(summary.generatedAt)}</span>
+            </div>
+            <p className="mt-2 text-[11px] text-blue-200">Academic period source: {summary.academicPeriod.source}</p>
+          </div>
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <button type="button" onClick={() => onNavigate('settings')} className="rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-xs font-semibold hover:bg-white/20">Profile & settings</button>
+            <button type="button" onClick={() => onNavigate('communication')} className="rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-xs font-semibold hover:bg-white/20">Notification center</button>
+            <button type="button" onClick={() => onNavigate('approval-center')} className="rounded-xl bg-white px-3 py-2 text-xs font-bold text-[#102B50] hover:bg-blue-50">Quick actions ({approvals.total})</button>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={() => onNavigate('approval-center')}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-        >
-          <ClipboardList className="h-3.5 w-3.5" />
-          Approval Center
-          <span className="rounded-full bg-blue-600 px-1.5 text-[10px] text-white">{approvals.total}</span>
-        </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {peopleCards.map(card => {
-          const Icon = card.icon;
-          return (
-            <button
-              key={card.label}
-              type="button"
-              onClick={() => onNavigate(card.tab)}
-              className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-xs transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
-            >
-              <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${card.tone}`}>
-                <Icon className="h-4 w-4" />
+      <section>
+        <div className="mb-3 flex items-end justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">School overview</h3>
+            <p className="text-[11px] text-slate-500">Each number comes from the school record shown underneath it. Click a card to open the related module.</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {cards.map(card => {
+            const Icon = card.icon;
+            return (
+              <button key={card.title} type="button" onClick={() => onNavigate(card.tab)} className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-xs transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600">
+                <div className="flex items-start justify-between gap-2">
+                  <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${card.tone}`}><Icon className="h-4 w-4" /></span>
+                  <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
+                </div>
+                <p className="mt-3 text-xl font-black text-slate-900">{card.value}</p>
+                <p className="text-[11px] font-bold text-slate-700">{card.title}</p>
+                <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{card.explanation}</p>
+                <p className="mt-2 border-t border-slate-100 pt-1 text-[9px] font-semibold uppercase tracking-wide text-slate-400">Source: {card.source}</p>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Needs Your Attention</h3>
+            <p className="text-[11px] text-slate-500">What happened, why it matters, who is responsible, and the action to take.</p>
+          </div>
+          <span className="rounded-full bg-orange-100 px-3 py-1 text-[11px] font-bold text-orange-800">{attention.total} item{attention.total === 1 ? '' : 's'}</span>
+        </div>
+        {attention.items.length === 0 ? (
+          <div className="mt-4 flex items-center gap-3 rounded-xl bg-emerald-50 p-4 text-emerald-800">
+            <CheckCircle2 className="h-5 w-5" />
+            <p className="text-xs font-semibold">Nothing needs your attention right now. All recorded queues are clear.</p>
+          </div>
+        ) : (
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {attention.items.map(item => (
+              <div key={item.id} className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-xs font-bold text-slate-900">{item.title}</p>
+                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${SEVERITY_CLASSES[item.severity] ?? SEVERITY_CLASSES.LOW}`}>{item.severity}</span>
+                </div>
+                <dl className="mt-3 space-y-1.5 text-[11px] text-slate-600">
+                  <div><dt className="font-semibold text-slate-700">What happened:</dt> <dd className="inline">{item.whatHappened}</dd></div>
+                  <div><dt className="font-semibold text-slate-700">Why it matters:</dt> <dd className="inline">{item.whyItMatters}</dd></div>
+                  <div><dt className="font-semibold text-slate-700">Action needed:</dt> <dd className="inline">{item.actionNeeded}</dd></div>
+                  <div><dt className="font-semibold text-slate-700">Responsible:</dt> <dd className="inline">{item.responsible}</dd></div>
+                  <div><dt className="font-semibold text-slate-700">When:</dt> <dd className="inline">{item.dueAt ? formatDisplayDate(item.dueAt) : 'No deadline recorded; review as soon as possible.'}</dd></div>
+                </dl>
+                <button type="button" onClick={() => onNavigate(item.tab)} className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-700 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-blue-800">Take action <ArrowRight className="h-3 w-3" /></button>
               </div>
-              <p className="mt-2 text-2xl font-black text-slate-900">{card.value}</p>
-              <p className="text-[11px] font-semibold text-slate-500">{card.label}</p>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-900">Academic Performance</h3>
-            <BarChart3 className="h-4 w-4 text-blue-600" />
-          </div>
-          <p className="mt-3 text-3xl font-black text-slate-900">
-            {academics.average === null ? '—' : `${academics.average}%`}
-          </p>
-          <p className="text-[11px] text-slate-500">
-            Average across {academics.evaluated} evaluated report cards
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold">
-            <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">
-              Pass {academics.passRate === null ? '—' : `${academics.passRate}%`}
-            </span>
-            {Object.entries(academics.gradeDistribution)
-              .filter(([, count]) => count > 0)
-              .map(([grade, count]) => (
-                <span key={grade} className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
-                  {grade}: {count}
-                </span>
-              ))}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-900">Today's Attendance</h3>
-            <UserCheck className="h-4 w-4 text-emerald-600" />
-          </div>
-          <p className="mt-3 text-3xl font-black text-slate-900">
-            {attendance.rate === null ? '—' : `${attendance.rate}%`}
-          </p>
-          <p className="text-[11px] text-slate-500">
-            {attendance.present} present · {attendance.absent} absent · {attendance.late} late
-          </p>
-          <button
-            type="button"
-            onClick={() => onNavigate('attendance')}
-            className="mt-3 text-[11px] font-semibold text-blue-600 hover:text-blue-800"
-          >
-            Open attendance →
-          </button>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-900">Pending Approvals</h3>
-            <ClipboardList className="h-4 w-4 text-amber-600" />
-          </div>
-          <p className="mt-3 text-3xl font-black text-slate-900">{approvals.total}</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {Object.entries(approvals.byType).map(([type, count]) => (
-              <span key={type} className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">
-                {type.replaceAll('_', ' ')}: {count}
-              </span>
             ))}
-            {approvals.total === 0 && (
-              <span className="text-[11px] text-slate-500">No approvals waiting.</span>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Today's School Activity</h3>
+            <p className="text-[11px] text-slate-500">Recorded updates, responsible person, time and current status.</p>
+          </div>
+          <button type="button" onClick={() => onNavigate('audit')} className="text-[11px] font-semibold text-blue-700 hover:text-blue-900">View full history →</button>
+        </div>
+        {todayActivity.length === 0 ? (
+          <div className="mt-4 rounded-xl border border-dashed border-slate-300 p-6 text-center">
+            <p className="text-xs font-semibold text-slate-600">No activity has been recorded today.</p>
+            <p className="mt-1 text-[11px] text-slate-500">New registrations, attendance submissions, marks approvals and staff actions will appear here.</p>
+          </div>
+        ) : (
+          <div className="mt-4 divide-y divide-slate-100">
+            {todayActivity.map(item => (
+              <button key={item.id} type="button" onClick={() => onNavigate(item.tab)} className="flex w-full items-start justify-between gap-4 py-3 text-left hover:bg-slate-50">
+                <div>
+                  <p className="text-xs font-bold text-slate-800">{item.title}</p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">{item.detail}</p>
+                  <p className="mt-1 text-[10px] text-slate-400">{item.actor} · {formatDisplayDate(item.time)}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-600">{item.status}</span>
+                  <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">School performance overview</h3>
+            <p className="text-[11px] text-slate-500">Only recorded data is shown. Use the filters to focus the view.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <label className="text-[10px] font-semibold text-slate-500">
+              Attendance window
+              <select value={trendDays} onChange={event => setTrendDays(Number(event.target.value))} className="ml-2 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-700">
+                <option value={7}>Last 7 days</option>
+                <option value={14}>Last 14 days</option>
+              </select>
+            </label>
+            <label className="text-[10px] font-semibold text-slate-500">
+              Class
+              <select value={classFilter} onChange={event => setClassFilter(event.target.value)} className="ml-2 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-700">
+                <option value="ALL">All classes</option>
+                {performance.classPerformance.map(row => <option key={row.className} value={row.className}>{row.className}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-800">Attendance trend</h4>
+              <TrendingUp className="h-4 w-4 text-emerald-600" />
+            </div>
+            {trend.length === 0 ? (
+              <p className="mt-4 text-[11px] text-slate-500">No data available. Attendance appears after roll calls are submitted.</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {trend.map(point => (
+                  <div key={point.date} className="grid grid-cols-[74px_1fr_44px] items-center gap-2 text-[10px]">
+                    <span className="text-slate-500">{point.date.slice(5)}</span>
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                      <div className="h-full rounded-full bg-emerald-500" style={{ width: `${point.rate ?? 0}%` }} />
+                    </div>
+                    <span className="text-right font-bold text-slate-700">{point.rate === null ? '—' : `${point.rate}%`}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-800">Class performance</h4>
+              <BarChart3 className="h-4 w-4 text-blue-600" />
+            </div>
+            {classRows.length === 0 ? (
+              <p className="mt-4 text-[11px] text-slate-500">No data available. Class averages appear after report cards are generated.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-left text-[11px]">
+                  <thead><tr className="text-slate-500"><th className="pb-2">Class</th><th className="pb-2">Evaluated</th><th className="pb-2">Average</th><th className="pb-2">Pass</th></tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {classRows.map(row => (
+                      <tr key={row.className}>
+                        <td className="py-2 font-semibold text-slate-800">{row.className}</td>
+                        <td className="py-2">{row.evaluated}</td>
+                        <td className="py-2">{row.average === null ? '—' : `${row.average}%`}</td>
+                        <td className="py-2">{row.passRate === null ? '—' : `${row.passRate}%`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="mt-3 text-[10px] text-slate-400">Subject-level performance is not available until subject marks are recorded.</p>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-800">Examination completion</h4>
+              <ListChecks className="h-4 w-4 text-amber-600" />
+            </div>
+            {completionTotal === 0 ? (
+              <p className="mt-4 text-[11px] text-slate-500">No data available. No marks submissions have been recorded.</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {completionRows.map(row => {
+                  const rate = Math.round((row.value / completionTotal) * 100);
+                  return (
+                    <div key={row.label} className="grid grid-cols-[1fr_70px_36px] items-center gap-2 text-[10px]">
+                      <span className="text-slate-600">{row.label}</span>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-blue-500" style={{ width: `${rate}%` }} /></div>
+                      <span className="text-right font-bold text-slate-700">{row.value}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-800">Staff task completion</h4>
+              <UserCog className="h-4 w-4 text-indigo-600" />
+            </div>
+            {!performance.staffTaskCompletion ? (
+              <p className="mt-4 text-[11px] text-slate-500">No data available for this account.</p>
+            ) : (
+              <div className="mt-3 space-y-2 text-[11px] text-slate-600">
+                <p>Invitations: <span className="font-bold text-slate-800">{performance.staffTaskCompletion.total}</span></p>
+                <p>Activated: <span className="font-bold text-emerald-700">{performance.staffTaskCompletion.activated}</span></p>
+                <p>Awaiting activation: <span className="font-bold text-amber-700">{performance.staffTaskCompletion.pending}</span></p>
+              </div>
+            )}
+            {finance && (
+              <div className="mt-4 border-t border-slate-100 pt-3 text-[11px] text-slate-600">
+                <p className="font-bold text-slate-800">Finance summary</p>
+                <p className="mt-1">Billed: {new Intl.NumberFormat('en-RW').format(finance.billed)} RWF</p>
+                <p>Collected: {new Intl.NumberFormat('en-RW').format(finance.collected)} RWF</p>
+                <p>Outstanding: {new Intl.NumberFormat('en-RW').format(finance.outstanding)} RWF</p>
+              </div>
             )}
           </div>
         </div>
-      </div>
+      </section>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-900">Upcoming Events</h3>
+            <h3 className="text-sm font-bold text-slate-900">Upcoming events</h3>
             <CalendarCheck className="h-4 w-4 text-blue-600" />
           </div>
-          <div className="mt-3 space-y-2">
-            {events.map(event => (
-              <div key={event.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-                <span className="text-[11px] font-semibold text-slate-800">{event.titleEn}</span>
-                <span className="text-[10px] text-slate-500">
-                  {new Date(event.date).toLocaleDateString()}
-                </span>
-              </div>
-            ))}
-            {events.length === 0 && <p className="text-[11px] text-slate-500">No upcoming events.</p>}
-          </div>
+          {events.length === 0 ? (
+            <p className="mt-3 text-[11px] text-slate-500">No upcoming events are recorded.</p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {events.map(event => (
+                <div key={event.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                  <span className="text-[11px] font-semibold text-slate-800">{event.titleEn}</span>
+                  <span className="text-[10px] text-slate-500">{event.date} {event.time}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-900">Recent Activity & Notifications</h3>
-            <MessageSquare className="h-4 w-4 text-indigo-600" />
+            <h3 className="text-sm font-bold text-slate-900">Approval queue</h3>
+            <ClipboardList className="h-4 w-4 text-amber-600" />
           </div>
-          <div className="mt-3 space-y-2">
-            {activities.slice(0, 3).map(activity => (
-              <div key={activity.id} className="rounded-lg bg-slate-50 px-3 py-2">
-                <p className="text-[11px] font-semibold text-slate-800">
-                  {activity.action.replaceAll('_', ' ')}
-                </p>
-                <p className="text-[10px] text-slate-500">
-                  {activity.userName} · {new Date(activity.timestamp).toLocaleString()}
-                </p>
-              </div>
+          <p className="mt-3 text-[11px] text-slate-500">{approvals.total} item{approvals.total === 1 ? '' : 's'} waiting. Open the Approval Center to review them.</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {Object.entries(approvals.byType).map(([type, count]) => (
+              <span key={type} className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">{type.replaceAll('_', ' ')}: {count}</span>
             ))}
-            {notifications.slice(0, 2).map(message => (
-              <div key={message.id} className="rounded-lg bg-blue-50 px-3 py-2">
-                <p className="text-[11px] font-semibold text-slate-800">{message.titleEn}</p>
-                <p className="text-[10px] text-slate-500">{message.channel} · {message.status}</p>
-              </div>
-            ))}
-            {activities.length === 0 && notifications.length === 0 && (
-              <p className="text-[11px] text-slate-500">No recent activity.</p>
-            )}
+            {approvals.total === 0 && <span className="text-[11px] text-slate-500">No approvals waiting.</span>}
           </div>
         </div>
-      </div>
+      </section>
+
+      <p className="flex items-center gap-1.5 text-[10px] text-slate-400">
+        <Info className="h-3 w-3" />
+        Figures are generated from existing school records at {formatDisplayDate(summary.generatedAt)}. Unavailable information is labelled instead of shown as zero.
+      </p>
     </section>
   );
 };
@@ -402,6 +632,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
   const canViewHealth = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER','NURSE'].includes(role ?? '');
   const canViewFinance = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER','ACCOUNTANT'].includes(role ?? '');
   const isSchoolAdministrator = ['SUPER_ADMIN','SCHOOL_ADMIN','HEAD_TEACHER'].includes(role ?? '');
+  const isHeadteacher = role === 'HEAD_TEACHER';
+  const headteacherName = currentUser?.fullName?.trim() || 'MUNYENTWARI Olivier';
+  const showLegacyHeadteacherTiles = !(isHeadteacher && headteacherSummary);
 
   if (loading) {
     return (
@@ -434,10 +667,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 mt-2">
-            Muraho, {currentUser?.fullName || 'Administrator'}
+            {isHeadteacher ? `Welcome, ${headteacherName}` : `Muraho, ${currentUser?.fullName || 'Administrator'}`}
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Smart School Operations, Health Emergency & Parent Communication System
+            {isHeadteacher
+              ? `Headteacher – ${school?.name || 'ES RUBENGERA RTB'}`
+              : 'Smart School Operations, Health Emergency & Parent Communication System'}
           </p>
         </div>
 
@@ -529,7 +764,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
       </section>
 
       {/* School Super Administrator control center */}
-      {isSchoolAdministrator && (
+      {isSchoolAdministrator && !isHeadteacher && (
         <section className="rounded-2xl border border-blue-200 bg-blue-50/60 p-5 shadow-xs">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -561,10 +796,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
 
       {/* Server-authoritative Headteacher overview */}
       {isSchoolAdministrator && headteacherSummary && (
-        <HeadteacherOverview summary={headteacherSummary} onNavigate={onNavigate} />
+        <HeadteacherOverview
+          summary={headteacherSummary}
+          headteacherName={headteacherName}
+          onNavigate={onNavigate}
+        />
       )}
 
       {/* KPI Stats Cards */}
+      {showLegacyHeadteacherTiles && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Students */}
         {canViewStudents && (
@@ -672,6 +912,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate, onOpen
           </button>
         )}
       </div>
+      )}
 
       {/* Main Grid: Health Emergencies & Attendance Tasks */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

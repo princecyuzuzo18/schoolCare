@@ -264,7 +264,7 @@ export function registerReportPrintingRoutes(app: Express): void {
       publishedAt: now, publishedBy: actor.id, status: 'PUBLISHED',
       issueDate: card.issueDate ?? now.slice(0, 10)
     });
-    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'PUBLISH_REPORT_CARD', 'REPORT_CARD', card.id, `Published report card for ${card.studentName}`);
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'PUBLISH_REPORT_CARD', 'REPORT_CARD', card.id, `Published report card ${card.id}`);
     notifyParentsAndStudents(schoolId, card.studentId, card.studentName,
       'Your report card is available', 'Ikarita yawe y’amanota iraboneka',
       `The ${card.term} ${card.academicYear} report card is now available in your portal.`,
@@ -338,7 +338,7 @@ export function registerReportPrintingRoutes(app: Express): void {
     }
     const updated = updateDistribution(schoolId, req.params.id, actor,
       { status: 'PRINTED', printedAt: current.printedAt ?? new Date().toISOString() }, 'PRINTED');
-    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'MARK_REPORT_PRINTED', 'REPORT_DISTRIBUTION', updated.id, `Printed report for ${updated.studentName}`);
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'MARK_REPORT_PRINTED', 'REPORT_DISTRIBUTION', updated.id, `Marked report ${updated.id} as printed`);
     res.json(updated);
   }));
 
@@ -356,7 +356,7 @@ export function registerReportPrintingRoutes(app: Express): void {
       issuedToRelationship: typeof b.relationship === 'string' ? b.relationship : undefined,
       notes: typeof b.notes === 'string' ? b.notes : current.notes
     }, 'ISSUED');
-    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'ISSUE_REPORT_CARD', 'REPORT_DISTRIBUTION', updated.id, `Issued to ${updated.issuedToName}`);
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'ISSUE_REPORT_CARD', 'REPORT_DISTRIBUTION', updated.id, `Issued report ${updated.id} to a recorded recipient`);
     res.json(updated);
   }));
 
@@ -374,7 +374,7 @@ export function registerReportPrintingRoutes(app: Express): void {
       status: 'COLLECTED', collectedAt: new Date().toISOString(),
       collectedByName: String(b.collectedByName).trim()
     }, 'COLLECTED');
-    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'CONFIRM_REPORT_COLLECTION', 'REPORT_DISTRIBUTION', updated.id, `Collected by ${updated.collectedByName}`);
+    db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'CONFIRM_REPORT_COLLECTION', 'REPORT_DISTRIBUTION', updated.id, `Confirmed collection of report ${updated.id}`);
     res.json(updated);
   }));
 
@@ -385,7 +385,7 @@ export function registerReportPrintingRoutes(app: Express): void {
     if (typeof notes !== 'string') throw new HttpError(400, 'Notes are required.');
     const updated = updateDistribution(schoolId, req.params.id, actor, { notes }, 'NOTES_UPDATED');
     db.logAudit(schoolId, actor.id, actor.fullName, actor.role, 'UPDATE_REPORT_DISTRIBUTION_NOTES',
-      'REPORT_DISTRIBUTION', updated.id, `Notes updated for ${updated.studentName}`);
+      'REPORT_DISTRIBUTION', updated.id, `Notes updated for report ${updated.id}`);
     res.json(updated);
   }));
 }

@@ -84,7 +84,7 @@ export const StudentIdCardModal: React.FC<StudentIdCardModalProps> = ({ student,
             <div className="flex gap-4 mt-4 items-start">
               <div className="shrink-0 relative">
                 <img
-                  src={student.photoUrl}
+                  src={student.photoUrl || undefined}
                   alt={student.firstName}
                   className="w-24 h-28 object-cover rounded-xl border-2 border-white shadow-md bg-slate-200"
                 />

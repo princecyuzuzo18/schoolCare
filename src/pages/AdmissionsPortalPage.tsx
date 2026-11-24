@@ -1608,9 +1608,9 @@ export const AdmissionsPortalPage: React.FC<AdmissionsPortalPageProps> = ({ onBa
             </div>
             <div className="apply-modal-body">
               {slipUpload?.fileMime.startsWith('image/') ? (
-                <img src={previewUrl} alt={copy.slipPreview} className="mx-auto max-h-full max-w-full object-contain" />
+                <img src={previewUrl || undefined} alt={copy.slipPreview} className="mx-auto max-h-full max-w-full object-contain" />
               ) : (
-                <iframe src={previewUrl} title={copy.slipPreview} className="h-full w-full border-0" />
+                <iframe src={previewUrl || undefined} title={copy.slipPreview} className="h-full w-full border-0" />
               )}
             </div>
           </div>

@@ -14,6 +14,7 @@ import { checkMysqlHealth, closeMysqlPool, getExportSqlPath, getMysqlPool } from
 import { getPasswordHash, replacePassword, verifyPassword } from './server/authCredentials';
 import { createSession, destroySession, invalidateUserSessions } from './server/sessions';
 import { buildAuthSessionView } from './server/authSession';
+import { syncUserProfileToMysql, type ProfileSyncStatus } from './server/profileSync';
 import { ASSIGNABLE_STAFF_ROLES, getProfessionalTitle } from './src/roleCatalog';
 import { registerPublicSite } from './server/publicSite';
 import { registerAcademicRoutes } from './server/academics';
@@ -21,6 +22,7 @@ import { registerCombinationRoutes } from './server/combinations';
 import { registerReportPrintingRoutes } from './server/reportPrinting';
 import { registerAiRoutes } from './server/ai/routes';
 import { registerHeadteacherDashboardRoutes } from './server/headteacherDashboard';
+import { buildReportAnalytics, buildReportCsvRows, toCsv } from './server/reportAnalytics';
 import { registerHeadteacherAppointmentRoutes } from './server/headteacherAppointment';
 import { registerStudentImportRoutes } from './server/studentImport';
 import {
@@ -58,6 +60,8 @@ import {
   getStaffProfile,
   getStaffSummary,
   restoreStaffAccount,
+  splitPersonalName,
+  updateSelfProfile,
   updateStaffProfile
 } from './server/staffAdministration';
 import {
@@ -455,6 +459,32 @@ function requireModuleAccess(mode: 'read' | 'write') {
   };
 }
 
+function sanitizeModuleValue(value: unknown, depth = 0): unknown {
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'string') return value.slice(0, depth === 0 ? 200_000 : 20_000);
+  if (depth >= 3) return undefined;
+
+  const nestedReserved = new Set(['schoolId', 'createdAt', 'updatedAt', 'createdBy', 'deleted', 'deletedAt']);
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 100)
+      .map(item => sanitizeModuleValue(item, depth + 1))
+      .filter(item => item !== undefined);
+  }
+  if (typeof value === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      if (nestedReserved.has(key) || !/^[a-zA-Z][a-zA-Z0-9_]{0,49}$/.test(key)) continue;
+      const sanitized = sanitizeModuleValue(item, depth + 1);
+      if (sanitized !== undefined) result[key] = sanitized;
+      if (Object.keys(result).length >= 40) break;
+    }
+    return result;
+  }
+  return undefined;
+}
+
 function sanitizeModulePayload(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
 
@@ -464,11 +494,8 @@ function sanitizeModulePayload(input: unknown): Record<string, unknown> {
   for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
     if (reserved.has(key)) continue;
     if (!/^[a-zA-Z][a-zA-Z0-9_]{0,49}$/.test(key)) continue;
-    if (value === null || typeof value === 'boolean' || typeof value === 'number') {
-      result[key] = value;
-    } else if (typeof value === 'string') {
-      result[key] = value.slice(0, 200_000);
-    }
+    const sanitized = sanitizeModuleValue(value);
+    if (sanitized !== undefined) result[key] = sanitized;
     if (Object.keys(result).length >= 60) break;
   }
 
@@ -819,6 +846,62 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
 
 app.get('/api/auth/me', (req: Request, res: Response) => {
   return res.json(buildAuthSessionView(getActor(req)));
+});
+
+// Self-service profile edit. The account and school come only from the signed-in
+// session; body fields are limited to display profile data.
+app.patch('/api/auth/me/profile', requireRole('HEAD_TEACHER'), async (req: Request, res: Response) => {
+  const actor = getActor(req);
+  const input: { fullName?: string; phone?: string; photoUrl?: string } = {};
+  for (const field of ['fullName', 'phone', 'photoUrl'] as const) {
+    const value = (req.body ?? {})[field];
+    if (value === undefined) continue;
+    if (typeof value !== 'string') {
+      return res.status(400).json({ error: `${field} must be text.` });
+    }
+    input[field] = value;
+  }
+  if (Object.keys(input).length === 0) {
+    return res.status(400).json({ error: 'No editable profile fields were supplied.' });
+  }
+
+  try {
+    const updated = updateSelfProfile(actor.schoolId, actor.id, input, actor.id);
+    if (!updated) {
+      return res.status(404).json({ error: 'Signed-in account was not found.' });
+    }
+
+    const names = input.fullName !== undefined ? splitPersonalName(input.fullName.trim()) : null;
+    const databaseSync: ProfileSyncStatus = await syncUserProfileToMysql({
+      userId: actor.id,
+      email: actor.email,
+      roleId: actor.role,
+      fullName: input.fullName?.trim(),
+      firstName: names?.firstName,
+      lastName: names?.lastName,
+      phone: input.phone?.trim()
+    });
+
+    db.logAudit(
+      actor.schoolId,
+      actor.id,
+      actor.fullName,
+      actor.role,
+      'UPDATE_OWN_PROFILE',
+      'USER',
+      actor.id,
+      `Updated own profile fields: ${Object.keys(input).sort().join(', ')}`,
+      req.ip
+    );
+
+    return res.json({ ...buildAuthSessionView(updated), databaseSync });
+  } catch (error) {
+    if (error instanceof StaffManagementError) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('[Profile] Self-service update failed:', error);
+    return res.status(500).json({ error: 'The profile could not be updated.' });
+  }
 });
 
 app.post('/api/auth/logout', (req: Request, res: Response) => {
@@ -2692,7 +2775,7 @@ app.post(
 );
 
 // --- Guardians & Links ---
-app.get('/api/guardians', (req: Request, res: Response) => {
+app.get('/api/guardians', requirePermission('guardians.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   const guardians = db.getGuardians(schoolId);
   const allowed = portalStudentIds(req.user);
@@ -2704,7 +2787,7 @@ app.get('/api/guardians', (req: Request, res: Response) => {
   return res.json(guardians.filter(guardian => linkedGuardianIds.has(guardian.id)));
 });
 
-app.post('/api/guardians', (req: Request, res: Response) => {
+app.post('/api/guardians', requirePermission('guardians.write'), (req: Request, res: Response) => {
   const actor = getActor(req);
   const body = req.body;
   try {
@@ -2745,7 +2828,7 @@ app.post('/api/guardians', (req: Request, res: Response) => {
   return res.status(201).json(created);
 });
 
-app.get('/api/guardians/student/:studentId', (req: Request, res: Response) => {
+app.get('/api/guardians/student/:studentId', requirePermission('guardians.read'), (req: Request, res: Response) => {
   try {
     assertStudentInSchool(req, req.params.studentId);
     if (req.user) assertPortalStudentAccess(req.user, req.params.studentId);
@@ -2926,7 +3009,7 @@ app.post('/api/attendance/batch', requirePermission('attendance:write'), (req: R
   return res.json({ success: true, savedCount: saved.length });
 });
 
-app.post('/api/attendance/:id/explain', (req: Request, res: Response) => {
+app.post('/api/attendance/:id/explain', requireAnyPermission('attendance.write', 'guardians.read'), (req: Request, res: Response) => {
   const actor = getActor(req);
   const existing = db.getAttendance(actor.schoolId).find(record => record.id === req.params.id);
   if (!existing) return res.status(404).json({ error: 'Record not found' });
@@ -2956,14 +3039,14 @@ app.post('/api/attendance/:id/explain', (req: Request, res: Response) => {
 });
 
 // --- Health & Emergency Incidents ---
-app.get('/api/health-incidents', (req: Request, res: Response) => {
+app.get('/api/health-incidents', requirePermission('health.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   const incidents = db.getHealthIncidents(schoolId);
   const allowed = portalStudentIds(req.user);
   return res.json(allowed ? incidents.filter(incident => allowed.includes(incident.studentId)) : incidents);
 });
 
-app.get('/api/health-incidents/:id', (req: Request, res: Response) => {
+app.get('/api/health-incidents/:id', requirePermission('health.read'), (req: Request, res: Response) => {
   const incident = db.getHealthIncidentById(req.params.id);
   if (!incident) return res.status(404).json({ error: 'Incident not found' });
   try {
@@ -2975,7 +3058,7 @@ app.get('/api/health-incidents/:id', (req: Request, res: Response) => {
   return res.json(incident);
 });
 
-app.post('/api/health-incidents', (req: Request, res: Response) => {
+app.post('/api/health-incidents', requirePermission('health.write'), (req: Request, res: Response) => {
   const actor = getActor(req);
   const body = req.body;
   try {
@@ -3066,14 +3149,14 @@ app.post('/api/health-incidents', (req: Request, res: Response) => {
     'CREATE_HEALTH_INCIDENT',
     'HEALTH_INCIDENT',
     created.id,
-    `Created health incident ${refNum} for ${created.studentName} (Priority: ${created.priority})`,
+    `Created health incident ${refNum} (Priority: ${created.priority}); learner details remain in the health record`,
     req.ip
   );
 
   return res.status(201).json(created);
 });
 
-app.post('/api/health-incidents/:id/action', (req: Request, res: Response) => {
+app.post('/api/health-incidents/:id/action', requirePermission('health.write'), (req: Request, res: Response) => {
   const actor = getActor(req);
   const existing = db.getHealthIncidentById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Incident not found' });
@@ -3089,7 +3172,7 @@ app.post('/api/health-incidents/:id/action', (req: Request, res: Response) => {
   return res.json(updated);
 });
 
-app.post('/api/health-incidents/:id/acknowledge', (req: Request, res: Response) => {
+app.post('/api/health-incidents/:id/acknowledge', requirePermission('health.write'), (req: Request, res: Response) => {
   const actor = getActor(req);
   const existing = db.getHealthIncidentById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Incident not found' });
@@ -3117,7 +3200,7 @@ app.post('/api/health-incidents/:id/acknowledge', (req: Request, res: Response) 
 });
 
 // --- Notifications Hub ---
-app.get('/api/notifications', (req: Request, res: Response) => {
+app.get('/api/notifications', requirePermission('notifications.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   const notifications = db.getNotifications(schoolId);
   const allowedRecipients = portalNotificationRecipientIds(req.user, schoolId);
@@ -3129,7 +3212,7 @@ app.get('/api/notifications', (req: Request, res: Response) => {
   );
 });
 
-app.post('/api/notifications/send', (req: Request, res: Response) => {
+app.post('/api/notifications/send', requirePermission('notifications.write'), (req: Request, res: Response) => {
   const actor = getActor(req);
   const body = req.body;
   const allowedChannels: NotificationChannel[] = ['SMS', 'WHATSAPP', 'EMAIL', 'IN_APP'];
@@ -3205,7 +3288,7 @@ app.post('/api/notifications/send', (req: Request, res: Response) => {
   return res.status(201).json(queued);
 });
 
-app.post('/api/notifications/:id/acknowledge', (req: Request, res: Response) => {
+app.post('/api/notifications/:id/acknowledge', requirePermission('notifications.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   const allowedRecipients = portalNotificationRecipientIds(req.user, schoolId);
   const allowedStudents = portalStudentIds(req.user);
@@ -3227,12 +3310,12 @@ app.post('/api/notifications/:id/acknowledge', (req: Request, res: Response) => 
 });
 
 // --- Finance ---
-app.get('/api/finance/fee-structures', (req: Request, res: Response) => {
+app.get('/api/finance/fee-structures', requirePermission('finance.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   return res.json(db.getFeeStructures(schoolId));
 });
 
-app.get('/api/finance/invoices', (req: Request, res: Response) => {
+app.get('/api/finance/invoices', requirePermission('finance.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   const studentId = req.query.studentId as string | undefined;
   const allowed = portalStudentIds(req.user);
@@ -3243,7 +3326,7 @@ app.get('/api/finance/invoices', (req: Request, res: Response) => {
   return res.json(allowed ? invoices.filter(invoice => allowed.includes(invoice.studentId)) : invoices);
 });
 
-app.get('/api/finance/payments', (req: Request, res: Response) => {
+app.get('/api/finance/payments', requirePermission('finance.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   const studentId = req.query.studentId as string | undefined;
   const allowed = portalStudentIds(req.user);
@@ -3328,7 +3411,7 @@ app.post('/api/finance/payments', (req: Request, res: Response) => {
 });
 
 // --- Academics & Report Cards ---
-app.get('/api/academics/classes', (req: Request, res: Response) => {
+app.get('/api/academics/classes', requirePermission('academics.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   // Attendance and other day-to-day selectors pass active=true so archived
   // classes remain available for historical records but cannot be selected.
@@ -3338,7 +3421,7 @@ app.get('/api/academics/classes', (req: Request, res: Response) => {
   return res.json(db.getClasses(schoolId));
 });
 
-app.get('/api/academics/subjects', (req: Request, res: Response) => {
+app.get('/api/academics/subjects', requirePermission('academics.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   return res.json(db.getSubjects(schoolId));
 });
@@ -3364,166 +3447,69 @@ registerHeadteacherAppointmentRoutes(app);
 registerStudentImportRoutes(app);
 
 // --- Staff, Timetable, Homework, Events, Audit ---
-app.get('/api/staff', (req: Request, res: Response) => {
+app.get('/api/staff', requirePermission('staff.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   return res.json(db.getStaff(schoolId));
 });
 
-app.get('/api/timetable', (req: Request, res: Response) => {
+app.get('/api/timetable', requirePermission('academics.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   const classId = req.query.classId as string | undefined;
   return res.json(db.getTimetable(schoolId, classId));
 });
 
-app.get('/api/homework', (req: Request, res: Response) => {
+app.get('/api/homework', requirePermission('academics.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   const classId = req.query.classId as string | undefined;
   return res.json(db.getHomework(schoolId, classId));
 });
 
 // --- Executive Reports & Analytics Engine ---
-app.get('/api/reports/analytics', (req: Request, res: Response) => {
+// The JSON view and the Excel-compatible CSV export share one builder so the
+// downloaded figures always match what the authorized reader sees on screen.
+app.get('/api/reports/analytics', requirePermission('reports.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
-  const term = (req.query.term as string) || 'Term 1';
-
-  // `reports:read` grants access to the report, not to every underlying
-  // module. Each section is redacted unless the account can read that module.
-  const permissionCodes = new Set(
-    getEffectivePermissions(getActor(req)).map(permission => permission.replace(':', '.'))
+  const term = (req.query.term as string) || undefined;
+  const combination = (req.query.combination as string) || undefined;
+  return res.json(
+    buildReportAnalytics(schoolId, getEffectivePermissions(getActor(req)), term, combination)
   );
-  const canRead = (code: string) => permissionCodes.has(code);
-  const canReadStudents = canRead('students.read');
-  const canReadAcademics = canRead('academics.read');
-  const canReadAttendance = canRead('attendance.read') && canReadStudents;
-  const canReadHealth = canRead('health.read') && canReadStudents;
-  const canReadFinance = canRead('finance.read');
-  const canReadCommunication = canRead('notifications.read');
-  const restrictedSections = [
-    !canReadAcademics && 'academics',
-    !canReadAttendance && 'attendance',
-    !canReadHealth && 'health',
-    !canReadFinance && 'finance',
-    !canReadCommunication && 'communication'
-  ].filter(Boolean) as string[];
+});
 
-  const allStudents = db.getStudents(schoolId);
-  const allReportCards = db.getReportCards(schoolId);
-  const allAttendance = db.getAttendance(schoolId);
-  const allHealth = db.getHealthIncidents(schoolId);
-  const allInvoices = db.getInvoices(schoolId);
-  const allPayments = db.getPayments(schoolId);
-  const allMessages = db.getNotifications(schoolId);
-
-  // Without publish rights, analytics may only use report cards already made
-  // visible to the school community.
-  const visibleReportCards = canRead('reports.publish')
-    ? allReportCards
-    : allReportCards.filter(card => Boolean(card.publishedAt) && card.status !== 'DRAFT');
-  const students = canReadStudents ? allStudents : [];
-  const reportCards = canReadAcademics ? visibleReportCards : [];
-  const attendance = canReadAttendance ? allAttendance : [];
-  const health = canReadHealth ? allHealth : [];
-  const invoices = canReadFinance ? allInvoices : [];
-  const payments = canReadFinance ? allPayments : [];
-  const messages = canReadCommunication ? allMessages : [];
-
-  // 1. Academic Aggregation
-  const evaluatedCount = reportCards.length;
-  const academicDenominator = evaluatedCount || 1;
-  const overallAverage = evaluatedCount > 0 ? Number(
-    (reportCards.reduce((acc, r) => acc + r.overallAverage, 0) / academicDenominator).toFixed(1)
-  ) : 0;
-  const passedStudents = reportCards.filter(r => r.overallAverage >= 50).length;
-  const passRate = evaluatedCount > 0 ? Number(((passedStudents / academicDenominator) * 100).toFixed(1)) : 0;
-
-  const gradeDistribution = {
-    A: reportCards.filter(r => r.overallAverage >= 80).length,
-    B: reportCards.filter(r => r.overallAverage >= 70 && r.overallAverage < 80).length,
-    C: reportCards.filter(r => r.overallAverage >= 60 && r.overallAverage < 70).length,
-    D: reportCards.filter(r => r.overallAverage >= 50 && r.overallAverage < 60).length,
-    F: reportCards.filter(r => r.overallAverage < 50).length
-  };
-
-  // 2. Attendance Aggregation
-  const totalAtt = attendance.length;
-  const attendanceDenominator = totalAtt || 1;
-  const presentCount = attendance.filter(a => a.status === 'PRESENT').length;
-  const absentCount = attendance.filter(a => a.status === 'ABSENT').length;
-  const lateCount = attendance.filter(a => a.status === 'LATE').length;
-  const excusedCount = attendance.filter(a => a.status === 'EXCUSED' || a.status === 'SICK' || a.status === 'AUTHORIZED_LEAVE').length;
-  const attendanceRate = totalAtt > 0 ? Number(((presentCount / attendanceDenominator) * 100).toFixed(1)) : 0;
-
-  // Chronic absenteeism: students with at least 1 unexcused absence
-  const chronicAbsentStudents = students.filter(s =>
-    attendance.some(a => a.studentId === s.id && a.status === 'ABSENT' && !a.parentExplanation)
-  );
-
-  // 3. Health & Infirmary Registry Aggregation
-  const urgentHealthCases = health.filter(h => h.priority === 'URGENT' || h.priority === 'EMERGENCY').length;
-  const hospitalReferrals = health.filter(h => h.outcome === 'REFERRED_TO_HOSPITAL').length;
-  const acknowledgedHealthAlerts = health.filter(h => h.parentAcknowledged).length;
-  const ackRate = health.length > 0 ? Number(((acknowledgedHealthAlerts / health.length) * 100).toFixed(1)) : 0;
-
-  // 4. Financial Reconciliation Aggregation
-  const totalBilledRwf = invoices.reduce((acc, i) => acc + i.totalAmountRwf, 0);
-  const totalCollectedRwf = invoices.reduce((acc, i) => acc + i.paidAmountRwf, 0);
-  const totalOutstandingRwf = invoices.reduce((acc, i) => acc + i.balanceRwf, 0);
-  const collectionEfficiency = totalBilledRwf > 0 ? Number(((totalCollectedRwf / totalBilledRwf) * 100).toFixed(1)) : 0;
-
-  const paymentMethodsBreakdown = {
-    MTN_MOMO: payments.filter(p => p.method === 'MTN_MOMO').reduce((acc, p) => acc + p.amountRwf, 0),
-    BANK_TRANSFER: payments.filter(p => p.method === 'BANK_TRANSFER').reduce((acc, p) => acc + p.amountRwf, 0),
-    AIRTEL_MONEY: payments.filter(p => p.method === 'AIRTEL_MONEY').reduce((acc, p) => acc + p.amountRwf, 0),
-    CASH: payments.filter(p => p.method === 'CASH').reduce((acc, p) => acc + p.amountRwf, 0)
-  };
-
-  // 5. Parent Communication Delivery Audit
-  const totalDispatched = messages.length;
-  const deliveredCount = messages.filter(m => m.status === 'DELIVERED' || m.status === 'ACKNOWLEDGED').length;
-  const deliverySuccessRate = totalDispatched > 0 ? Number(((deliveredCount / totalDispatched) * 100).toFixed(1)) : 0;
-
-  return res.json({
-    generatedAt: new Date().toISOString(),
-    school: db.getSchool(schoolId),
+app.get('/api/reports/analytics/export', requirePermission('reports.read'), (req: Request, res: Response) => {
+  const schoolId = getScopedSchoolId(req);
+  const actor = getActor(req);
+  const section = String(req.query.section || 'ACADEMIC').toUpperCase();
+  const term = (req.query.term as string) || undefined;
+  const combination = (req.query.combination as string) || undefined;
+  const analytics = buildReportAnalytics(
+    schoolId,
+    getEffectivePermissions(actor),
     term,
-    restrictedSections,
-    academics: {
-      totalEvaluated: evaluatedCount,
-      overallAverage,
-      passRate,
-      gradeDistribution,
-      topStudents: reportCards.slice(0, 5)
-    },
-    attendance: {
-      totalRecords: totalAtt,
-      attendanceRate,
-      presentCount,
-      absentCount,
-      lateCount,
-      excusedCount,
-      chronicAbsentCount: chronicAbsentStudents.length,
-      chronicAbsentStudents
-    },
-    health: {
-      totalIncidents: health.length,
-      urgentHealthCases,
-      hospitalReferrals,
-      parentAcknowledgmentRate: ackRate,
-      recentCases: health.slice(0, 5)
-    },
-    finance: {
-      totalBilledRwf,
-      totalCollectedRwf,
-      totalOutstandingRwf,
-      collectionEfficiency,
-      paymentMethodsBreakdown
-    },
-    communication: {
-      totalDispatched,
-      deliveredCount,
-      deliverySuccessRate
-    }
-  });
+    combination
+  );
+  const csv = toCsv(buildReportCsvRows(section, analytics));
+  const safePart = (value: string) =>
+    value.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/\.\./g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'report';
+  const filename = `SchoolCare_${safePart(section)}_${safePart(analytics.term)}_${new Date().toISOString().slice(0, 10)}.csv`;
+
+  db.logAudit(
+    schoolId,
+    actor.id,
+    actor.fullName,
+    actor.role,
+    'EXPORT_EXECUTIVE_REPORT',
+    'REPORT_ANALYTICS',
+    schoolId,
+    `Exported ${section} analytics for ${analytics.term}${
+      analytics.scope.combination ? ` / ${analytics.scope.combination}` : ''
+    }; restricted sections: ${analytics.restrictedSections.join(', ') || 'none'}`,
+    req.ip
+  );
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.send(csv);
 });
 
 // --- Server-backed module records ---
@@ -3600,12 +3586,12 @@ app.delete('/api/modules/:moduleKey/:id', requireModuleAccess('write'), (req: Re
 });
 
 // --- Events CRUD ---
-app.get('/api/events', (req: Request, res: Response) => {
+app.get('/api/events', requirePermission('notifications.read'), (req: Request, res: Response) => {
   const schoolId = getScopedSchoolId(req);
   return res.json(db.getEvents(schoolId));
 });
 
-app.post('/api/events', (req: Request, res: Response) => {
+app.post('/api/events', requirePermission('notifications.write'), (req: Request, res: Response) => {
   const actor = getActor(req);
   const body = req.body;
   const newEvent = {

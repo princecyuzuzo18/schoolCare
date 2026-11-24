@@ -100,6 +100,13 @@ export const ROLE_DEFINITIONS: Record<UserRole, RoleDefinition> = {
   }
 };
 
+/**
+ * Current school leader used only for static document sign-offs where a
+ * report-card snapshot is unavailable. Live displays read the account's
+ * fullName from the database instead.
+ */
+export const HEADTEACHER_DISPLAY_NAME = 'MUNYENTWARI Olivier';
+
 /** Professional display names used in staff management and audit records. */
 export const PROFESSIONAL_TITLES: Record<UserRole, string> = {
   SUPER_ADMIN: 'Platform Administrator',

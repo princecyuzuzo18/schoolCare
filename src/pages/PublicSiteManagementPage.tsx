@@ -565,7 +565,7 @@ export const PublicSiteManagementPage: React.FC = () => {
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
               {images.map(image => (
                 <article key={image.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                  <img src={image.src} alt={image.alt} className="h-36 w-full bg-slate-100 object-cover" loading="lazy" />
+                  <img src={image.src || undefined} alt={image.alt} className="h-36 w-full bg-slate-100 object-cover" loading="lazy" />
                   <div className="space-y-2 p-4">
                     <p className="text-sm font-semibold text-slate-900">{image.caption}</p>
                     <p className="text-xs text-slate-500">{image.category}</p>

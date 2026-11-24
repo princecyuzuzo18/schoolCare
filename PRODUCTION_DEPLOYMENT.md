@@ -222,7 +222,7 @@ sudo systemctl enable --now schoolcare
 sudo journalctl -u schoolcare -f
 ```
 
-Bind the Node process to loopback via the proxy; do not expose port 3010 in the firewall.
+The Node process currently binds to `0.0.0.0:3010`, not loopback. Do not expose port 3010 publicly: restrict it at the firewall or security group so only the reverse proxy can reach it, and terminate HTTPS at Nginx. If loopback-only binding is required, add a `HOST` setting to the server and bind it to `127.0.0.1`.
 
 ---
 
@@ -293,7 +293,7 @@ DNS (only after approval): A record `esrubengera.com` and `www` → server IPv4;
 curl -fsS https://esrubengera.com/api/health          # {"status":"ok",...}
 curl -fsS https://esrubengera.com/                    # public site
 curl -s -o /dev/null -w '%{http_code}\n' https://esrubengera.com/api/students   # expect 401
-npm run lint && npm run build && npm test             # run on the server or staging
+npm run lint && npm run build && npm run db:check && npm run test:api && npm run test:headteacher && npm run test:navigation
 ```
 
 Manual checks:
@@ -316,7 +316,7 @@ Manual checks:
 
 ## 11. Verification evidence from this audit
 
-All commands were run locally against the existing working tree; no deployment, DNS change, purchase, commit, revert or destructive database operation was performed.
+All commands were run locally against the existing working tree; no deployment, DNS change, purchase, commit, revert or destructive database operation was performed. These figures are historical audit evidence. Current verified results are in [`docs/SCHOOLCARE_TEST_REPORT.md`](./docs/SCHOOLCARE_TEST_REPORT.md); the aggregate `npm test` command is no longer recommended on live data because it includes mutating suites.
 
 | Check | Result |
 |---|---|

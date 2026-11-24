@@ -420,7 +420,7 @@ export const StudentsPage: React.FC = () => {
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-3">
                       <img
-                        src={s.photoUrl}
+                        src={s.photoUrl || undefined}
                         alt={s.firstName}
                         className="w-9 h-9 rounded-full object-cover border border-slate-200"
                       />

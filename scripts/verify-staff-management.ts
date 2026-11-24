@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { UserRole } from '../src/types';
@@ -136,6 +136,29 @@ try {
   } catch (error) {
     check('Malformed activation token is rejected', error instanceof StaffManagementError);
   }
+
+  const staffPageSource = readFileSync(path.resolve('src/pages/StaffManagementPage.tsx'), 'utf-8');
+  const panelRenderings = staffPageSource.split('<ActivationLinkPanel').length - 1;
+  check(
+    'Activation link panel is shown after create and after resend',
+    panelRenderings >= 2,
+    `${panelRenderings} renderings`
+  );
+  check(
+    'Invitation list reveals expiry and expired state',
+    staffPageSource.includes('formatDate(invitation.expiresAt)') && staffPageSource.includes("t('invitationExpired')")
+  );
+
+  const enSource = readFileSync(path.resolve('src/i18n/en.ts'), 'utf-8');
+  const rwSource = readFileSync(path.resolve('src/i18n/rw.ts'), 'utf-8');
+  check(
+    'Invitation handoff guidance is translated',
+    enSource.includes('activationCopyOnce:') && enSource.includes('activationResendInvalidates:') &&
+      rwSource.includes('activationCopyOnce:') && rwSource.includes('activationResendInvalidates:')
+  );
+
+  const guideSource = readFileSync(path.resolve('docs/HEADTEACHER_USER_GUIDE.md'), 'utf-8');
+  check('Headteacher guide documents secure link handover', guideSource.includes('Secure handover of an activation link'));
 
   const failed = checks.filter(item => !item.passed);
   for (const item of checks) {

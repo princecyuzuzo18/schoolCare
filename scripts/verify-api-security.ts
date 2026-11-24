@@ -440,6 +440,50 @@ try {
     JSON.stringify({ topIds: adminTopIds, health: adminAnalytics.body?.health?.totalIncidents })
   );
 
+  const nurseCookie = sessionCookie('user-nurse');
+  const accountantCookie = sessionCookie('user-accountant');
+  const parentCookie = sessionCookie('user-parent');
+
+  const routeGateCases: Array<{ label: string; apiPath: string; cookie: string }> = [
+    { label: 'Teacher cannot read the guardian directory', apiPath: '/api/guardians', cookie: teacherCookie },
+    { label: 'Teacher cannot read health incidents', apiPath: '/api/health-incidents', cookie: teacherCookie },
+    { label: 'Teacher cannot read finance invoices', apiPath: '/api/finance/invoices', cookie: teacherCookie },
+    { label: 'Teacher cannot read the staff directory', apiPath: '/api/staff', cookie: teacherCookie },
+    { label: 'Nurse cannot read academic classes', apiPath: '/api/academics/classes', cookie: nurseCookie },
+    { label: 'Accountant cannot read academic subjects', apiPath: '/api/academics/subjects', cookie: accountantCookie },
+    { label: 'Accountant cannot read the timetable', apiPath: '/api/timetable', cookie: accountantCookie },
+    { label: 'Nurse cannot read homework', apiPath: '/api/homework', cookie: nurseCookie }
+  ];
+  for (const testCase of routeGateCases) {
+    const gatedResult = await request(testCase.apiPath, { headers: { Cookie: testCase.cookie } });
+    check(testCase.label, gatedResult.status === 403, `status ${gatedResult.status}`);
+  }
+
+  const writeGateCases: Array<{ label: string; apiPath: string; cookie: string }> = [
+    { label: 'Teacher cannot create health incidents', apiPath: '/api/health-incidents', cookie: teacherCookie },
+    { label: 'Teacher cannot publish school events', apiPath: '/api/events', cookie: teacherCookie }
+  ];
+  for (const testCase of writeGateCases) {
+    const gatedResult = await request(testCase.apiPath, {
+      method: 'POST',
+      headers: { Cookie: testCase.cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ titleEn: 'Unauthorised write', titleRw: 'Ntibyemewe' })
+    });
+    check(testCase.label, gatedResult.status === 403, `status ${gatedResult.status}`);
+  }
+
+  const allowedGateCases: Array<{ label: string; apiPath: string; cookie: string }> = [
+    { label: 'Parent can still read linked guardian records', apiPath: '/api/guardians', cookie: parentCookie },
+    { label: 'Parent can still read linked invoices', apiPath: '/api/finance/invoices', cookie: parentCookie },
+    { label: 'Nurse can still read health incidents', apiPath: '/api/health-incidents', cookie: nurseCookie },
+    { label: 'Teacher can still read academic classes', apiPath: '/api/academics/classes', cookie: teacherCookie },
+    { label: 'Headteacher can still read events', apiPath: '/api/events', cookie: headCookie }
+  ];
+  for (const testCase of allowedGateCases) {
+    const allowedResult = await request(testCase.apiPath, { headers: { Cookie: testCase.cookie } });
+    check(testCase.label, allowedResult.status === 200, `status ${allowedResult.status}`);
+  }
+
   const activity = await request('/api/staff/activity', { headers: { Cookie: headCookie } });
   check(
     'Headteacher can review staff activity',

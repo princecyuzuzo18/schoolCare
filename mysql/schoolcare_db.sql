@@ -74,6 +74,8 @@ CREATE TABLE `user_profiles` (
   `role_id` VARCHAR(50) NOT NULL,
   `full_name` VARCHAR(255) NOT NULL,
   `email` VARCHAR(255) NOT NULL UNIQUE,
+  `first_name` VARCHAR(150) DEFAULT NULL,
+  `last_name` VARCHAR(150) DEFAULT NULL,
   `phone` VARCHAR(50) NOT NULL,
   `avatar_url` TEXT,
   `preferred_language` VARCHAR(5) DEFAULT 'rw',
@@ -86,7 +88,7 @@ CREATE TABLE `user_profiles` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO `user_profiles` (`id`, `school_id`, `role_id`, `full_name`, `email`, `phone`, `preferred_language`) VALUES
-('user-super-admin', 'school-es-rubengera-01', 'SUPER_ADMIN', 'Dr. Emmanuel Habimana', 'esrubengera@gmail.com', '+250 788 111 000', 'en'),
+('user-super-admin', 'school-es-rubengera-01', 'SUPER_ADMIN', 'MUNYENTWARI Olivier', 'esrubengera@gmail.com', '+250 788 111 000', 'en'),
 ('user-school-admin', 'school-es-rubengera-01', 'SCHOOL_ADMIN', 'Innocent Niyitegeka', 'admin@esrubengera.rw', '+250 788 222 101', 'rw'),
 ('user-head-teacher', 'school-es-rubengera-01', 'HEAD_TEACHER', 'Jean Bosco Mugiraneza', 'headteacher@esrubengera.rw', '+250 788 333 202', 'rw'),
 ('user-deputy-head', 'school-es-rubengera-01', 'DEPUTY_HEAD', 'Claire Mukamana', 'deputy@esrubengera.rw', '+250 788 444 303', 'en'),
@@ -95,6 +97,11 @@ INSERT INTO `user_profiles` (`id`, `school_id`, `role_id`, `full_name`, `email`,
 ('user-accountant', 'school-es-rubengera-01', 'ACCOUNTANT', 'Eric Bizimana', 'accountant@esrubengera.rw', '+250 788 777 606', 'en'),
 ('user-parent', 'school-es-rubengera-01', 'PARENT', 'Chantal Mukantabana', 'parent@schoolcare.rw', '+250 788 888 707', 'rw'),
 ('user-student', 'school-es-rubengera-01', 'STUDENT', 'Kevin Ishimwe', 'student@esrubengera.rw', '+250 788 999 808', 'en');
+
+-- Personal name of the current Headteacher (guarded by account ID and email).
+UPDATE `user_profiles`
+SET `first_name` = 'MUNYENTWARI', `last_name` = 'Olivier'
+WHERE `id` = 'user-super-admin' AND LOWER(`email`) = LOWER('esrubengera@gmail.com');
 
 -- --------------------------------------------------------
 -- Table: user_auth_credentials

@@ -5,6 +5,23 @@ import { classifyProviderError } from '../server/ai/provider';
 
 dotenv.config();
 
+/** Build a credential-free error message from an upstream HTTP response. */
+async function responseError(response: Response): Promise<Error> {
+  const status = `HTTP ${response.status}`;
+  const text = await response.text();
+  try {
+    const payload = JSON.parse(text) as {
+      error?: { message?: string; reason?: string; status?: string };
+    };
+    const detail = [payload.error?.message, payload.error?.reason, payload.error?.status]
+      .filter(Boolean)
+      .join(' ');
+    return new Error(detail ? `${status} ${detail}` : status);
+  } catch {
+    return new Error(status);
+  }
+}
+
 const key = (process.env.GEMINI_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
 const model = aiConfig.model;
 
@@ -27,7 +44,7 @@ if (!aiConfig.enabledFlag || !aiConfig.providerSupported) {
       { signal: AbortSignal.timeout(20_000) }
     );
     if (!listResponse.ok) {
-      const classified = classifyProviderError(new Error(`HTTP ${listResponse.status}`));
+      const classified = classifyProviderError(await responseError(listResponse));
       console.log(`Model list check: FAILED (${classified.code})`);
       console.log(`RESULT: NOT WORKING - ${classified.message}`);
       process.exitCode = 1;

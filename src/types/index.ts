@@ -39,6 +39,10 @@ export interface UserProfile {
   id: string;
   schoolId: string;
   email: string;
+  /** Given name. Kept alongside fullName for official staff records. */
+  firstName?: string;
+  /** Family name. Kept alongside fullName for official staff records. */
+  lastName?: string;
   fullName: string;
   role: UserRole;
   phone: string;
@@ -416,6 +420,8 @@ export interface StaffMember {
   id: string;
   schoolId: string;
   staffId: string; // e.g. "STF-014"
+  firstName?: string;
+  lastName?: string;
   fullName: string;
   gender: 'M' | 'F';
   role: UserRole;
@@ -1426,18 +1432,43 @@ export interface HeadteacherApprovalItem {
   permission: string;
 }
 
+/** A plain-language action item shown in "Needs Your Attention". */
+export interface HeadteacherAttentionItem {
+  id: string;
+  category: string;
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  title: string;
+  whatHappened: string;
+  whyItMatters: string;
+  actionNeeded: string;
+  responsible: string;
+  dueAt: string | null;
+  status: string;
+  tab: string;
+  permission: string;
+}
+
 /** Server-authoritative summary used by the Headteacher dashboard. */
 export interface HeadteacherDashboardView {
   generatedAt: string;
   schoolId: string;
   schoolName: string;
   currentTerm: string | null;
+  academicPeriod: {
+    academicYear: string | null;
+    term: string | null;
+    source: string;
+  };
   totals: {
     students: number;
     staff: number;
+    teachers: number;
     parents: number;
     activeClasses: number;
     archivedStudents: number;
+    pendingAdmissions: number;
+    publishedResults: number;
+    pendingAcademicApprovals: number;
   };
   attendance: {
     date: string;
@@ -1453,10 +1484,31 @@ export interface HeadteacherDashboardView {
     passRate: number | null;
     gradeDistribution: Record<string, number>;
   };
+  performance: {
+    attendanceTrend: Array<{ date: string; present: number; total: number; rate: number | null }>;
+    classPerformance: Array<{
+      className: string;
+      evaluated: number;
+      average: number | null;
+      passRate: number | null;
+    }>;
+    examinationCompletion: {
+      total: number;
+      draft: number;
+      submitted: number;
+      approved: number;
+      returned: number;
+    };
+    staffTaskCompletion: { total: number; activated: number; pending: number } | null;
+  };
   approvals: {
     total: number;
     byType: Record<string, number>;
     items: HeadteacherApprovalItem[];
+  };
+  attention: {
+    total: number;
+    items: HeadteacherAttentionItem[];
   };
   activities: AuditLogEntry[];
   notifications: NotificationMessage[];

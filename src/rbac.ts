@@ -6,13 +6,13 @@ export const ROLE_DASHBOARD_MAP = ROLE_DASHBOARD_TABS;
 export { getRoleDashboardTab };
 
 const ALL_ADMIN_TABS = [
-  'dashboard','approval-center','parent-portal','student-portal','health','attendance','communication','students','guardians','academics','academic-admin','combination-management','report-printing','finance','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'
+  'dashboard','alert-center','approval-center','parent-portal','student-portal','health','attendance','communication','students','guardians','academics','academic-admin','combination-management','report-printing','finance','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'
 ];
 
 export const ROLE_ALLOWED_TABS: Record<UserRole, string[]> = {
   SUPER_ADMIN: ALL_ADMIN_TABS,
   SCHOOL_ADMIN: ALL_ADMIN_TABS,
-  HEAD_TEACHER: ['dashboard','approval-center','health','attendance','communication','students','guardians','academics','academic-admin','combination-management','report-printing','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'],
+  HEAD_TEACHER: ['dashboard','alert-center','approval-center','health','attendance','communication','students','guardians','academics','academic-admin','combination-management','report-printing','staff','staff-management','permissions','signup-requests','public-site','timetable','events','reports','audit','settings','admissions','documents','exams','marking-guides','teaching','sms-email','collaboration','meetings','inventory','ai-assistant','discipline','partner-schools','innovations'],
   DEPUTY_HEAD: ['dashboard','attendance','communication','students','academics','timetable','events','reports','report-printing','exams','teaching','admissions','ai-assistant'],
   TEACHER: ['dashboard','attendance','students','academics','timetable','events','reports','exams','marking-guides','teaching','ai-assistant'],
   NURSE: ['dashboard','health','events','reports','ai-assistant'],
@@ -30,6 +30,7 @@ export const ROLE_ALLOWED_TABS: Record<UserRole, string[]> = {
  */
 export const TAB_PERMISSION_REQUIREMENTS: Record<string, string> = {
   dashboard: 'dashboard.view',
+  'alert-center': 'dashboard.view',
   'approval-center': 'dashboard.view',
   health: 'health.read',
   attendance: 'attendance.read',

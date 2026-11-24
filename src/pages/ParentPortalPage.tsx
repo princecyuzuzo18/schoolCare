@@ -205,7 +205,7 @@ export const ParentPortalPage: React.FC = () => {
               }`}
             >
               <img
-                src={ch.photoUrl}
+                src={ch.photoUrl || undefined}
                 alt={ch.firstName}
                 className="w-5 h-5 rounded-full object-cover"
               />
@@ -266,7 +266,7 @@ export const ParentPortalPage: React.FC = () => {
         <div className="lg:col-span-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center gap-4">
             <img
-              src={selectedChild.photoUrl}
+              src={selectedChild.photoUrl || undefined}
               alt={selectedChild.firstName}
               className="w-18 h-22 object-cover rounded-xl border-2 border-blue-600 shadow-md"
             />

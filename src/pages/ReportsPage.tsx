@@ -36,11 +36,13 @@ export const ReportsPage: React.FC = () => {
   const [activeCombinations, setActiveCombinations] = useState<CombinationView[]>([]);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
 
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
-      const res = await api.getReportsAnalytics(selectedTerm);
+      const res = await api.getReportsAnalytics(selectedTerm, selectedClass);
       setData(res);
     } catch (err) {
       console.error('Failed to fetch analytics:', err);
@@ -50,8 +52,8 @@ export const ReportsPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchAnalytics();
-  }, [selectedTerm]);
+    void fetchAnalytics();
+  }, [selectedTerm, selectedClass]);
 
   useEffect(() => {
     api.getActiveCombinations()
@@ -63,69 +65,26 @@ export const ReportsPage: React.FC = () => {
     window.print();
   };
 
-  const handleExportCsv = () => {
-    if (!data) return;
-    let rows: string[][] = [];
-    let filename = `SchoolCare_Report_${reportType}_${selectedTerm}.csv`;
-
-    if (reportType === 'ACADEMIC') {
-      rows = [
-        ['Student Name', 'Admission No', 'Class', 'Combination', 'Term', 'Overall Avg (%)', 'Rank in Class'],
-        ...(data.academics.topStudents || []).map((s: any) => [
-          s.studentName,
-          s.admissionNumber,
-          s.className,
-          s.combination,
-          s.term,
-          `${s.overallAverage}%`,
-          `#${s.overallRank} of ${s.totalStudentsInClass}`
-        ])
-      ];
-    } else if (reportType === 'ATTENDANCE') {
-      rows = [
-        ['Attendance Metric', 'Value', 'Percentage'],
-        ['Total Evaluated Sessions', String(data.attendance.totalRecords), '100%'],
-        ['Present', String(data.attendance.presentCount), `${data.attendance.attendanceRate}%`],
-        ['Absent', String(data.attendance.absentCount), `${(data.attendance.absentCount / (data.attendance.totalRecords || 1) * 100).toFixed(1)}%`],
-        ['Late', String(data.attendance.lateCount), `${(data.attendance.lateCount / (data.attendance.totalRecords || 1) * 100).toFixed(1)}%`],
-        ['Excused / Sick', String(data.attendance.excusedCount), `${(data.attendance.excusedCount / (data.attendance.totalRecords || 1) * 100).toFixed(1)}%`]
-      ];
-    } else if (reportType === 'FINANCE') {
-      rows = [
-        ['Category', 'Amount (RWF)'],
-        ['Total Billed', String(data.finance.totalBilledRwf)],
-        ['Total Collected', String(data.finance.totalCollectedRwf)],
-        ['Total Outstanding Balance', String(data.finance.totalOutstandingRwf)],
-        ['MTN Mobile Money (*182#)', String(data.finance.paymentMethodsBreakdown.MTN_MOMO)],
-        ['Bank of Kigali / BPR Transfer', String(data.finance.paymentMethodsBreakdown.BANK_TRANSFER)],
-        ['Airtel Money Rwanda', String(data.finance.paymentMethodsBreakdown.AIRTEL_MONEY)],
-        ['Cash at Desk', String(data.finance.paymentMethodsBreakdown.CASH)]
-      ];
-    } else if (reportType === 'HEALTH') {
-      rows = [
-        ['Health Registry Metric', 'Count'],
-        ['Total Incidents', String(data.health.totalIncidents)],
-        ['Urgent / Emergency Cases', String(data.health.urgentHealthCases)],
-        ['Hospital / Health Center Referrals', String(data.health.hospitalReferrals)],
-        ['Parent Acknowledgment Rate', `${data.health.parentAcknowledgmentRate}%`]
-      ];
-    } else {
-      rows = [
-        ['Communication Audit', 'Value'],
-        ['Total Dispatched', String(data.communication.totalDispatched)],
-        ['Delivered / Acknowledged', String(data.communication.deliveredCount)],
-        ['Recorded Delivery Rate', `${data.communication.deliverySuccessRate}%`]
-      ];
+  const handleExportCsv = async () => {
+    try {
+      setExporting(true);
+      setExportError('');
+      const { csv, filename } = await api.exportReportsAnalytics(reportType, selectedTerm, selectedClass);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to export report:', err);
+      setExportError(t('reportExportFailed'));
+    } finally {
+      setExporting(false);
     }
-
-    const csvContent = 'data:text/csv;charset=utf-8,' + rows.map(e => e.join(',')).join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   if (loading || !data) {
@@ -147,7 +106,7 @@ export const ReportsPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800 flex items-center gap-1">
               <BarChart3 className="w-3.5 h-3.5" />
-              <span>Executive Reporting Engine</span>
+              <span>{t('reportInternalDraft')}</span>
             </span>
             <span className="text-xs text-slate-500">{school?.name || 'ES RUBENGERA RTB'}</span>
           </div>
@@ -157,11 +116,12 @@ export const ReportsPage: React.FC = () => {
 
         <div className="flex items-center gap-2">
           <button
-            onClick={handleExportCsv}
-            className="px-3.5 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-xs flex items-center gap-1.5 transition"
+            onClick={() => void handleExportCsv()}
+            disabled={exporting}
+            className="px-3.5 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-xs flex items-center gap-1.5 transition disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <Download className="w-4 h-4" />
-            <span>{t('exportCsv')}</span>
+            <span>{exporting ? t('loading') : t('exportExcelReady')}</span>
           </button>
           <button
             onClick={handlePrint}
@@ -182,6 +142,21 @@ export const ReportsPage: React.FC = () => {
           </span>
         </div>
       )}
+
+      {exportError && (
+        <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{exportError}</span>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-[11px] text-slate-600">
+        <p className="font-semibold text-slate-800">{t('reportScopeNote')}</p>
+        <p className="mt-1">
+          {t('reportScope')}: {selectedTerm} · {selectedClass === 'ALL' ? t('allCombinations') : selectedClass}
+        </p>
+        <p className="mt-1">{t('reportValidationStatus')}</p>
+      </div>
 
       {/* Scope Selectors & Report Type Tabs */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
@@ -263,21 +238,22 @@ export const ReportsPage: React.FC = () => {
                 {school?.name || 'ES RUBENGERA RTB'}
               </h2>
               <p className="text-xs text-slate-600 font-medium">
-                P.O. Box 42 Karongi, Western Province, Rwanda • {school?.phone} • {school?.email}
+                {[school?.sector, school?.district, school?.province, school?.country].filter(Boolean).join(', ') || 'School address not recorded'}
+                {' • '}{school?.phone || 'Phone not recorded'} • {school?.email || 'Email not recorded'}
               </p>
             </div>
           </div>
 
           <div className="pt-2">
             <p className="text-xs font-black uppercase tracking-wider text-blue-900 bg-blue-50 py-1 px-3 rounded-md inline-block">
-              {reportType === 'ACADEMIC' && 'Official Academic Performance & Marks Audit Report'}
-              {reportType === 'ATTENDANCE' && 'Official Attendance, Absence & Tardiness Report'}
-              {reportType === 'HEALTH' && 'Official School Infirmary & Health Incident Registry'}
-              {reportType === 'FINANCE' && 'Official School Fees Collection & Financial Reconciliation Report'}
-              {reportType === 'COMMUNICATION' && 'Official Parent Notification Delivery Integrity Audit'}
+              {reportType === 'ACADEMIC' && 'Academic Performance & Report Card Summary'}
+              {reportType === 'ATTENDANCE' && 'Attendance, Absence & Tardiness Summary'}
+              {reportType === 'HEALTH' && 'School Infirmary & Health Incident Registry'}
+              {reportType === 'FINANCE' && 'School Fees & Recorded Payment Channels'}
+              {reportType === 'COMMUNICATION' && 'Parent Notification Records & Delivery Status'}
             </p>
             <p className="text-[11px] text-slate-500 mt-1">
-              Academic Year: 2025 - 2026 • Scope: {selectedTerm} • Generated: {new Date(data.generatedAt).toLocaleString()}
+              Academic Year: {school?.currentAcademicYear || 'Not recorded'} • Scope: {selectedTerm} • Generated: {new Date(data.generatedAt).toLocaleString()}
             </p>
           </div>
         </div>
@@ -292,33 +268,33 @@ export const ReportsPage: React.FC = () => {
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-[10px] font-bold uppercase text-slate-500">Students Evaluated</span>
                 <p className="text-2xl font-black text-slate-900 mt-1">{data.academics.totalEvaluated}</p>
-                <p className="text-[11px] text-slate-500">Active TVET combinations</p>
+                <p className="text-[11px] text-slate-500">Report cards in selected scope</p>
               </div>
 
               <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
                 <span className="text-[10px] font-bold uppercase text-blue-700">School Average</span>
                 <p className="text-2xl font-black text-blue-900 mt-1">{data.academics.overallAverage}%</p>
-                <p className="text-[11px] text-blue-700">Based on CAT & Term Exams</p>
+                <p className="text-[11px] text-blue-700">Based on stored overall averages</p>
               </div>
 
               <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
                 <span className="text-[10px] font-bold uppercase text-emerald-700">Pass Rate (&ge; 50%)</span>
                 <p className="text-2xl font-black text-emerald-800 mt-1">{data.academics.passRate}%</p>
-                <p className="text-[11px] text-emerald-700">REB Benchmark Compliant</p>
+                <p className="text-[11px] text-emerald-700">Calculated from report cards in scope</p>
               </div>
 
               <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
-                <span className="text-[10px] font-bold uppercase text-purple-700">First-Class Honors (A)</span>
+                <span className="text-[10px] font-bold uppercase text-purple-700">Grade A Records</span>
                 <p className="text-2xl font-black text-purple-900 mt-1">{data.academics.gradeDistribution.A}</p>
-                <p className="text-[11px] text-purple-700">Scores &ge; 80%</p>
+                <p className="text-[11px] text-purple-700">Stored average &ge; 80%</p>
               </div>
             </div>
 
             {/* Grade Distribution Bar */}
             <div className="p-5 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-bold text-slate-800">Grade Level Distribution (REB/RTB Grading Scale):</span>
-                <span className="text-slate-500 font-semibold">{data.academics.totalEvaluated} Total Students Evaluated</span>
+                <span className="font-bold text-slate-800">Grade Band Distribution:</span>
+                <span className="text-slate-500 font-semibold">{data.academics.totalEvaluated} Report Cards In Scope</span>
               </div>
 
               <div className="grid grid-cols-5 gap-2 text-center text-xs">
@@ -353,7 +329,7 @@ export const ReportsPage: React.FC = () => {
             {/* Top Performers Table */}
             <div>
               <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">
-                Top Academic Performers (Honor Roll):
+                Report Cards With Highest Stored Averages:
               </h3>
               <div className="overflow-x-auto border border-slate-300 rounded-xl">
                 <table className="w-full text-left text-xs">
@@ -366,6 +342,7 @@ export const ReportsPage: React.FC = () => {
                       <th className="py-2.5 px-3 text-center">Term Avg</th>
                       <th className="py-2.5 px-3">Conduct / Discipline</th>
                       <th className="py-2.5 px-3">Head Teacher Remarks</th>
+                      <th className="py-2.5 px-3">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
@@ -378,8 +355,18 @@ export const ReportsPage: React.FC = () => {
                         <td className="py-2.5 px-3 font-black text-center text-emerald-700">{s.overallAverage}%</td>
                         <td className="py-2.5 px-3 font-semibold text-slate-700">{s.conductScore}</td>
                         <td className="py-2.5 px-3 text-slate-600 text-[11px] max-w-xs">{s.headTeacherRemarks}</td>
+                        <td className="py-2.5 px-3 font-semibold text-slate-700">
+                          {s.status || (s.isApproved ? 'APPROVED' : 'DRAFT')}
+                        </td>
                       </tr>
                     ))}
+                    {data.academics.topStudents.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-6 px-3 text-center text-xs text-slate-500">
+                          {t('reportNoMatchingCards')}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -394,7 +381,7 @@ export const ReportsPage: React.FC = () => {
               <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
                 <span className="text-[10px] font-bold uppercase text-emerald-800">Attendance Rate</span>
                 <p className="text-3xl font-black text-emerald-950 mt-1">{data.attendance.attendanceRate}%</p>
-                <p className="text-[11px] text-emerald-700">Above national 95% target</p>
+                <p className="text-[11px] text-emerald-700">From recorded attendance sessions</p>
               </div>
 
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
@@ -406,13 +393,13 @@ export const ReportsPage: React.FC = () => {
               <div className="p-4 bg-red-50 rounded-xl border border-red-200">
                 <span className="text-[10px] font-bold uppercase text-red-700">Unexcused Absences</span>
                 <p className="text-3xl font-black text-red-900 mt-1">{data.attendance.absentCount}</p>
-                <p className="text-[11px] text-red-700">SMS notification triggered</p>
+                <p className="text-[11px] text-red-700">Unexcused absence records</p>
               </div>
 
               <div className="p-4 bg-amber-50 rounded-xl border border-amber-200">
                 <span className="text-[10px] font-bold uppercase text-amber-800">Late Arrivals</span>
                 <p className="text-3xl font-black text-amber-900 mt-1">{data.attendance.lateCount}</p>
-                <p className="text-[11px] text-amber-700">Heavy rain morning commute</p>
+                <p className="text-[11px] text-amber-700">Recorded late arrivals</p>
               </div>
             </div>
 
@@ -420,10 +407,10 @@ export const ReportsPage: React.FC = () => {
             <div className="p-5 bg-amber-50 rounded-xl border border-amber-300 space-y-2">
               <div className="flex items-center gap-2 font-bold text-amber-900 text-sm">
                 <AlertTriangle className="w-4 h-4 text-amber-700" />
-                <span>Chronic Absenteeism Early Warning Registry:</span>
+                <span>Absence Follow-up List:</span>
               </div>
               <p className="text-xs text-amber-800">
-                Students below 90% attendance or with unexplained absences flagged for Dean of Discipline follow-up:
+                Learners with recorded unexcused absences. Confirm the current follow-up status in the attendance module.
               </p>
               <div className="overflow-x-auto bg-white rounded-lg border border-amber-200 mt-2">
                 <table className="w-full text-left text-xs">
@@ -441,9 +428,16 @@ export const ReportsPage: React.FC = () => {
                         <td className="py-2 px-3 font-bold text-slate-800">{s.firstName} {s.lastName}</td>
                         <td className="py-2 px-3 font-semibold text-slate-700">{s.className}</td>
                         <td className="py-2 px-3 font-mono text-slate-600">{s.admissionNumber}</td>
-                        <td className="py-2 px-3 text-red-700 font-bold">Unexcused - Parent Contacted</td>
+                        <td className="py-2 px-3 text-red-700 font-bold">Needs follow-up</td>
                       </tr>
                     ))}
+                    {data.attendance.chronicAbsentStudents.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="py-5 px-3 text-center text-xs text-slate-500">
+                          {t('reportNoFollowUps')}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -464,19 +458,19 @@ export const ReportsPage: React.FC = () => {
               <div className="p-4 bg-red-50 rounded-xl border border-red-200">
                 <span className="text-[10px] font-bold uppercase text-red-700">Urgent Cases</span>
                 <p className="text-3xl font-black text-red-900 mt-1">{data.health.urgentHealthCases}</p>
-                <p className="text-[11px] text-red-700">Immediate guardian alerts</p>
+                <p className="text-[11px] text-red-700">Urgent or emergency priority</p>
               </div>
 
               <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
                 <span className="text-[10px] font-bold uppercase text-blue-800">Hospital Referrals</span>
                 <p className="text-3xl font-black text-blue-950 mt-1">{data.health.hospitalReferrals}</p>
-                <p className="text-[11px] text-blue-700">Rubengera Health Center</p>
+                <p className="text-[11px] text-blue-700">Outcome recorded in health records</p>
               </div>
 
               <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
                 <span className="text-[10px] font-bold uppercase text-emerald-800">Guardian Acknowledgment</span>
                 <p className="text-3xl font-black text-emerald-900 mt-1">{data.health.parentAcknowledgmentRate}%</p>
-                <p className="text-[11px] text-emerald-700">Average response &lt; 20 min</p>
+                <p className="text-[11px] text-emerald-700">Acknowledged records / all incidents</p>
               </div>
             </div>
 
@@ -509,6 +503,13 @@ export const ReportsPage: React.FC = () => {
                       <td className="py-2.5 px-3 font-semibold text-blue-700">{c.outcome.replace(/_/g, ' ')}</td>
                     </tr>
                   ))}
+                  {data.health.recentCases.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="py-5 px-3 text-center text-xs text-slate-500">
+                        {t('reportNoRecords')}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -524,7 +525,7 @@ export const ReportsPage: React.FC = () => {
                 <p className="text-2xl font-black text-slate-900 mt-1">
                   {data.finance.totalBilledRwf.toLocaleString()} RWF
                 </p>
-                <p className="text-[11px] text-slate-500">Term 2 School & Lab Fees</p>
+                <p className="text-[11px] text-slate-500">Recorded invoices · {selectedTerm}</p>
               </div>
 
               <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
@@ -540,7 +541,7 @@ export const ReportsPage: React.FC = () => {
                 <p className="text-2xl font-black text-amber-900 mt-1">
                   {data.finance.totalOutstandingRwf.toLocaleString()} RWF
                 </p>
-                <p className="text-[11px] text-amber-700">Due by 30 Nov 2026</p>
+                <p className="text-[11px] text-amber-700">Open balances in records</p>
               </div>
 
               <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
@@ -548,7 +549,7 @@ export const ReportsPage: React.FC = () => {
                 <p className="text-2xl font-black text-purple-900 mt-1">
                   {data.finance.paymentMethodsBreakdown.MTN_MOMO.toLocaleString()} RWF
                 </p>
-                <p className="text-[11px] text-purple-700">Digital Momo Collections</p>
+                <p className="text-[11px] text-purple-700">Recorded via MTN Mobile Money</p>
               </div>
             </div>
 
@@ -573,7 +574,7 @@ export const ReportsPage: React.FC = () => {
                       {(data.finance.paymentMethodsBreakdown.MTN_MOMO / (data.finance.totalCollectedRwf || 1) * 100).toFixed(1)}%
                     </td>
                     <td className="py-2.5 px-3 text-emerald-700 font-bold flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Reconciled with MTN Statement
+                      <CheckCircle2 className="w-3.5 h-3.5" /> {t('reportRecorded')}
                     </td>
                   </tr>
                   <tr>
@@ -585,7 +586,7 @@ export const ReportsPage: React.FC = () => {
                       {(data.finance.paymentMethodsBreakdown.BANK_TRANSFER / (data.finance.totalCollectedRwf || 1) * 100).toFixed(1)}%
                     </td>
                     <td className="py-2.5 px-3 text-emerald-700 font-bold flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Verified by Bursar Deposit Slip
+                      <CheckCircle2 className="w-3.5 h-3.5" /> {t('reportRecorded')}
                     </td>
                   </tr>
                   <tr>
@@ -593,16 +594,20 @@ export const ReportsPage: React.FC = () => {
                     <td className="py-2.5 px-3 font-mono font-black text-right text-purple-700">
                       {data.finance.paymentMethodsBreakdown.AIRTEL_MONEY.toLocaleString()} RWF
                     </td>
-                    <td className="py-2.5 px-3 text-right font-semibold">0.0%</td>
-                    <td className="py-2.5 px-3 text-slate-500 font-semibold">No transactions this period</td>
+                    <td className="py-2.5 px-3 text-right font-semibold">
+                      {(data.finance.paymentMethodsBreakdown.AIRTEL_MONEY / (data.finance.totalCollectedRwf || 1) * 100).toFixed(1)}%
+                    </td>
+                    <td className="py-2.5 px-3 text-slate-500 font-semibold">{t('reportRecorded')}</td>
                   </tr>
                   <tr>
                     <td className="py-2.5 px-3 font-bold text-slate-800">Cash Received at School Bursar Counter</td>
                     <td className="py-2.5 px-3 font-mono font-black text-right text-slate-800">
                       {data.finance.paymentMethodsBreakdown.CASH.toLocaleString()} RWF
                     </td>
-                    <td className="py-2.5 px-3 text-right font-semibold">0.0%</td>
-                    <td className="py-2.5 px-3 text-slate-500 font-semibold">Physical Cash Register Clean</td>
+                    <td className="py-2.5 px-3 text-right font-semibold">
+                      {(data.finance.paymentMethodsBreakdown.CASH / (data.finance.totalCollectedRwf || 1) * 100).toFixed(1)}%
+                    </td>
+                    <td className="py-2.5 px-3 text-slate-500 font-semibold">{t('reportRecorded')}</td>
                   </tr>
                 </tbody>
               </table>
@@ -646,6 +651,8 @@ export const ReportsPage: React.FC = () => {
             </div>
           </div>
         )}
+
+        <p className="pt-6 text-[10px] text-slate-500">{t('reportValidationStatus')}</p>
 
         {/* Signature placeholders: only authorized signatories may sign the printed copy. */}
         <div className="pt-8 border-t-2 border-slate-300 grid grid-cols-3 gap-6 text-center text-xs">

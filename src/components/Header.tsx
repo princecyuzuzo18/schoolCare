@@ -95,7 +95,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate, urgentIn
               <div className="flex items-center gap-2 pl-1 border-l border-blue-800/60">
                 {currentUser?.avatarUrl ? (
                   <img
-                    src={currentUser.avatarUrl}
+                    src={currentUser.avatarUrl || undefined}
                     alt={currentUser.fullName}
                     className="w-8 h-8 rounded-full object-cover border border-blue-400"
                   />

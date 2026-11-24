@@ -67,7 +67,7 @@ export function classifyProviderError(error: unknown): AiProviderError {
   const raw = error instanceof Error ? error.message : String(error ?? '');
   const text = raw.toLowerCase();
 
-  if (/api[_ -]?key not valid|invalid api key|unauthenticated|permission[_ -]?denied|"code"\s*:\s*401|"code"\s*:\s*403|\b401\b|\b403\b/.test(text)) {
+  if (/api[_ -]?key not valid|api[_ -]?key[_ -]?invalid|invalid[_ -]?api[_ -]?key|unauthenticated|permission[_ -]?denied|"code"\s*:\s*401|"code"\s*:\s*403|\b401\b|\b403\b/.test(text)) {
     return new AiProviderError('INVALID_KEY');
   }
   if (/resource_exhausted|"code"\s*:\s*429|\b429\b|quota|rate[_ -]?limit|too many requests|requests per (minute|day)|rpd|\brpm\b/.test(text)) {
